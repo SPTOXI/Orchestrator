@@ -18,6 +18,24 @@ pub async fn runtime_invoke(
     Ok(state.runtime.invoke(call).await)
 }
 
+/// Native folder picker. A UI interaction only: the chosen folder is then
+/// opened through the audited `project.open` tool.
+#[tauri::command]
+pub async fn pick_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let picked =
+        tauri::async_runtime::spawn_blocking(move || app.dialog().file().blocking_pick_folder())
+            .await
+            .map_err(|e| e.to_string())?;
+    picked
+        .map(|path| {
+            path.into_path()
+                .map(|p| p.display().to_string())
+                .map_err(|e| e.to_string())
+        })
+        .transpose()
+}
+
 #[tauri::command]
 pub fn runtime_tools() -> Vec<ToolSpec> {
     ToolRuntime::catalog().to_vec()
@@ -65,7 +83,7 @@ pub struct AppInfo {
     pub version: &'static str,
     pub os: &'static str,
     pub arch: &'static str,
-    /// Base directory of the runtime (relative paths, default cwd).
+    /// Base directory of the runtime: the open project, or the home directory.
     pub base_dir: String,
     pub data_dir: String,
     pub audit_log: String,

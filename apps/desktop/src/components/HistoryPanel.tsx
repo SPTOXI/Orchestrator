@@ -20,8 +20,12 @@ function originLabel(event: AuditEvent): string {
   }
 }
 
+/** Successful query (no state change). Uses the catalog's `readOnly` flag;
+ * events recorded before it existed fall back to the tool name. */
 function isReadOnlyCall(event: AuditEvent): boolean {
-  return event.kind === "TOOL_CALLED" && event.data.ok === true && READ_ONLY_TOOL.test(String(event.data.tool));
+  if (event.kind !== "TOOL_CALLED" || event.data.ok !== true) return false;
+  if (typeof event.data.readOnly === "boolean") return event.data.readOnly;
+  return READ_ONLY_TOOL.test(String(event.data.tool));
 }
 
 const KIND_FILTERS: Array<{ value: EventKind | ""; label: string }> = [
@@ -31,6 +35,9 @@ const KIND_FILTERS: Array<{ value: EventKind | ""; label: string }> = [
   { value: "COMMAND_EXECUTED", label: "COMMAND_EXECUTED" },
   { value: "PROCESS_EXITED", label: "PROCESS_EXITED" },
   { value: "TERMINAL_EXITED", label: "TERMINAL_EXITED" },
+  { value: "PROJECT_OPENED", label: "PROJECT_OPENED" },
+  { value: "GIT_COMMIT", label: "GIT_COMMIT" },
+  { value: "GIT_PUSH", label: "GIT_PUSH" },
 ];
 
 interface Props {
@@ -95,9 +102,9 @@ export function HistoryPanel({ ready, auditLog }: Props) {
             ))}
           </select>
         </div>
-        <label className="check" title="Oculta chamadas bem-sucedidas de *.list e *.read (continuam registradas)">
+        <label className="check" title="Oculta consultas bem-sucedidas (ferramentas readOnly); continuam registradas">
           <input type="checkbox" checked={hideReads} onChange={(e) => setHideReads(e.target.checked)} />
-          Ocultar leituras (list/read)
+          Ocultar consultas
         </label>
       </div>
       {error && <div className="inline-error">{error}</div>}

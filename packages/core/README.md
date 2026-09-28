@@ -8,5 +8,6 @@ orchestrator e providers passa por estes tipos.
 | `ids` | `ToolCallId`, `EventId`, `TerminalId`, `ProcessId` (UUID v7) |
 | `tool` | `ToolCall`, `ToolResult`, `ToolError`, `ToolErrorKind`, `CallOrigin`, `ToolSpec` |
 | `event` | `AuditEvent`, `EventKind`, `StreamEvent`, `EventSink` |
+| `project` | `ProjectProfile`, `ProjectCandidate`, `GitSummary`, `DockerInfo`, `RuntimeRequirement` |
 
 Serialização JSON em `camelCase`; `EventKind` em `SCREAMING_SNAKE_CASE`.

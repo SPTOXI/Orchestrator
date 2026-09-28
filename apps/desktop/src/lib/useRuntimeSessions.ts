@@ -40,6 +40,9 @@ export function useRuntimeSessions(enabled: boolean): RuntimeSessions {
         reload();
       } else if (event.kind === "TOOL_CALLED" && LIFECYCLE_TOOLS.test(String(event.data.tool))) {
         reload();
+      } else if (event.kind === "COMMAND_EXECUTED" && event.data.background === true) {
+        // Processes started by other tools (e.g. package.run with background).
+        reload();
       }
     });
   }, [enabled, refresh]);

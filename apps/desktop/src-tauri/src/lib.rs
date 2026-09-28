@@ -83,6 +83,7 @@ fn exit_on_termination_signals(handle: AppHandle) {
 
 pub fn run() {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data_dir = app
                 .path()
@@ -109,6 +110,7 @@ pub fn run() {
             commands::terminal_resize,
             commands::history_recent,
             commands::app_info,
+            commands::pick_folder,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build the Orchestrator desktop app");

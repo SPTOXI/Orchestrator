@@ -70,6 +70,9 @@ pub enum ToolErrorKind {
     Spawn,
     /// The target terminal/process is no longer running.
     NotRunning,
+    /// An external command (e.g. `git`) ran and reported failure; the
+    /// message carries its output.
+    CommandFailed,
     /// Unexpected internal failure.
     Internal,
 }
@@ -100,6 +103,10 @@ impl ToolError {
 
     pub fn internal(message: impl Into<String>) -> Self {
         Self::new(ToolErrorKind::Internal, message)
+    }
+
+    pub fn command_failed(message: impl Into<String>) -> Self {
+        Self::new(ToolErrorKind::CommandFailed, message)
     }
 }
 
@@ -146,6 +153,9 @@ pub struct ToolSpec {
     /// Group, e.g. `terminal`.
     pub group: &'static str,
     pub description: &'static str,
+    /// True when the tool only queries state (no files, processes or
+    /// repository state change). Recorded on `TOOL_CALLED` (ADR-0008).
+    pub read_only: bool,
 }
 
 #[cfg(test)]

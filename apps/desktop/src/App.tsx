@@ -1,8 +1,10 @@
 import { type MouseEvent as ReactMouseEvent, type ReactNode, useCallback, useEffect, useState } from "react";
 import { CommandPanel } from "./components/CommandPanel";
 import { ContextBar } from "./components/ContextBar";
-import { Explorer } from "./components/Explorer";
+import { DiffView } from "./components/DiffView";
+import { DiscoveryView } from "./components/DiscoveryView";
 import { FileEditor } from "./components/FileEditor";
+import { GitPanel } from "./components/GitPanel";
 import { HistoryPanel } from "./components/HistoryPanel";
 import {
   AgentsIcon,
@@ -17,16 +19,27 @@ import {
 } from "./components/icons";
 import { PhasePlaceholder } from "./components/PhasePlaceholder";
 import { ProcessesPanel } from "./components/ProcessesPanel";
+import { ProfileView } from "./components/ProfileView";
+import { ProjectPanel, RecentList } from "./components/ProjectPanel";
 import { SessionsPanel } from "./components/SessionsPanel";
 import { StatusBar } from "./components/StatusBar";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { baseName } from "./lib/format";
-import { appApi, errorMessage, fsApi, isTauri, shellApi } from "./lib/runtime";
-import type { AppInfo, ShellList } from "./lib/types";
+import { addRecent, loadRecent, removeRecent, saveRecent, type RecentProject } from "./lib/recent";
+import { appApi, errorMessage, isTauri, projectApi, shellApi } from "./lib/runtime";
+import type { AppInfo, ProjectProfile, ShellList } from "./lib/types";
+import { useGitStatus } from "./lib/useGitStatus";
 import { useRuntimeSessions } from "./lib/useRuntimeSessions";
 
 type PanelId = "project" | "providers" | "tasks" | "agents" | "terminal" | "git" | "memory" | "history";
 type BottomTab = "terminal" | "processes" | "command";
+
+/** Main-area tabs. */
+type Tab =
+  | { id: string; kind: "file"; path: string }
+  | { id: string; kind: "diff"; repo: string; file: string; staged: boolean }
+  | { id: "profile"; kind: "profile" }
+  | { id: "discovery"; kind: "discovery" };
 
 const ACTIVITIES: Array<{ id: PanelId; label: string; icon: () => ReactNode }> = [
   { id: "project", label: "PROJECT", icon: FolderIcon },
@@ -39,21 +52,35 @@ const ACTIVITIES: Array<{ id: PanelId; label: string; icon: () => ReactNode }> =
   { id: "history", label: "HISTORY", icon: HistoryIcon },
 ];
 
-const WORKSPACE_KEY = "orchestrator.workspace";
+const PROJECT_KEY = "orchestrator.project";
 
-function loadStoredWorkspace(): string | null {
+function loadStoredProject(): string | null {
   try {
-    return localStorage.getItem(WORKSPACE_KEY);
+    return localStorage.getItem(PROJECT_KEY);
   } catch {
     return null;
   }
 }
 
-function storeWorkspace(path: string) {
+function storeProject(path: string | null) {
   try {
-    localStorage.setItem(WORKSPACE_KEY, path);
+    if (path) localStorage.setItem(PROJECT_KEY, path);
+    else localStorage.removeItem(PROJECT_KEY);
   } catch {
-    // Storage unavailable: the workspace just is not remembered.
+    // Storage unavailable: the project is just not reopened next time.
+  }
+}
+
+function tabTitle(tab: Tab): string {
+  switch (tab.kind) {
+    case "file":
+      return baseName(tab.path);
+    case "diff":
+      return `${baseName(tab.file)} (${tab.staged ? "staged" : "diff"})`;
+    case "profile":
+      return "Perfil do projeto";
+    case "discovery":
+      return "Procurar projetos";
   }
 }
 
@@ -61,62 +88,121 @@ export function App() {
   const ready = isTauri();
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [shells, setShells] = useState<ShellList | null>(null);
-  const [workspace, setWorkspace] = useState("");
+  const [profile, setProfile] = useState<ProjectProfile | null>(null);
+  const [opening, setOpening] = useState(false);
+  const [recent, setRecent] = useState<RecentProject[]>(() => loadRecent());
   const [panel, setPanel] = useState<PanelId>("project");
   const [bottomTab, setBottomTab] = useState<BottomTab>("terminal");
-  const [openFiles, setOpenFiles] = useState<string[]>([]);
-  const [activeFile, setActiveFile] = useState<string | null>(null);
+  const [tabs, setTabs] = useState<Tab[]>([]);
+  const [activeTab, setActiveTab] = useState<string | null>(null);
   const [dirtyFiles, setDirtyFiles] = useState<Set<string>>(new Set());
   const [confirmClose, setConfirmClose] = useState<string | null>(null);
   const [bottomHeight, setBottomHeight] = useState(300);
   const [startupError, setStartupError] = useState<string | null>(null);
   const sessions = useRuntimeSessions(ready);
+  const git = useGitStatus(profile?.path ?? null, ready && profile !== null);
+
+  /** Working directory for terminals, processes and commands. */
+  const workspace = profile?.path ?? info?.baseDir ?? "";
+
+  const showTab = useCallback((tab: Tab) => {
+    setTabs((all) => (all.some((t) => t.id === tab.id) ? all : [...all, tab]));
+    setActiveTab(tab.id);
+  }, []);
+
+  const openProject = useCallback(
+    async (path: string, options: { quiet?: boolean } = {}) => {
+      setOpening(true);
+      setStartupError(null);
+      try {
+        const opened = await projectApi.open(path);
+        setProfile(opened);
+        storeProject(opened.path);
+        setRecent((list) => {
+          const next = addRecent(list, { path: opened.path, name: opened.name, openedAt: new Date().toISOString() });
+          saveRecent(next);
+          return next;
+        });
+        setPanel("project");
+        return true;
+      } catch (e) {
+        if (!options.quiet) setStartupError(`Não foi possível abrir ${path}: ${errorMessage(e)}`);
+        return false;
+      } finally {
+        setOpening(false);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!ready) return;
     appApi
       .info()
-      .then((appInfo) => {
-        setInfo(appInfo);
-        const stored = loadStoredWorkspace();
-        if (!stored) return setWorkspace(appInfo.baseDir);
-        fsApi
-          .list(stored)
-          .then(() => setWorkspace(stored))
-          .catch(() => setWorkspace(appInfo.baseDir));
-      })
+      .then(setInfo)
       .catch((e) => setStartupError(errorMessage(e)));
     shellApi
       .list()
       .then(setShells)
       .catch((e) => setStartupError(errorMessage(e)));
-  }, [ready]);
+    const stored = loadStoredProject();
+    if (stored) {
+      void openProject(stored, { quiet: true }).then((ok) => {
+        if (!ok) storeProject(null);
+      });
+    }
+  }, [ready, openProject]);
 
-  const changeWorkspace = (path: string) => {
-    setWorkspace(path);
-    storeWorkspace(path);
+  const pickFolder = async () => {
+    try {
+      const folder = await appApi.pickFolder();
+      if (folder) await openProject(folder);
+    } catch (e) {
+      setStartupError(errorMessage(e));
+    }
   };
 
-  const openFile = (path: string) => {
-    setOpenFiles((files) => (files.includes(path) ? files : [...files, path]));
-    setActiveFile(path);
+  const refreshProfile = async () => {
+    if (!profile) return;
+    try {
+      setProfile(await projectApi.profile(profile.path));
+    } catch (e) {
+      setStartupError(errorMessage(e));
+    }
   };
 
-  const closeFile = (path: string) => {
-    if (dirtyFiles.has(path) && confirmClose !== path) {
-      setConfirmClose(path);
+  const forgetRecent = (path: string) =>
+    setRecent((list) => {
+      const next = removeRecent(list, path);
+      saveRecent(next);
+      return next;
+    });
+
+  const openFile = (path: string) => showTab({ id: `file:${path}`, kind: "file", path });
+  const openDiff = (file: string, staged: boolean) => {
+    const repo = git.status?.root ?? profile?.path;
+    if (repo) showTab({ id: `diff:${staged ? "s" : "u"}:${file}`, kind: "diff", repo, file, staged });
+  };
+
+  const closeTab = (id: string) => {
+    const tab = tabs.find((t) => t.id === id);
+    const dirty = tab?.kind === "file" && dirtyFiles.has(tab.path);
+    if (dirty && confirmClose !== id) {
+      setConfirmClose(id);
       return;
     }
     setConfirmClose(null);
-    const index = openFiles.indexOf(path);
-    const next = openFiles.filter((f) => f !== path);
-    setOpenFiles(next);
-    if (activeFile === path) setActiveFile(next[Math.min(index, next.length - 1)] ?? null);
-    setDirtyFiles((dirty) => {
-      const next = new Set(dirty);
-      next.delete(path);
-      return next;
-    });
+    const index = tabs.findIndex((t) => t.id === id);
+    const next = tabs.filter((t) => t.id !== id);
+    setTabs(next);
+    if (activeTab === id) setActiveTab(next[Math.min(index, next.length - 1)]?.id ?? null);
+    if (tab?.kind === "file") {
+      setDirtyFiles((all) => {
+        const rest = new Set(all);
+        rest.delete(tab.path);
+        return rest;
+      });
+    }
   };
 
   const onDirtyChange = useCallback((path: string, dirty: boolean) => {
@@ -148,11 +234,25 @@ export function App() {
     if (id === "terminal") setBottomTab("terminal");
   };
 
+  const gitVersion = `${git.status?.head ?? ""}:${git.status?.files.map((f) => `${f.path}${f.staged}${f.unstaged}`).join("|") ?? ""}`;
+
   const sidebar = (() => {
     switch (panel) {
       case "project":
         return (
-          <Explorer ready={ready} workspace={workspace} onWorkspaceChange={changeWorkspace} onOpenFile={openFile} />
+          <ProjectPanel
+            ready={ready}
+            profile={profile}
+            gitStatus={git.status}
+            recent={recent}
+            opening={opening}
+            onPickFolder={() => void pickFolder()}
+            onOpenProject={(path) => void openProject(path)}
+            onRemoveRecent={forgetRecent}
+            onShowProfile={() => showTab({ id: "profile", kind: "profile" })}
+            onShowDiscovery={() => showTab({ id: "discovery", kind: "discovery" })}
+            onOpenFile={openFile}
+          />
         );
       case "providers":
         return (
@@ -197,11 +297,12 @@ export function App() {
         );
       case "git":
         return (
-          <PhasePlaceholder
-            title="Git"
-            phase="Fase 2"
-            description="Git local primeiro; GitHub é remoto (Fase 10)."
-            items={["Branch atual, arquivos modificados/novos/removidos", "Diff e últimos commits", "Remote"]}
+          <GitPanel
+            ready={ready}
+            projectPath={profile?.path ?? null}
+            git={git}
+            onOpenDiff={openDiff}
+            onOpenFile={openFile}
           />
         );
       case "memory":
@@ -218,9 +319,21 @@ export function App() {
     }
   })();
 
+  const branchLabel = git.status
+    ? (git.status.branch ?? (git.status.detached ? `HEAD ${git.status.head?.slice(0, 7) ?? ""}` : "(sem commits)"))
+    : git.notRepo
+      ? "sem Git"
+      : null;
+
   return (
     <div className="app">
-      <ContextBar terminals={sessions.terminals} processes={sessions.processes} />
+      <ContextBar
+        projectName={profile?.name ?? null}
+        branch={branchLabel}
+        gitStatus={git.status}
+        terminals={sessions.terminals}
+        processes={sessions.processes}
+      />
       <div className="workbench">
         <nav className="activity-bar">
           {ACTIVITIES.map(({ id, label, icon: IconComponent }) => (
@@ -232,6 +345,9 @@ export function App() {
               onClick={() => selectActivity(id)}
             >
               <IconComponent />
+              {id === "git" && git.status && git.status.files.length > 0 && (
+                <span className="activity-badge">{git.status.files.length}</span>
+              )}
             </button>
           ))}
         </nav>
@@ -245,61 +361,107 @@ export function App() {
               </div>
             )}
             {startupError && <div className="inline-error">{startupError}</div>}
-            {openFiles.length > 0 && (
+            {tabs.length > 0 && (
               <div className="tabs">
-                {openFiles.map((path) => (
-                  <div
-                    key={path}
-                    className={`tab ${path === activeFile ? "active" : ""}`}
-                    onClick={() => setActiveFile(path)}
-                    title={path}
-                  >
-                    <span>{baseName(path)}</span>
-                    {confirmClose === path ? (
-                      <span className="confirm">
-                        descartar?
+                {tabs.map((tab) => {
+                  const dirty = tab.kind === "file" && dirtyFiles.has(tab.path);
+                  return (
+                    <div
+                      key={tab.id}
+                      className={`tab ${tab.id === activeTab ? "active" : ""}`}
+                      onClick={() => setActiveTab(tab.id)}
+                      title={tab.kind === "file" ? tab.path : tab.kind === "diff" ? `${tab.repo} — ${tab.file}` : undefined}
+                    >
+                      <span>{tabTitle(tab)}</span>
+                      {confirmClose === tab.id ? (
+                        <span className="confirm">
+                          descartar?
+                          <button
+                            className="link"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              closeTab(tab.id);
+                            }}
+                          >
+                            sim
+                          </button>
+                          <button
+                            className="link"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setConfirmClose(null);
+                            }}
+                          >
+                            não
+                          </button>
+                        </span>
+                      ) : (
                         <button
-                          className="link"
+                          className={`icon-button small ${dirty ? "dirty" : ""}`}
+                          title={dirty ? "Alterações não salvas" : "Fechar"}
                           onClick={(e) => {
                             e.stopPropagation();
-                            closeFile(path);
+                            closeTab(tab.id);
                           }}
                         >
-                          sim
+                          <CloseIcon />
                         </button>
-                        <button
-                          className="link"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setConfirmClose(null);
-                          }}
-                        >
-                          não
-                        </button>
-                      </span>
-                    ) : (
-                      <button
-                        className={`icon-button small ${dirtyFiles.has(path) ? "dirty" : ""}`}
-                        title={dirtyFiles.has(path) ? "Alterações não salvas" : "Fechar"}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          closeFile(path);
-                        }}
-                      >
-                        <CloseIcon />
-                      </button>
-                    )}
-                  </div>
-                ))}
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
-            {openFiles.length === 0 ? (
-              <Welcome />
-            ) : (
-              openFiles.map((path) => (
-                <FileEditor key={path} path={path} active={path === activeFile} onDirtyChange={onDirtyChange} />
-              ))
+            {tabs.length === 0 && (
+              <Welcome
+                ready={ready}
+                hasProject={profile !== null}
+                recent={recent}
+                onPickFolder={() => void pickFolder()}
+                onDiscover={() => showTab({ id: "discovery", kind: "discovery" })}
+                onOpenProject={(path) => void openProject(path)}
+                onRemoveRecent={forgetRecent}
+              />
             )}
+            {tabs.map((tab) => {
+              const active = tab.id === activeTab;
+              switch (tab.kind) {
+                case "file":
+                  return <FileEditor key={tab.id} path={tab.path} active={active} onDirtyChange={onDirtyChange} />;
+                case "diff":
+                  return (
+                    <DiffView
+                      key={tab.id}
+                      repo={tab.repo}
+                      file={tab.file}
+                      staged={tab.staged}
+                      active={active}
+                      version={gitVersion}
+                    />
+                  );
+                case "profile":
+                  return (
+                    <ProfileView
+                      key={tab.id}
+                      profile={profile}
+                      active={active}
+                      onRefresh={() => void refreshProfile()}
+                      onOpenFile={openFile}
+                      onProcessStarted={() => setBottomTab("processes")}
+                    />
+                  );
+                case "discovery":
+                  return (
+                    <DiscoveryView
+                      key={tab.id}
+                      active={active}
+                      onOpenProject={(path) => {
+                        void openProject(path).then((ok) => ok && showTab({ id: "profile", kind: "profile" }));
+                      }}
+                    />
+                  );
+              }
+            })}
           </section>
           <div className="splitter" onMouseDown={startResize} title="Arraste para redimensionar" />
           <section className="bottom-panel">
@@ -348,44 +510,75 @@ export function App() {
           </section>
         </main>
       </div>
-      <StatusBar ready={ready} info={info} workspace={workspace} />
+      <StatusBar ready={ready} info={info} workspace={workspace} branch={branchLabel} />
     </div>
   );
 }
 
-function Welcome() {
+interface WelcomeProps {
+  ready: boolean;
+  hasProject: boolean;
+  recent: RecentProject[];
+  onPickFolder: () => void;
+  onDiscover: () => void;
+  onOpenProject: (path: string) => void;
+  onRemoveRecent: (path: string) => void;
+}
+
+function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenProject, onRemoveRecent }: WelcomeProps) {
   return (
     <div className="welcome">
       <h1>Orchestrator</h1>
       <p className="quote">A IA é substituível. O projeto é permanente.</p>
+      {!hasProject && (
+        <div className="welcome-actions">
+          <button className="button primary" disabled={!ready} onClick={onPickFolder}>
+            Abrir pasta…
+          </button>
+          <button className="button" disabled={!ready} onClick={onDiscover}>
+            Procurar projetos
+          </button>
+        </div>
+      )}
       <div className="welcome-grid">
         <div>
-          <h2>Fase 1 — runtime local</h2>
-          <ul>
-            <li>
-              <strong>PROJECT</strong>: navegue no workspace, abra, edite (Ctrl+S), renomeie e exclua arquivos.
-            </li>
-            <li>
-              <strong>Terminal</strong>: shells reais (PowerShell, CMD, WSL, Bash…) em PTY.
-            </li>
-            <li>
-              <strong>Processos</strong>: <code>npm run dev</code> e afins, com saída ao vivo e encerramento da árvore.
-            </li>
-            <li>
-              <strong>Comando</strong>: execução não interativa com stdout, stderr e exit code.
-            </li>
-            <li>
-              <strong>HISTORY</strong>: toda chamada de ferramenta é auditada.
-            </li>
-          </ul>
+          {!hasProject && recent.length > 0 ? (
+            <>
+              <h2>Projetos recentes</h2>
+              <RecentList recent={recent} onOpenProject={onOpenProject} onRemoveRecent={onRemoveRecent} />
+            </>
+          ) : (
+            <>
+              <h2>O que já funciona</h2>
+              <ul>
+                <li>
+                  <strong>PROJECT</strong>: abrir e descobrir projetos, perfil (stack, runtimes, Docker, bancos, Git) e
+                  arquivos.
+                </li>
+                <li>
+                  <strong>GIT</strong>: branch, stage, diff, commit, pull, push, stash e histórico.
+                </li>
+                <li>
+                  <strong>Terminal</strong>: shells reais (PowerShell, CMD, WSL, Bash…) em PTY.
+                </li>
+                <li>
+                  <strong>Processos</strong> e <strong>Comando</strong>: execução com saída, exit code e encerramento da
+                  árvore.
+                </li>
+                <li>
+                  <strong>HISTORY</strong>: toda chamada de ferramenta é auditada.
+                </li>
+              </ul>
+            </>
+          )}
         </div>
         <div>
           <h2>Próximas fases</h2>
           <ul>
-            <li>2 — Project Discovery, Project Profile, Git</li>
             <li>3–5 — AIProvider, OpenAI/Codex, Claude Code</li>
             <li>6–7 — SQLite, memória, Context Builder, Handoff</li>
             <li>8–9 — Tasks, agentes, File Locks, autonomia</li>
+            <li>10–11 — GitHub, otimização de tokens</li>
           </ul>
         </div>
       </div>

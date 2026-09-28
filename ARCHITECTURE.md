@@ -68,12 +68,12 @@ apenas apresentação.
 
 | Módulo | Local | Linguagem | Fase | Estado |
 | ------ | ----- | --------- | ---- | ------ |
-| Desktop UI | `apps/desktop/src` | React/TS | 1 | ✅ shell + painéis da Fase 1 |
+| Desktop UI | `apps/desktop/src` | React/TS | 1–2 | ✅ shell, PROJECT, GIT, terminal, processos, HISTORY |
 | Ponte IPC | `apps/desktop/src-tauri` | Rust | 1 | ✅ |
-| Core (contratos) | `packages/core` | Rust | 1 | ✅ `ToolCall`, `ToolResult`, `AuditEvent`, `StreamEvent`, `EventSink` |
-| Tool Runtime | `packages/runtime` | Rust | 1 | ✅ filesystem, shell, terminal, process |
-| Git | `packages/git` | Rust | 2 | planejado |
-| Project Discovery / Profile | `packages/core` + `packages/git` | Rust | 2 | planejado |
+| Core (contratos) | `packages/core` | Rust | 1–2 | ✅ `ToolCall`, `ToolResult`, `AuditEvent`, `StreamEvent`, `EventSink`, `ProjectProfile` |
+| Tool Runtime | `packages/runtime` | Rust | 1–2 | ✅ filesystem, shell, terminal, process, project, git, package, runtime |
+| Git local | `packages/git` | Rust | 2 | ✅ `git` do sistema (ADR-0007) |
+| Project Discovery / Profile | `packages/core` (tipos) + `packages/runtime` (detecção) | Rust | 2 | ✅ (ADR-0008) |
 | AIProvider / Registry / Sessions | `packages/providers` | Rust | 3 | planejado |
 | OpenAI / Codex | `packages/providers/openai` | Rust | 4 | planejado |
 | Claude Code | `packages/providers/claude` | Rust | 5 | planejado |
@@ -87,7 +87,7 @@ apenas apresentação.
 A única alteração à estrutura original é a adição de `packages/runtime`
 ([ADR-0002](./docs/adr/0002-pacote-runtime-para-o-tool-runtime.md)).
 
-## 4. Tool Runtime (Fase 1)
+## 4. Tool Runtime (Fases 1–2)
 
 Ponto único de execução de operações de sistema. Entrada: `ToolCall`
 (`{ id, tool, args, origin }`). Saída: `ToolResult`
@@ -96,7 +96,8 @@ Ponto único de execução de operações de sistema. Entrada: `ToolCall`
 ```text
 ToolRuntime::invoke(call)
   ├── valida e desserializa args (camelCase, campos desconhecidos rejeitados)
-  ├── despacha para o módulo (filesystem | shell | terminal | process)
+  ├── despacha para o módulo (filesystem | shell | terminal | process |
+  │                          project | git | package | runtime)
   ├── emite AuditEvent TOOL_CALLED (sempre, com sucesso ou erro)
   ├── emite eventos de domínio (FILE_CHANGED, COMMAND_EXECUTED, …)
   └── retorna ToolResult
@@ -110,12 +111,18 @@ Catálogo implementado (detalhes em [`docs/tool-runtime.md`](./docs/tool-runtime
 | shell | `execute`, `list` |
 | terminal | `create`, `write`, `read`, `close`, `list` |
 | process | `start`, `stop`, `list`, `read` |
+| project | `discover`, `profile`, `open` |
+| git | `status`, `diff`, `log`, `branch`, `checkout`, `add`, `commit`, `pull`, `push`, `stash`, `reset` |
+| package | `install`, `run` |
+| runtime | `node`, `python`, `docker` |
 
-`shell.list`, `terminal.list` e `process.read` são extensões registradas em
-[ADR-0004](./docs/adr/0004-operacoes-auxiliares-do-tool-runtime.md).
+Cada ferramenta é marcada no catálogo como consulta (`readOnly`) ou ação; a
+marca vai no evento `TOOL_CALLED` (ADR-0008). Extensões ao catálogo da seção 9:
+`shell.list`, `terminal.list`, `process.read`
+([ADR-0004](./docs/adr/0004-operacoes-auxiliares-do-tool-runtime.md)) e
+`project.*` ([ADR-0008](./docs/adr/0008-projeto-deteccao-e-diretorio-base.md)).
 
-Operações planejadas: `git.*` (Fase 2), `github.*` (Fase 10), `package.*` e
-`runtime.*` (a partir da Fase 2, via detecção de projeto).
+Operações planejadas: `github.*` (Fase 10).
 
 ### 4.1 Terminal real
 
@@ -137,7 +144,31 @@ Operações planejadas: `git.*` (Fase 2), `github.*` (Fase 10), `package.*` e
 - Ao fechar o app (inclusive por SIGTERM/SIGINT/SIGHUP no Unix), todos os
   terminais e processos gerenciados são encerrados.
 
-### 4.3 Autonomia e o runtime
+### 4.3 Projeto (Fase 2)
+
+- `project.open` define o projeto ativo: o **diretório base do runtime** passa
+  a ser a raiz do projeto (caminhos relativos e `cwd` padrão de shell,
+  terminais e processos) e é emitido `PROJECT_OPENED`.
+- `project.profile` monta o PROJECT PROFILE: nome, caminho, Git (root, branch,
+  upstream, remotes, contagem de alterações), linguagens, frameworks, package
+  managers, runtimes (com versão pedida), Docker (Dockerfiles, compose,
+  imagens), bancos (Prisma, compose, dependências), ferramentas, arquivos
+  importantes, scripts e as **evidências** de cada conclusão. `.env` nunca é
+  lido.
+- `project.discover` varre raízes (padrão: pasta do usuário e pastas comuns
+  como `C:\Projetos`) em largura, sem entrar em `node_modules`, `target`,
+  pastas ocultas etc., e sem descer dentro de um projeto encontrado.
+
+### 4.4 Git (Fase 2)
+
+`packages/git` executa o `git` do sistema (credenciais, hooks e configuração
+do usuário valem igual ao terminal) e lê formatos estáveis para máquinas
+([ADR-0007](./docs/adr/0007-git-via-cli-do-sistema.md)). Sem prompts
+interativos (`GIT_TERMINAL_PROMPT=0`); consultas não disputam o `index.lock`
+(`GIT_OPTIONAL_LOCKS=0`). `git.commit` emite `GIT_COMMIT`; `git.push`, `GIT_PUSH`.
+Falhas do Git viram `COMMAND_FAILED` com a saída do comando.
+
+### 4.5 Autonomia e o runtime
 
 Na Fase 1 não há provider conectado: o único chamador é o usuário, pela UI.
 O `ToolRuntime::invoke` é o ponto onde, na Fase 9, entra o gate de autonomia:
@@ -156,6 +187,8 @@ a conter fora do gate explícito da Fase 9.
 
 - `ToolCall`, `ToolResult`, `ToolError`, `ToolErrorKind`, `CallOrigin`
   (`user` | `agent` | `system`), `ToolSpec`.
+- `ProjectProfile`, `ProjectCandidate`, `GitSummary` — contratos do projeto
+  (Fase 2).
 - `AuditEvent { id, at, kind, origin, summary, data }` — histórico durável,
   independente de provider. `EventKind` contém todos os eventos da seção 22 do
   documento mestre, mais `PROCESS_EXITED` e `TERMINAL_EXITED`
@@ -179,7 +212,8 @@ Detalhada em [`docs/ipc.md`](./docs/ipc.md) e
 | `terminal_input(id, data)` | canal de digitação humana no terminal (streaming, não auditado por tecla) |
 | `terminal_resize(id, cols, rows)` | redimensionamento do PTY |
 | `history_recent(limit)` | eventos de auditoria recentes |
-| `app_info()` | versão, SO, diretórios |
+| `app_info()` | versão, SO, diretórios, projeto aberto |
+| `pick_folder()` | seletor nativo de pasta (só UI; a pasta escolhida é aberta via `project.open`) |
 
 | Evento Tauri | Payload |
 | ------------ | ------- |

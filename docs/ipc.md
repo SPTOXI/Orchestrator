@@ -21,7 +21,8 @@ Decisão registrada em [ADR-0003](./adr/0003-gateway-ipc-unico.md).
 | `terminal_input` | `id: string`, `data: string` | `void` | não por tecla (ADR-0003) |
 | `terminal_resize` | `id: string`, `cols: number`, `rows: number` | `void` | não |
 | `history_recent` | `limit?: number` (padrão 200) | `AuditEvent[]` (mais antigo primeiro) | não |
-| `app_info` | — | `{ version, os, arch, baseDir, dataDir, auditLog, defaultShell }` | não |
+| `app_info` | — | `{ version, os, arch, baseDir, dataDir, auditLog, defaultShell }` (`baseDir`: projeto aberto ou pasta do usuário) | não |
+| `pick_folder` | — | `string \| null` — seletor nativo de pasta; só interação de UI, a pasta é aberta depois com `project.open` (auditado) | não |
 
 `runtime_invoke` sempre resolve com um `ToolResult` (falhas vêm em
 `ok: false` + `error`); a UI sempre chama com `origin = user`. O cliente
@@ -70,7 +71,8 @@ mais recentes em memória. Substituído por SQLite na Fase 6
 
 - Capability `default`: apenas `core:default` (eventos, janela) e os comandos
   acima. Nenhum plugin com acesso ao SO é exposto à webview: todo acesso passa
-  pelo runtime.
+  pelo runtime. O plugin de diálogo é usado só pelo Rust (`pick_folder`); a
+  webview não recebe permissões dele.
 - CSP: `default-src 'self' ipc: http://ipc.localhost`; `style-src 'self'
   'unsafe-inline'` com `dangerousDisableAssetCspModification: ["style-src"]`,
   necessário porque o xterm.js injeta elementos `<style>` (com nonce, o

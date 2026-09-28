@@ -948,3 +948,334 @@ kbd {
   border: 2px solid transparent;
   background-clip: padding-box;
 }
+
+/* -------------------------------------------------------- phase 2: ui -- */
+
+.brand-project {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.activity {
+  position: relative;
+}
+
+.activity-badge {
+  position: absolute;
+  top: 4px;
+  right: 3px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.explorer {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.project-card {
+  margin: 0 12px 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.project-card:hover {
+  border-color: var(--accent);
+}
+
+.link-like {
+  color: var(--accent);
+}
+
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tag {
+  display: inline-block;
+  border-radius: 4px;
+  padding: 1px 7px;
+  background: var(--accent-soft);
+  color: #b9d3ff;
+  font-size: 12px;
+  border: 0;
+  white-space: nowrap;
+}
+
+.tag.small {
+  font-size: 11px;
+  padding: 0 5px;
+}
+
+.tag.err {
+  background: rgba(248, 81, 73, 0.15);
+  color: #ffb4ae;
+}
+
+.link-tag {
+  cursor: pointer;
+  font-family: var(--mono);
+}
+
+.link-tag:hover {
+  background: rgba(61, 139, 253, 0.3);
+}
+
+.inline-notice.ok {
+  background: rgba(63, 185, 80, 0.1);
+  border-color: rgba(63, 185, 80, 0.35);
+  color: #a7e8b3;
+}
+
+.welcome-actions {
+  display: flex;
+  gap: 8px;
+  margin: 16px 0 8px;
+}
+
+/* git panel */
+
+.commit-box textarea {
+  width: 100%;
+  resize: vertical;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 6px 8px;
+  outline: none;
+}
+
+.git-file {
+  padding: 3px 12px;
+  gap: 6px;
+}
+
+.git-letter {
+  width: 14px;
+  text-align: center;
+  font: 600 11px var(--mono);
+  flex: none;
+}
+
+.kind-modified,
+.kind-typeChanged {
+  color: var(--warn);
+}
+
+.kind-added,
+.kind-untracked,
+.kind-copied {
+  color: var(--ok);
+}
+
+.kind-deleted,
+.kind-conflicted {
+  color: var(--err);
+}
+
+.kind-renamed {
+  color: #79c0ff;
+}
+
+.list-item.commit {
+  align-items: flex-start;
+  padding: 4px 12px;
+}
+
+.kind-project_opened {
+  color: #39c5cf;
+}
+
+.kind-git_commit,
+.kind-git_push {
+  color: #f0883e;
+}
+
+/* diff view */
+
+.diff {
+  flex: 1;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.5;
+  padding-bottom: 12px;
+}
+
+.diff-line {
+  display: grid;
+  grid-template-columns: 44px 44px minmax(0, 1fr);
+  white-space: pre;
+}
+
+.diff-num {
+  color: #4b5563;
+  text-align: right;
+  padding-right: 8px;
+  user-select: none;
+}
+
+.diff-text {
+  padding-left: 6px;
+}
+
+.diff-add {
+  background: rgba(63, 185, 80, 0.12);
+}
+
+.diff-add .diff-text {
+  color: #aff5b4;
+}
+
+.diff-del {
+  background: rgba(248, 81, 73, 0.12);
+}
+
+.diff-del .diff-text {
+  color: #ffdcd7;
+}
+
+.diff-hunk {
+  background: rgba(61, 139, 253, 0.1);
+  color: #79c0ff;
+}
+
+.diff-file {
+  color: var(--text);
+  font-weight: 600;
+  border-top: 1px solid var(--border);
+  margin-top: 6px;
+}
+
+.diff-meta {
+  color: var(--text-dim);
+}
+
+.diff-add-count {
+  color: var(--ok);
+}
+
+.diff-del-count {
+  color: var(--err);
+}
+
+/* profile & discovery */
+
+.profile {
+  overflow: auto;
+  padding: 12px 18px 24px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  gap: 12px 24px;
+  align-content: start;
+}
+
+.profile section {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  background: var(--bg-panel);
+}
+
+.profile h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+}
+
+.profile-title {
+  font-weight: 600;
+}
+
+.profile-row {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 10px;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(36, 46, 58, 0.5);
+}
+
+.profile-row:last-child {
+  border-bottom: 0;
+}
+
+.profile-label {
+  color: var(--text-dim);
+}
+
+.profile-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.evidence {
+  grid-column: 1 / -1;
+  color: var(--text-dim);
+}
+
+.evidence ul {
+  columns: 2;
+  font-size: 12px;
+}
+
+.discovery-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.discovery-form textarea {
+  resize: vertical;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 6px 8px;
+  outline: none;
+}
+
+.discovery-list {
+  overflow: auto;
+  flex: 1;
+}
+
+.crash {
+  padding: 40px 48px;
+  max-width: 980px;
+}
+
+.crash pre {
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  white-space: pre-wrap;
+  font: 12px/1.45 var(--mono);
+  color: #ffb4ae;
+  max-height: 50vh;
+  overflow: auto;
+}

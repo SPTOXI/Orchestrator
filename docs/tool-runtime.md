@@ -22,26 +22,33 @@ componente que executa operações no sistema operacional. Toda chamada entra po
 - JSON em `camelCase`. Campos desconhecidos em `args` são rejeitados
   (`INVALID_ARGS`) para que erros de digitação de uma IA não passem em silêncio.
 - `args: null` equivale a `{}`.
-- Caminhos relativos são resolvidos a partir do diretório base do runtime
-  (home do usuário na Fase 1; raiz do projeto a partir da Fase 2). `~` e `~/…`
-  são expandidos.
+- Caminhos relativos são resolvidos a partir do diretório base do runtime:
+  a raiz do projeto aberto (`project.open`) ou, sem projeto, a pasta do
+  usuário. `~` e `~/…` são expandidos.
 - Erros (`error.kind`): `UNKNOWN_TOOL`, `INVALID_ARGS`, `NOT_FOUND`,
   `ALREADY_EXISTS`, `PERMISSION_DENIED` (negado pelo SO), `IO`, `SPAWN`,
-  `NOT_RUNNING`, `INTERNAL`.
+  `NOT_RUNNING`, `COMMAND_FAILED` (um comando externo, ex. `git`, falhou; a
+  mensagem traz a saída dele), `INTERNAL`.
+- Cada ferramenta é uma **consulta** (`readOnly: true`, não altera estado) ou
+  uma **ação**. `runtime_tools` devolve a marca e o `TOOL_CALLED` a registra.
 - Não existe lista de comandos proibidos nem confirmação oculta no runtime. O
   gate de autonomia (Fase 9) ficará explicitamente na frente de `invoke`.
 
 ## Eventos
 
-Toda chamada gera `TOOL_CALLED` (`data`: `tool`, `args` resumidos, `ok`,
-`error`, `durationMs`), com `callId` para correlação. Eventos adicionais:
+Toda chamada gera `TOOL_CALLED` (`data`: `tool`, `readOnly`, `args`
+resumidos, `ok`, `error`, `durationMs`), com `callId` para correlação.
+Eventos adicionais:
 
 | Evento | Quando | `data` |
 | ------ | ------ | ------ |
 | `FILE_CHANGED` | `filesystem.write/move/delete` com sucesso | `change` (`created`/`modified`/`moved`/`deleted`), `path` ou `from`/`to` |
-| `COMMAND_EXECUTED` | `shell.execute` terminou; `process.start` iniciou | `command`, `shell`, `cwd`, `exitCode`, `timedOut`, `durationMs`, `stdoutTail`, `stderrTail` (últimos 4 KiB) / `processId`, `pid`, `background` |
+| `COMMAND_EXECUTED` | `shell.execute`/`package.*` terminou; `process.start` (ou `package.run` em segundo plano) iniciou | `command`, `shell`, `cwd`, `exitCode`, `timedOut`, `durationMs`, `stdoutTail`, `stderrTail` (últimos 4 KiB) / `processId`, `pid`, `background` |
 | `PROCESS_EXITED` | processo gerenciado terminou | `processId`, `command`, `exitCode`, `stopped` |
 | `TERMINAL_EXITED` | shell de um terminal terminou | `terminalId`, `shell`, `exitCode`, `closed` |
+| `PROJECT_OPENED` | `project.open` | `name`, `path`, `gitRoot`, `branch`, `languages`, `frameworks` |
+| `GIT_COMMIT` | `git.commit` | `repo`, `hash`, `branch`, `subject` |
+| `GIT_PUSH` | `git.push` | `repo`, `branch`, `upstream`, `forced` |
 
 Strings com mais de 512 bytes em `args` são resumidas no evento
 (`"…(+N bytes)"`). Eventos de streaming (`StreamEvent`) não são duráveis: veja
@@ -225,6 +232,132 @@ Parar um processo já terminado é idempotente.
 
 `{ id, since?, maxBytes? }` → `{ id, status, exitCode, data, from, next, truncated, hasMore }`
 (mesma semântica de `terminal.read`).
+
+---
+
+## project (Fase 2)
+
+### `project.discover`
+
+| Arg | Tipo | Padrão | |
+| --- | ---- | ------ | - |
+| `roots` | string[] | pasta do usuário + `C:\Projetos`, `D:\dev`, … existentes (Windows) | raízes da busca |
+| `maxDepth` | number | 4 (máx. 12) | profundidade a partir de cada raiz |
+| `maxDirs` | number | 20000 | limite de pastas visitadas |
+
+Saída: `{ roots, projects: [{ name, path, markers, isGitRepo }], scannedDirs, truncated }`.
+Marcadores: `.git`, `package.json`, `deno.json`, `pyproject.toml`,
+`requirements.txt`, `setup.py`, `Pipfile`, `Cargo.toml`, `go.mod`, `pom.xml`,
+`build.gradle(.kts)`, `composer.json`, `Gemfile`, `*.sln`/`*.csproj`,
+`Dockerfile`, compose. Não entra em pastas ocultas, `node_modules`, `target`,
+`dist`, `build`, `vendor`, `venv`, `AppData`, `Library`… nem dentro de um
+projeto já encontrado; não segue links simbólicos.
+
+### `project.profile`
+
+`{ path? }` (padrão: projeto aberto) → `ProjectProfile`:
+
+```jsonc
+{
+  "name": "meu-saas", "path": "/…/meu-saas",
+  "git": { "root", "branch", "head", "upstream", "ahead", "behind", "remotes": [{ "name", "url" }],
+           "staged", "modified", "deleted", "untracked", "conflicted", "clean" },   // null sem Git
+  "languages": ["TypeScript"], "frameworks": ["Next.js", "React"],
+  "packageManagers": ["pnpm"],                       // o primeiro é o usado por package.*
+  "runtimes": [{ "name": "Node.js", "version": ">=20" }],
+  "docker": { "dockerfiles": ["Dockerfile"], "composeFiles": ["docker-compose.yml"], "images": ["postgres:16"] },
+  "databases": ["PostgreSQL", "Redis"], "tools": ["Prisma", "Vitest", "Docker"],
+  "importantFiles": ["README.md", ".env", "prisma/schema.prisma"],   // .env: só o nome
+  "scripts": { "dev": "next dev" }, "monorepo": false,
+  "markers": ["package.json", "pnpm-lock.yaml", "dependency: next", "prisma/schema.prisma: provider postgresql"],
+  "detectedAt": "…"
+}
+```
+
+Detecção (heurística, por evidência): Node/Deno/Bun (lockfiles,
+`packageManager`, dependências, `engines.node`, `.nvmrc`), Python
+(`pyproject.toml`, `requirements*.txt`, `Pipfile`, `poetry.lock`, `uv.lock`,
+`manage.py`, `.python-version`, `requires-python`), Rust (`Cargo.toml`,
+`rust-toolchain.toml`), Go (`go.mod`), Java/Kotlin (Maven/Gradle), C# (.NET),
+PHP (Composer), Ruby (Bundler); bancos via Prisma, imagens do compose e
+dependências.
+
+### `project.open`
+
+`{ path }` → `ProjectProfile`. A pasta vira o diretório base do runtime;
+emite `PROJECT_OPENED`. Pasta inexistente → `NOT_FOUND` (o projeto anterior
+continua aberto).
+
+---
+
+## git (Fase 2)
+
+Executa o `git` do sistema ([ADR-0007](./adr/0007-git-via-cli-do-sistema.md)).
+Todas aceitam `path?` (pasta dentro do repositório; padrão: projeto aberto).
+Fora de um repositório → `NOT_FOUND`; `git` ausente → `SPAWN`; o Git recusou →
+`COMMAND_FAILED` com stderr/stdout.
+
+| Ferramenta | Tipo | Argumentos | Saída |
+| ---------- | ---- | ---------- | ----- |
+| `git.status` | consulta | — | `{ root, branch, head, detached, upstream, ahead, behind, files: [{ path, originalPath, staged, unstaged, conflicted }], clean, remotes }` (`staged`/`unstaged` ∈ `modified`, `added`, `deleted`, `renamed`, `copied`, `typeChanged`, `untracked`, `conflicted`) |
+| `git.diff` | consulta | `staged?`, `target?` (revisão), `files?`, `contextLines?`, `maxBytes?` (1 MiB) | `{ patch, files: [{ path, originalPath, additions, deletions, binary }], truncated }` |
+| `git.log` | consulta | `limit?` (30, máx. 1000), `ref?`, `file?` | `[{ hash, shortHash, parents, author, email, date, subject }]` (repositório sem commits → `[]`) |
+| `git.branch` | ação | `create?`, `startPoint?`, `delete?`, `force?` | branches locais e remotas `[{ name, remote, current, upstream, commit, date, subject }]` |
+| `git.checkout` | ação | `target`, `create?`, `startPoint?` | `{ output, status }` |
+| `git.add` | ação | `files?` ou `all?` | status |
+| `git.commit` | ação | `message`, `all?`, `amend?` | `{ hash, shortHash, branch, subject, output }` + `GIT_COMMIT` |
+| `git.pull` | ação | `remote?`, `branch?`, `mode?` (`merge`/`rebase`/`ffOnly`; padrão: config do usuário), `timeoutMs?` | `{ output, status }` |
+| `git.push` | ação | `remote?`, `branch?`, `setUpstream?`, `force?` (`--force-with-lease`), `timeoutMs?` | `{ output, status }` + `GIT_PUSH` |
+| `git.stash` | ação | `action` (`push`/`pop`/`apply`/`drop`/`list`), `message?`, `includeUntracked?`, `index?` | `{ output, stashes }` |
+| `git.reset` | ação | `mode?` (`soft`/`mixed`/`hard`; padrão `mixed`), `target?`, `files?` (só `mixed`: tira do stage) | `{ output, status }` |
+
+Nomes de ref que começam com `-` são rejeitados (`INVALID_ARGS`) para não
+virarem opções do Git. `branch` sem `remote` em pull/push → `INVALID_ARGS`.
+
+---
+
+## package (Fase 2)
+
+Usam o gerenciador detectado no perfil (o primeiro de `packageManagers`) ou o
+informado em `manager`. Rodam pelo shell padrão (mesmo caminho de
+`shell.execute`); **cada argumento é citado para o shell** (POSIX, PowerShell
+ou CMD), então nomes de pacote e argumentos nunca são interpretados por ele.
+
+### `package.install`
+
+`{ path?, packages?, dev?, manager?, timeoutMs? }` → `{ manager, command, result }`.
+
+| Gerenciador | Sem pacotes | Com pacotes (`dev`) |
+| ----------- | ----------- | ------------------- |
+| npm | `npm install` | `npm install [--save-dev] …` |
+| pnpm | `pnpm install` | `pnpm add [-D] …` |
+| yarn / bun | `yarn install` / `bun install` | `yarn add [--dev] …` / `bun add [--dev] …` |
+| poetry | `poetry install` | `poetry add [--group dev] …` |
+| uv | `uv sync` | `uv add [--dev] …` |
+| pipenv | `pipenv install [--dev]` | `pipenv install [--dev] …` |
+| pip | `python -m pip install -r requirements.txt` (ou `.`) | `python -m pip install …` |
+| cargo | `cargo fetch` | `cargo add [--dev] …` |
+| go | `go mod download` | `go get …` |
+
+### `package.run`
+
+`{ script, args?, path?, manager?, background?, timeoutMs? }` →
+`{ manager, command, result }` ou, com `background: true`,
+`{ manager, command, process }` (processo gerenciado, como `process.start`).
+npm/pnpm/yarn/bun: `<pm> run <script>` (npm recebe `--` antes dos argumentos);
+poetry/uv/pipenv: `<pm> run <script>`; cargo/go: `<pm> <script>` (ex.: `test`).
+
+---
+
+## runtime (Fase 2)
+
+Consultas executadas no shell padrão (timeout de 15 s cada):
+
+| Ferramenta | Saída |
+| ---------- | ----- |
+| `runtime.node` | `{ available, version, managers: { npm, pnpm, yarn, bun } }` |
+| `runtime.python` | `{ available, version, command, pip }` (tenta `python3`/`python`; no Windows `python`/`py`/`python3`) |
+| `runtime.docker` | `{ available, version, daemonRunning, serverVersion, compose }` |
 
 ---
 

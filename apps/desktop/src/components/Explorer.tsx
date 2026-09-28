@@ -1,11 +1,11 @@
-// PROJECT panel: workspace file tree (filesystem.list / write / move / delete).
+// File tree of the open project (filesystem.list / write / move / delete).
 
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { auditEvents } from "../lib/events";
 import { baseName, joinPath, parentPath } from "../lib/format";
 import { errorMessage, fsApi } from "../lib/runtime";
 import type { DirEntryInfo } from "../lib/types";
-import { ChevronIcon, EditIcon, FileIcon, PlusIcon, RefreshIcon, TrashIcon, UpIcon } from "./icons";
+import { ChevronIcon, EditIcon, FileIcon, PlusIcon, RefreshIcon, TrashIcon } from "./icons";
 
 interface DirState {
   entries?: DirEntryInfo[];
@@ -20,15 +20,14 @@ type Dialog =
 
 interface Props {
   ready: boolean;
+  /** Project root. */
   workspace: string;
-  onWorkspaceChange: (path: string) => void;
   onOpenFile: (path: string) => void;
 }
 
-export function Explorer({ ready, workspace, onWorkspaceChange, onOpenFile }: Props) {
+export function Explorer({ ready, workspace, onOpenFile }: Props) {
   const [dirs, setDirs] = useState<Record<string, DirState>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [pathInput, setPathInput] = useState(workspace);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [dialogValue, setDialogValue] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -45,7 +44,6 @@ export function Explorer({ ready, workspace, onWorkspaceChange, onOpenFile }: Pr
   }, []);
 
   useEffect(() => {
-    setPathInput(workspace);
     setExpanded(new Set());
     setDirs({});
     if (ready && workspace) void load(workspace);
@@ -53,11 +51,14 @@ export function Explorer({ ready, workspace, onWorkspaceChange, onOpenFile }: Pr
 
   visibleDirs.current = [workspace, ...expanded];
 
-  // Reload visible directories when any file changes (UI or, later, agents).
+  // Reload visible directories when files may have changed: file tools,
+  // commands and repository operations (checkout, pull, reset…).
   useEffect(() => {
     let timer: number | undefined;
     const unsubscribe = auditEvents.subscribe((event) => {
-      if (event.kind !== "FILE_CHANGED") return;
+      const gitChange =
+        event.kind === "TOOL_CALLED" && event.data.readOnly === false && String(event.data.tool).startsWith("git.");
+      if (event.kind !== "FILE_CHANGED" && event.kind !== "COMMAND_EXECUTED" && !gitChange) return;
       window.clearTimeout(timer);
       timer = window.setTimeout(() => {
         for (const dir of visibleDirs.current) if (dir) void load(dir);
@@ -177,47 +178,21 @@ export function Explorer({ ready, workspace, onWorkspaceChange, onOpenFile }: Pr
   };
 
   return (
-    <div className="panel">
-      <div className="panel-header">
-        <span>Workspace</span>
-        <div className="row tight">
-          <button
-            className="icon-button"
-            title="Pasta acima"
-            disabled={!ready}
-            onClick={() => onWorkspaceChange(parentPath(workspace))}
-          >
-            <UpIcon />
-          </button>
-          <button
-            className="icon-button"
-            title="Novo arquivo na raiz"
-            disabled={!ready}
-            onClick={() => openDialog({ mode: "new", dir: workspace })}
-          >
-            <PlusIcon />
-          </button>
-          <button className="icon-button" title="Recarregar" disabled={!ready} onClick={() => void load(workspace)}>
-            <RefreshIcon />
-          </button>
-        </div>
-      </div>
-      <form
-        className="path-form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (pathInput.trim()) onWorkspaceChange(pathInput.trim());
-        }}
-      >
-        <input
-          className="mono"
-          value={pathInput}
-          onChange={(e) => setPathInput(e.target.value)}
-          placeholder="Caminho da pasta"
-          title="Digite um caminho e pressione Enter"
+    <div className="explorer">
+      <div className="section-title row">
+        <span className="grow">Arquivos</span>
+        <button
+          className="icon-button small"
+          title="Novo arquivo na raiz"
           disabled={!ready}
-        />
-      </form>
+          onClick={() => openDialog({ mode: "new", dir: workspace })}
+        >
+          <PlusIcon />
+        </button>
+        <button className="icon-button small" title="Recarregar" disabled={!ready} onClick={() => void load(workspace)}>
+          <RefreshIcon />
+        </button>
+      </div>
       {dialog && (
         <form className="dialog" onSubmit={submitDialog}>
           {dialog.mode === "delete" ? (

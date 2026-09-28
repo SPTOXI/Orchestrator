@@ -20,6 +20,7 @@ parking_lot.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tauri.workspace = true
+tauri-plugin-dialog.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 tokio = { workspace = true, features = ["signal"] }

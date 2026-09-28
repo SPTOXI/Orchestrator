@@ -9,6 +9,20 @@ import type {
   AppInfo,
   AuditEvent,
   DeleteOutput,
+  DiscoverOutput,
+  DockerRuntime,
+  GitBranch,
+  GitChangedOutput,
+  GitCommit,
+  GitCommitResult,
+  GitDiff,
+  GitStashOutput,
+  GitStatus,
+  GitStatusWithRemotes,
+  NodeRuntime,
+  PackageOutput,
+  ProjectProfile,
+  PythonRuntime,
   Encoding,
   ExecuteArgs,
   ExecuteOutput,
@@ -109,8 +123,63 @@ export const processApi = {
     callTool<ProcessRead>("process.read", { id, since, maxBytes }),
 };
 
+export const projectApi = {
+  discover: (options: { roots?: string[]; maxDepth?: number; maxDirs?: number } = {}) =>
+    callTool<DiscoverOutput>("project.discover", options),
+  /** Profile of `path`, or of the open project. */
+  profile: (path?: string) => callTool<ProjectProfile>("project.profile", { path }),
+  /** Opens a project: it becomes the runtime base directory. */
+  open: (path: string) => callTool<ProjectProfile>("project.open", { path }),
+};
+
+type RepoArgs = { path?: string };
+
+export const gitApi = {
+  status: (path?: string) => callTool<GitStatusWithRemotes>("git.status", { path }),
+  diff: (args: RepoArgs & { staged?: boolean; target?: string; files?: string[]; maxBytes?: number }) =>
+    callTool<GitDiff>("git.diff", args),
+  log: (args: RepoArgs & { limit?: number; ref?: string; file?: string } = {}) =>
+    callTool<GitCommit[]>("git.log", args),
+  branch: (args: RepoArgs & { create?: string; startPoint?: string; delete?: string; force?: boolean } = {}) =>
+    callTool<GitBranch[]>("git.branch", args),
+  checkout: (args: RepoArgs & { target: string; create?: boolean; startPoint?: string }) =>
+    callTool<GitChangedOutput>("git.checkout", args),
+  add: (args: RepoArgs & { files?: string[]; all?: boolean }) => callTool<GitStatus>("git.add", args),
+  commit: (args: RepoArgs & { message: string; all?: boolean; amend?: boolean }) =>
+    callTool<GitCommitResult>("git.commit", args),
+  pull: (args: RepoArgs & { remote?: string; branch?: string; mode?: "merge" | "rebase" | "ffOnly" } = {}) =>
+    callTool<GitChangedOutput>("git.pull", args),
+  push: (args: RepoArgs & { remote?: string; branch?: string; setUpstream?: boolean; force?: boolean } = {}) =>
+    callTool<GitChangedOutput>("git.push", args),
+  stash: (
+    args: RepoArgs & {
+      action: "push" | "pop" | "apply" | "drop" | "list";
+      message?: string;
+      includeUntracked?: boolean;
+      index?: number;
+    },
+  ) => callTool<GitStashOutput>("git.stash", args),
+  reset: (args: RepoArgs & { mode?: "soft" | "mixed" | "hard"; target?: string; files?: string[] }) =>
+    callTool<GitChangedOutput>("git.reset", args),
+};
+
+export const packageApi = {
+  install: (args: { path?: string; packages?: string[]; dev?: boolean; manager?: string } = {}) =>
+    callTool<PackageOutput>("package.install", args),
+  run: (args: { script: string; args?: string[]; path?: string; manager?: string; background?: boolean }) =>
+    callTool<PackageOutput>("package.run", args),
+};
+
+export const runtimeInfoApi = {
+  node: () => callTool<NodeRuntime>("runtime.node"),
+  python: () => callTool<PythonRuntime>("runtime.python"),
+  docker: () => callTool<DockerRuntime>("runtime.docker"),
+};
+
 export const appApi = {
   info: () => invoke<AppInfo>("app_info"),
   history: (limit = 500) => invoke<AuditEvent[]>("history_recent", { limit }),
   tools: () => invoke<ToolSpec[]>("runtime_tools"),
+  /** Native folder picker (UI only; open the result with projectApi.open). */
+  pickFolder: () => invoke<string | null>("pick_folder"),
 };

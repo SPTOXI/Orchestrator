@@ -18,7 +18,7 @@ A arquitetura completa está em [`ARCHITECTURE.md`](./ARCHITECTURE.md). As
 decisões arquiteturais estão em [`docs/adr/`](./docs/adr) e o relatório de
 cada fase em [`docs/phases/`](./docs/phases).
 
-![Orchestrator — Fase 1](./docs/assets/fase-1-desktop.png)
+![Orchestrator — Git e diff (Fase 2)](./docs/assets/fase-2-git.png)
 
 ## Estado atual
 
@@ -26,8 +26,9 @@ cada fase em [`docs/phases/`](./docs/phases).
 | ---- | ------ | ------ |
 | 0 | README, ARCHITECTURE, estrutura do monorepo | ✅ concluída |
 | 1 | Tauri + React + TypeScript + Rust; filesystem, shell, terminal, process manager | ✅ concluída |
-| 2 | Project Discovery, Project Profile, Git | ⏳ próxima |
-| 3–11 | Providers, memória, contexto, tasks/agentes, autonomia, GitHub, otimização | planejadas |
+| 2 | Project Discovery, Project Profile, Git | ✅ concluída |
+| 3 | AIProvider, Provider Registry, Provider Sessions | ⏳ próxima |
+| 4–11 | Providers, memória, contexto, tasks/agentes, autonomia, GitHub, otimização | planejadas |
 
 ## Estrutura do repositório
 
@@ -36,12 +37,13 @@ orchestrator/
 ├── apps/
 │   └── desktop/            # Tauri 2 + React + TypeScript (UI) e src-tauri (ponte IPC)
 ├── packages/
-│   ├── core/               # [Rust] contratos do domínio: ToolCall, ToolResult, eventos
-│   ├── runtime/            # [Rust] Tool Runtime: filesystem, shell, terminal, processos
+│   ├── core/               # [Rust] contratos: ToolCall, ToolResult, eventos, ProjectProfile
+│   ├── runtime/            # [Rust] Tool Runtime: filesystem, shell, terminal, processos,
+│   │                       #        projeto, git, package managers, runtimes
 │   ├── orchestrator/       # (Fases 7–8) Orchestrator Engine, Context Builder, Handoff
 │   ├── agents/             # (Fase 8) Agent Manager, subagentes, File Lock Manager
 │   ├── memory/             # (Fase 6) SQLite, memória L1/L2/L3, histórico, decisões
-│   ├── git/                # (Fase 2) Git local
+│   ├── git/                # [Rust] Git local via `git` do sistema (GitHub na Fase 10)
 │   └── providers/
 │       ├── openai/         # (Fase 4) OpenAI / Codex
 │       └── claude/         # (Fase 5) Claude Code
@@ -93,7 +95,27 @@ pnpm typecheck        # checagem de tipos TypeScript
 pnpm check            # typecheck + cargo fmt --check + cargo clippy -D warnings
 ```
 
-## O que já funciona (Fase 1)
+## O que já funciona
+
+### Fase 2 — projeto e Git
+
+- **Projeto**: abrir pasta (seletor nativo ou caminho), projetos recentes e
+  **descoberta** de projetos no disco (`.git`, `package.json`,
+  `pyproject.toml`, `Cargo.toml`, `go.mod`, Dockerfile…). O projeto aberto vira
+  o diretório base de terminais, processos e caminhos relativos.
+- **PROJECT PROFILE**: linguagem, framework, package manager, runtime (com a
+  versão pedida pelo projeto), Docker, bancos (Prisma, compose, dependências),
+  ferramentas, Git (root, branch, upstream, remote, status), scripts
+  (executáveis com um clique), arquivos importantes e as evidências de cada
+  conclusão. Runtimes instalados (Node, Python, Docker) sob demanda.
+- **Git**: branch atual e troca/criação de branch, arquivos modificados, novos
+  e removidos, stage/unstage, diff colorido, commit (com amend), pull, push
+  (configura upstream), stash e últimos commits. Atualiza sozinho após
+  comandos, terminal e salvamentos.
+- **Ferramentas para agentes**: `project.*`, `git.*`, `package.install`,
+  `package.run`, `runtime.node/python/docker` — todas auditadas.
+
+### Fase 1 — runtime local
 
 - **Desktop shell** com layout de IDE: barra de atividades (PROJECT, AI
   PROVIDERS, TASKS, AGENTS, GIT, MEMORY, HISTORY), área principal, painel
@@ -109,6 +131,8 @@ pnpm check            # typecheck + cargo fmt --check + cargo clippy -D warnings
 - **Observabilidade**: toda chamada de ferramenta gera eventos de auditoria
   (`TOOL_CALLED`, `COMMAND_EXECUTED`, `FILE_CHANGED`, …), exibidos no painel
   HISTORY e gravados em `audit.jsonl` no diretório de dados do app.
+
+![PROJECT PROFILE](./docs/assets/fase-2-perfil.png)
 
 A referência completa das ferramentas está em
 [`docs/tool-runtime.md`](./docs/tool-runtime.md) e a camada IPC em

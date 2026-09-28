@@ -8,13 +8,18 @@
 //! - [`AuditEvent`]: durable, provider-independent history.
 //! - [`StreamEvent`]: high-frequency, non-durable output (terminal/process).
 //! - [`EventSink`]: where the runtime publishes both kinds of events.
+//! - [`ProjectProfile`]: what the Orchestrator knows about a project.
 
 pub mod event;
 pub mod ids;
+pub mod project;
 pub mod tool;
 
 pub use event::{
     AuditEvent, EventKind, EventSink, MemorySink, NullSink, OutputStream, StreamEvent,
 };
 pub use ids::{EventId, ProcessId, TerminalId, ToolCallId};
+pub use project::{
+    DockerInfo, GitRemote, GitSummary, ProjectCandidate, ProjectProfile, RuntimeRequirement,
+};
 pub use tool::{CallOrigin, ToolCall, ToolError, ToolErrorKind, ToolResult, ToolSpec};

@@ -11,5 +11,7 @@ adiciona algo fora dela, é registrada aqui **antes** de ser implementada.
 | [0004](./0004-operacoes-auxiliares-do-tool-runtime.md) | Operações auxiliares do Tool Runtime | Aceita |
 | [0005](./0005-observabilidade-antes-do-sqlite.md) | Observabilidade antes do SQLite (JSONL + eventos) | Aceita |
 | [0006](./0006-ci-multiplataforma.md) | CI multiplataforma | Aceita |
+| [0007](./0007-git-via-cli-do-sistema.md) | Git via CLI do sistema | Aceita |
+| [0008](./0008-projeto-deteccao-e-diretorio-base.md) | Projeto: detecção no runtime, diretório base e ferramentas auxiliares | Aceita |
 
 Formato: Contexto → Decisão → Consequências.
