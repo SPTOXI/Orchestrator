@@ -1,0 +1,20 @@
+//! Domain contracts shared by every Orchestrator component.
+//!
+//! This crate has no I/O. It defines what flows between the UI, the Tool
+//! Runtime, the orchestrator engine and AI providers:
+//!
+//! - [`ToolCall`] / [`ToolResult`]: the only way anything (a human through the
+//!   UI, or an AI agent) asks the Orchestrator to touch the operating system.
+//! - [`AuditEvent`]: durable, provider-independent history.
+//! - [`StreamEvent`]: high-frequency, non-durable output (terminal/process).
+//! - [`EventSink`]: where the runtime publishes both kinds of events.
+
+pub mod event;
+pub mod ids;
+pub mod tool;
+
+pub use event::{
+    AuditEvent, EventKind, EventSink, MemorySink, NullSink, OutputStream, StreamEvent,
+};
+pub use ids::{EventId, ProcessId, TerminalId, ToolCallId};
+pub use tool::{CallOrigin, ToolCall, ToolError, ToolErrorKind, ToolResult, ToolSpec};

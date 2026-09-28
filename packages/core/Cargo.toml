@@ -1,0 +1,13 @@
+[package]
+name = "orchestrator-core"
+description = "Orchestrator domain contracts: tool calls, results, audit and stream events."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true

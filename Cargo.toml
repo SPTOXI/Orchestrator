@@ -1,0 +1,36 @@
+[workspace]
+resolver = "2"
+members = [
+    "packages/core",
+    "packages/runtime",
+    "apps/desktop/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+publish = false
+
+[workspace.dependencies]
+orchestrator-core = { path = "packages/core" }
+orchestrator-runtime = { path = "packages/runtime" }
+
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+libc = "0.2"
+parking_lot = "0.12"
+portable-pty = "0.9"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
+uuid = { version = "1", features = ["serde", "v7"] }
+which = "8"
+
+tauri = { version = "2.12", features = [] }
+tauri-build = { version = "2.7", features = [] }
+
+[profile.dev.package."*"]
+opt-level = 1
