@@ -14,7 +14,8 @@ sem uma máquina de cada.
 ## Decisão
 
 Adicionar `.github/workflows/ci.yml` (ferramenta de desenvolvimento, não
-funcionalidade do produto):
+funcionalidade do produto), executado em push de qualquer branch, em pull
+requests e manualmente:
 
 - **rust** (Linux, Windows, macOS): `cargo fmt --check`, `cargo clippy` e
   `cargo test` de `orchestrator-core` e `orchestrator-runtime`.
