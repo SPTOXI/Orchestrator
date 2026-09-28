@@ -164,7 +164,10 @@ mantida em buffer circular (1 MiB por terminal) endereçado por offset em bytes.
 | `env` | objeto | `{}` |
 
 Saída (`TerminalInfo`): `{ id, shell, cwd, pid, alive, exitCode, cols, rows, createdAt }`.
-No Unix, `TERM=xterm-256color` e `COLORTERM=truecolor`.
+No Unix, `TERM=xterm-256color` e `COLORTERM=truecolor`. No Windows, o ConPTY
+abre a sessão pedindo a posição do cursor (`ESC[6n`) e bloqueia até receber
+resposta: o runtime responde esse handshake e o remove da saída, para que um
+terminal operado só por `terminal.write`/`terminal.read` (sem UI) funcione.
 
 ### `terminal.write`
 

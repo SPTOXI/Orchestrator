@@ -397,6 +397,22 @@ impl TerminalManager {
     }
 }
 
+/// Device Status Report: "where is the cursor?".
+const CURSOR_POSITION_REQUEST: &str = "\x1b[6n";
+/// Answer for a fresh screen: row 1, column 1.
+const CURSOR_POSITION_REPORT: &[u8] = b"\x1b[1;1R";
+
+/// ConPTY (Windows) opens every session by asking the terminal for the cursor
+/// position and blocks all output until it gets an answer. A terminal driven
+/// only through `terminal.write`/`terminal.read` (an agent, no UI attached)
+/// would therefore hang forever. The runtime answers that handshake itself
+/// and removes it from the output, so no view answers it a second time.
+/// Returns the text without the request when the chunk contained it.
+fn take_startup_cursor_request(text: &str) -> Option<String> {
+    text.contains(CURSOR_POSITION_REQUEST)
+        .then(|| text.replacen(CURSOR_POSITION_REQUEST, "", 1))
+}
+
 fn spawn_reader_thread(
     mut reader: Box<dyn Read + Send>,
     terminal: Arc<Terminal>,
@@ -408,13 +424,22 @@ fn spawn_reader_thread(
         let terminal = reading;
         let mut decoder = Utf8Decoder::default();
         let mut buf = [0u8; 8192];
+        // Only ConPTY sends the startup handshake, always as its first output.
+        let mut handshake_pending = cfg!(windows);
         loop {
-            let (text, done) = match reader.read(&mut buf) {
+            let (mut text, done) = match reader.read(&mut buf) {
                 Ok(0) => (decoder.finish(), true),
                 Ok(n) => (decoder.decode(&buf[..n]), false),
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(_) => (decoder.finish(), true),
             };
+            if handshake_pending && !text.is_empty() {
+                handshake_pending = false;
+                if let Some(rest) = take_startup_cursor_request(&text) {
+                    let _ = terminal.write(CURSOR_POSITION_REPORT);
+                    text = rest;
+                }
+            }
             if !text.is_empty() {
                 let mut output = terminal.output.lock();
                 let offset = output.push(&text);
@@ -435,5 +460,20 @@ fn spawn_reader_thread(
         terminal.output.lock().push(&format!(
             "[orchestrator] failed to start pty reader: {err}\r\n"
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn startup_cursor_request_is_removed() {
+        assert_eq!(take_startup_cursor_request("\x1b[6n"), Some(String::new()));
+        assert_eq!(
+            take_startup_cursor_request("\x1b[?25l\x1b[6nPS C:\\>"),
+            Some("\x1b[?25lPS C:\\>".to_owned())
+        );
+        assert_eq!(take_startup_cursor_request("plain output"), None);
     }
 }

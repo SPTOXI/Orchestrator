@@ -78,7 +78,7 @@ pnpm tauri build --no-bundle
 | Suíte | Qtde | Cobre |
 | ----- | ---- | ----- |
 | `orchestrator-core` (unit) | 9 | serialização de contratos, IDs, sinks |
-| `orchestrator-runtime` (unit) | 30 | buffers/offsets, UTF-8 incremental, paths, filesystem, detecção de shells, resumo de auditoria |
+| `orchestrator-runtime` (unit) | 31 | buffers/offsets, UTF-8 incremental, paths, filesystem, detecção de shells, resumo de auditoria |
 | `orchestrator-runtime` (integração) | 15 | catálogo ↔ dispatcher, auditoria, filesystem, `shell.execute` (exit code, stderr, env, stdin, timeout, truncamento), ciclo de vida de processos, **kill da árvore de processos**, **PTY real** (comando, resize, exit code, fechamento), shutdown |
 | `orchestrator-desktop` (unit) | 3 | log JSONL, janela de eventos recentes, falha de abertura do log |
 | Frontend (vitest) | 15 | sincronização buffer × eventos, fan-out de eventos, formatação, paths (Windows/Unix), fins de linha CRLF/LF |
@@ -86,7 +86,7 @@ pnpm tauri build --no-bundle
 
 ## Resultado dos testes
 
-- Rust: **57/57** aprovados (integração repetida 6× sem falhas).
+- Rust: **58/58** aprovados (integração repetida 6× sem falhas).
 - Frontend: **15/15** aprovados; `tsc` sem erros; build de produção OK.
 - `cargo clippy -D warnings` e `cargo fmt --check`: limpos (Linux e alvo Windows,
   incluindo o crate Tauri).
@@ -102,6 +102,7 @@ pnpm tauri build --no-bundle
 | Saída perdida/duplicada ao abrir um terminal já em execução | Offsets absolutos + `OutputSync` (fila até o snapshot, descarte por offset) |
 | Chunks de PTY/pipe cortando caracteres UTF-8 | Decodificador incremental |
 | `process.stop` deixava netos vivos (`sleep &`) | Grupo de processos próprio + `kill(-pgid)`; `taskkill /T /F` no Windows; teste dedicado |
+| No Windows (CI) o terminal só emitia `ESC[6n`: o ConPTY espera a resposta ao pedido de posição do cursor e um terminal operado sem UI (agente) travava | O runtime responde ao handshake inicial e o remove da saída |
 | ConPTY não entrega EOF ao leitor quando o shell sai | O waiter libera o pseudo console ao detectar a saída |
 | Nova aba de terminal não ficava ativa (corrida com a lista compartilhada) | Seleção pendente até a lista atualizar |
 | Fechar terminal aparecia como "exit code 1" no histórico | Estado `closed` → evento "terminal … closed" |
