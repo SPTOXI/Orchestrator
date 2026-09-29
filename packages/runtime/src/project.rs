@@ -71,13 +71,14 @@ pub const DEFAULT_MAX_DIRS: usize = 20_000;
 
 // ------------------------------------------------------------- discover ---
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DiscoverArgs {
     /// Folders to scan. Default: the home directory and common project
     /// folders (`C:\Projetos`, `D:\dev`, …) that exist.
     #[serde(default)]
     pub roots: Option<Vec<String>>,
+    /// How deep to descend below each root (default: 4, max: 12).
     #[serde(default)]
     pub max_depth: Option<usize>,
     /// Stop after visiting this many directories.
@@ -211,7 +212,7 @@ fn folder_name(path: &Path) -> String {
 
 // -------------------------------------------------------------- profile ---
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PathArgs {
     /// Default: the open project (runtime base directory).

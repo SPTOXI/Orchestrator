@@ -1,7 +1,10 @@
-# AI Provider Layer (Fase 3)
+# AI Provider Layer (Fases 3–4)
 
 Referência de `packages/providers` (crate `orchestrator-providers`). Decisão
 registrada em [ADR-0009](./adr/0009-camada-de-providers-e-sessoes.md).
+Os providers reais são as **conexões de API** cadastradas pelo usuário
+(Fase 4, [ADR-0010](./adr/0010-providers-por-api-com-cadastro-livre.md)):
+ver [api-connections.md](./api-connections.md).
 
 ```text
 UI ──session_send──▶ SessionManager ──stream()──▶ AIProvider (adapter)
@@ -47,7 +50,7 @@ Trait async (`Send + Sync`), mapeada 1:1 na seção 18 do documento mestre.
 | Método | Uso |
 | ------ | --- |
 | `call_tool(tool, args)` | pede uma ferramenta; devolve `ToolResult` (erros vêm como `ok: false`) |
-| `tools()` | catálogo (`ToolSpec[]`) que o provider pode oferecer ao modelo |
+| `tools()` | catálogo (`ToolDefinition[]`: nome, grupo, descrição, somente leitura e JSON Schema dos argumentos) que o provider oferece ao modelo |
 | `emit_text` / `emit_reasoning` | saída incremental |
 | `report_usage(TokenUsage)` | uso de tokens/custo; chamadas somam |
 | `notice(level, message)` | aviso no transcript |
@@ -66,11 +69,15 @@ Regras de `call_tool`:
 
 ## Provider Registry
 
-- Ids estáveis (`echo`, `openai-codex`, `claude-code`, …); id repetido →
-  `ALREADY_EXISTS`.
+- Ids estáveis (`echo` e os ids das conexões de API: `openai`,
+  `anthropic`, `ollama`…); id repetido → `ALREADY_EXISTS`.
 - O primeiro provider registrado vira o **ativo**; `select(id)` troca e grava
   `PROVIDER_SWITCHED { from, to }` (selecionar o que já está ativo não grava
   nada).
+- `replace(provider)` troca a instância de um id (conexão editada) mantendo a
+  posição; `unregister(id)` tira do registro (conexão removida ou
+  desativada) e, se era o ativo, ativa o próximo com
+  `PROVIDER_SWITCHED { from, to, reason: "removed" }`.
 - `list()` → `ProviderInfo { id, name, vendor, description, capabilities, active }`.
 - `inspect(id)` → `ProviderStatus { available, version, authenticated, detail, checkedAt }`.
 
@@ -84,6 +91,11 @@ start ──▶ idle ──send/execute──▶ running ──(completed | canc
             └──────────────── resume ◀── closed ◀──────── close ◀──────────────┘
 ```
 
+- **Provider por turno.** A sessão guarda o id do provider e usa a instância
+  registrada no início de cada turno (e ao retomar ou criar subagente):
+  editar a conexão vale para as sessões abertas; se o id saiu do registro,
+  o turno falha com `UNAVAILABLE` (`provider … is no longer registered`) e
+  a sessão continua listada.
 - **Um turno por vez.** `send` com turno em andamento → `BUSY`; sessão
   encerrada → `CLOSED`; entrada vazia → `INVALID_REQUEST`.
 - **Falha não mata a sessão:** o turno termina `failed`, `lastError` guarda a
@@ -124,7 +136,7 @@ start ──▶ idle ──send/execute──▶ running ──(completed | canc
 | `TURN_COMPLETED` | `sessionId`, `provider`, `turnId`, `status`, `error`, `durationMs`, `toolCalls`, `usage`, `inputChars` |
 | `SESSION_CLOSED` | `sessionId`, `provider`, `turns`, `usage` |
 | `SESSION_RESUMED` | `sessionId`, `provider`, `nativeRef` |
-| `PROVIDER_SWITCHED` | `from`, `to` |
+| `PROVIDER_SWITCHED` | `from`, `to`; `reason: "removed"` quando o ativo saiu do registro |
 | `TOOL_CALLED` (do runtime) | como na Fase 1, com `origin = agent { agentId, sessionId, provider }` |
 
 O texto das mensagens fica no transcript, não no histórico de auditoria
@@ -154,16 +166,29 @@ Sem IA e sem rede. Existe para exercitar o contrato em testes e no app
 
 Uso de tokens estimado (≈ 4 caracteres por token), `estimated: true`.
 
-## Adicionando um provider (Fases 4, 5 e futuras)
+## Adicionando um provider
 
-1. Criar o crate em `packages/providers/<nome>` dependendo só de
-   `orchestrator-providers` e `orchestrator-core`.
-2. Implementar `AIProvider`; chamadas do fornecedor ficam só no adapter.
-3. Expor as ferramentas do Orchestrator ao modelo a partir de `ctx.tools()` e
-   executar cada pedido com `ctx.call_tool`. CLIs que executam ferramentas
-   por conta própria precisam delegá-las ao Orchestrator (decisão registrada
-   em ADR na fase do provider).
-4. Reportar uso com `ctx.report_usage` e respeitar `ctx.cancelled()`.
-5. Registrar o provider em `apps/desktop/src-tauri/src/lib.rs`.
+Na maioria dos casos não há código: o usuário **cadastra uma conexão** no
+painel AI PROVIDERS. Pode ser um tipo nativo, uma API compatível com a
+OpenAI ou um perfil genérico que descreve qualquer API HTTP/JSON
+([api-connections.md](./api-connections.md)).
+
+Para um protocolo novo com suporte nativo:
+
+1. Criar um módulo em `packages/providers/api/src/` implementando o trait
+   `Protocol`:
+   - `request`: monta a requisição;
+   - `decoder`: lê SSE, NDJSON ou JSON;
+   - `models_request` e `parse_models`: descoberta de modelos.
+2. Adicionar o tipo em `ApiKind` e um preset em `presets.rs`.
+3. Cobrir o protocolo com o servidor falso de `tests/api.rs`.
+
+Um adapter fora de HTTP seria um crate em `packages/providers/<nome>`
+implementando `AIProvider`, dependendo só de `orchestrator-providers` e
+`orchestrator-core`. Ele precisa seguir três regras:
+
+- executar ferramentas só com `ctx.call_tool`;
+- reportar uso com `ctx.report_usage`;
+- respeitar `ctx.cancelled()`.
 
 Testes de contrato de referência: `packages/providers/tests/sessions.rs`.

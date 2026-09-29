@@ -39,8 +39,8 @@ estrutural é registrada antes como ADR em [`docs/adr/`](./docs/adr).
 ├───────────────────────────────────────────────────────────────────────┤
 │ Orchestrator Core                                                     │
 │   core (contratos)  · provider layer (Fase 3: AIProvider, registro,   │
-│   sessões) · orchestrator engine · agent manager · task manager ·     │
-│   context builder · memory/history                                    │
+│   sessões; Fase 4: conexões de API) · orchestrator engine · agent     │
+│   manager · task manager · context builder · memory/history           │
 ├───────────────────────────────────────────────────────────────────────┤
 │ Local Database (SQLite, Fase 6)                                       │
 └───────────────────────────────────────────────────────────────────────┘
@@ -70,15 +70,15 @@ apenas apresentação.
 
 | Módulo | Local | Linguagem | Fase | Estado |
 | ------ | ----- | --------- | ---- | ------ |
-| Desktop UI | `apps/desktop/src` | React/TS | 1–3 | ✅ shell, PROJECT, AI PROVIDERS + sessões, GIT, terminal, processos, HISTORY |
-| Ponte IPC | `apps/desktop/src-tauri` | Rust | 1–3 | ✅ |
-| Core (contratos) | `packages/core` | Rust | 1–3 | ✅ `ToolCall`, `ToolResult`, `AuditEvent`, `StreamEvent`, `EventSink`, `ProjectProfile`, `SessionInfo`, `SessionEvent`, `TokenUsage` |
-| Tool Runtime | `packages/runtime` | Rust | 1–2 | ✅ filesystem, shell, terminal, process, project, git, package, runtime |
+| Desktop UI | `apps/desktop/src` | React/TS | 1–4 | ✅ shell, PROJECT, AI PROVIDERS (cadastro de APIs) + sessões, GIT, terminal, processos, HISTORY |
+| Ponte IPC | `apps/desktop/src-tauri` | Rust | 1–4 | ✅ (inclui o cofre do SO, `vault.rs`) |
+| Core (contratos) | `packages/core` | Rust | 1–4 | ✅ `ToolCall`, `ToolResult`, `ToolDefinition`, `AuditEvent`, `StreamEvent`, `EventSink`, `ProjectProfile`, `SessionInfo`, `SessionEvent`, `TokenUsage` |
+| Tool Runtime | `packages/runtime` | Rust | 1–4 | ✅ filesystem, shell, terminal, process, project, git, package, runtime; JSON Schema dos argumentos (Fase 4) |
 | Git local | `packages/git` | Rust | 2 | ✅ `git` do sistema (ADR-0007) |
 | Project Discovery / Profile | `packages/core` (tipos) + `packages/runtime` (detecção) | Rust | 2 | ✅ (ADR-0008) |
 | AIProvider / Registry / Sessions | `packages/providers` | Rust | 3 | ✅ trait, registro, sessões, provider `echo` de desenvolvimento (ADR-0009) |
-| OpenAI / Codex | `packages/providers/openai` | Rust | 4 | planejado |
-| Claude Code | `packages/providers/claude` | Rust | 5 | planejado |
+| Conexões de API (OpenAI e compatíveis, Anthropic, Gemini, perfil genérico) | `packages/providers/api` | Rust | 4 | ✅ cadastro livre, cofre do SO, ferramentas nativas ou por prompt, custo, teste de conexão (ADR-0010) |
+| Roteador de modelos e Conselho | a definir em ADR | Rust | 5 | planejado (ADR-0010) |
 | SQLite, Memory, History, Decisions | `packages/memory` | Rust | 6 | planejado |
 | Context Builder, Handoff | `packages/orchestrator` | Rust | 7 | planejado |
 | Task Manager, Agent Manager, Subagents, File Locks | `packages/orchestrator` + `packages/agents` | Rust | 8 | planejado |
@@ -86,8 +86,13 @@ apenas apresentação.
 | GitHub | `packages/git` | Rust | 10 | planejado |
 | Otimização de tokens, cache, compactação, scheduling | `packages/orchestrator` | Rust | 11 | planejado |
 
-A única alteração à estrutura original é a adição de `packages/runtime`
-([ADR-0002](./docs/adr/0002-pacote-runtime-para-o-tool-runtime.md)).
+Alterações à estrutura original:
+
+- adição de `packages/runtime`
+  ([ADR-0002](./docs/adr/0002-pacote-runtime-para-o-tool-runtime.md));
+- `packages/providers/openai` e `packages/providers/claude` substituídos por
+  `packages/providers/api`, com providers só por API e cadastro livre
+  ([ADR-0010](./docs/adr/0010-providers-por-api-com-cadastro-livre.md)).
 
 ## 4. Tool Runtime (Fases 1–2)
 
@@ -191,7 +196,8 @@ a conter fora do gate explícito da Fase 9.
 ## 5. Contratos e eventos (packages/core)
 
 - `ToolCall`, `ToolResult`, `ToolError`, `ToolErrorKind`, `CallOrigin`
-  (`user` | `agent { agentId, sessionId?, provider? }` | `system`), `ToolSpec`.
+  (`user` | `agent { agentId, sessionId?, provider? }` | `system`), `ToolSpec`,
+  `ToolDefinition` (com o JSON Schema dos argumentos, Fase 4).
 - `SessionInfo`, `SessionEvent`, `SessionLogEntry`, `TokenUsage`,
   `SessionStatus`, `TurnStatus`, ids `SessionId`/`TurnId`/`ProviderId` —
   contratos das sessões de provider (Fase 3, ADR-0009).
@@ -202,7 +208,9 @@ a conter fora do gate explícito da Fase 9.
   documento mestre, mais `PROCESS_EXITED` e `TERMINAL_EXITED`
   ([ADR-0005](./docs/adr/0005-observabilidade-antes-do-sqlite.md)) e
   `SESSION_STARTED`, `SESSION_RESUMED`, `SESSION_CLOSED`, `TURN_COMPLETED`
-  ([ADR-0009](./docs/adr/0009-camada-de-providers-e-sessoes.md)).
+  ([ADR-0009](./docs/adr/0009-camada-de-providers-e-sessoes.md)),
+  `CONNECTION_SAVED`, `CONNECTION_REMOVED`
+  ([ADR-0010](./docs/adr/0010-providers-por-api-com-cadastro-livre.md)).
 - `StreamEvent` — eventos de alta frequência e não duráveis (saída de
   terminal/processo, término, eventos de sessão de provider).
 - `EventSink` — trait que desacopla o runtime de quem consome eventos (Tauri
@@ -226,6 +234,7 @@ Detalhada em [`docs/ipc.md`](./docs/ipc.md) e
 | `pick_folder()` | seletor nativo de pasta (só UI; a pasta escolhida é aberta via `project.open`) |
 | `providers_list`, `provider_inspect`, `provider_select` | registro de providers e provider ativo (Fase 3) |
 | `sessions_list`, `session_start`, `session_get`, `session_send`, `session_cancel`, `session_close`, `session_resume`, `session_spawn` | sessões de provider (Fase 3) |
+| `connections_list`, `connection_save`, `connection_delete`, `connection_test`, `connection_models` | cadastro de APIs (Fase 4); a chave nunca volta para a webview |
 
 | Evento Tauri | Payload |
 | ------------ | ------- |
@@ -281,10 +290,36 @@ Implementado na Fase 3 como trait Rust em `packages/providers`
 - **`echo`** — provider de desenvolvimento sem IA, para testes e builds de
   desenvolvimento.
 
-Adapters independentes (`openai` na Fase 4, `claude` na Fase 5) entram como
-crates em `packages/providers/*`. Nenhuma chamada específica de fornecedor
-fora do adapter. Novos providers (Gemini, modelos locais) entram da mesma
-forma, sem alterar o núcleo.
+### 9.1 Conexões de API (Fase 4)
+
+Os providers são **APIs cadastradas pelo usuário**, quantas ele quiser
+([ADR-0010](./docs/adr/0010-providers-por-api-com-cadastro-livre.md),
+referência em [`docs/api-connections.md`](./docs/api-connections.md)).
+Crate `packages/providers/api`:
+
+- **Tipos:** `openai` (e qualquer API compatível), `anthropic`, `gemini` e
+  `generic`. O `generic` descreve qualquer API HTTP/JSON por um perfil:
+  caminho, autenticação, modelo do corpo, SSE/NDJSON e onde ler texto e uso.
+- **Ferramentas:** chamada de funções nativa, protocolo por prompt
+  (`<tool_call>`, para qualquer modelo de texto) ou nenhuma. O catálogo vai
+  ao modelo com o JSON Schema de cada ferramenta, e quem executa é sempre o
+  Orchestrator.
+- **Credenciais:** a chave fica no cofre do SO ou numa variável de
+  ambiente. Nunca vai para arquivo, histórico, log ou UI.
+- **Modelos:** descoberta pela API, preços informados pelo usuário (custo
+  por turno), contexto e etiquetas usadas pelo Conselho na Fase 5.
+- **Sessões:** usam a instância registrada a cada turno. Editar uma conexão
+  vale para as sessões abertas, sem perder a conversa.
+
+Nenhuma chamada específica de fornecedor fora do adapter. Uma IA nova entra
+como conexão cadastrada (sem código) ou como um protocolo novo no crate.
+
+### 9.2 Roteador e Conselho (Fase 5)
+
+Um roteador de modelos e um **Conselho** de IAs (1 a N membros; com um
+membro, é o "gerenciador") vão recomendar o melhor modelo para cada
+atividade. O modo *Sugerir* pede aprovação ao usuário; o modo *Full*
+decide e aplica sozinho. Decisão em ADR próprio.
 
 ## 10. Plataformas
 

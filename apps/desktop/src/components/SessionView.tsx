@@ -140,6 +140,8 @@ export function SessionView({ ready, active, sessionId, session, parent, provide
   const closed = status === "closed";
   const provider = providers.find((p) => p.id === session?.provider);
   const providerName = provider?.name ?? session?.provider ?? "Provider";
+  /** Its connection was removed or disabled: turns would fail. */
+  const orphan = session !== null && providers.length > 0 && !provider;
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -296,11 +298,17 @@ export function SessionView({ ready, active, sessionId, session, parent, provide
         ))}
         {running && <div className="meta typing">{providerName} está trabalhando…</div>}
       </div>
+      {orphan && (
+        <div className="inline-notice">
+          O provider <code>{session?.provider}</code> não está mais registrado (conexão removida, renomeada ou
+          desativada). Reative a conexão ou abra uma nova sessão.
+        </div>
+      )}
       <form className="composer" onSubmit={send}>
         <textarea
           rows={3}
           value={input}
-          disabled={!ready || closed}
+          disabled={!ready || closed || orphan}
           placeholder={
             closed
               ? "Sessão encerrada — use Retomar para continuar."
@@ -312,7 +320,7 @@ export function SessionView({ ready, active, sessionId, session, parent, provide
         <button
           className="button primary"
           type="submit"
-          disabled={!ready || busy || running || closed || !input.trim()}
+          disabled={!ready || busy || running || closed || orphan || !input.trim()}
         >
           <SendIcon /> Enviar
         </button>

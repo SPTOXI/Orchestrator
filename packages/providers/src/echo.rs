@@ -160,7 +160,10 @@ impl AIProvider for EchoProvider {
             models: vec![ModelInfo {
                 id: MODEL.into(),
                 name: "Echo".into(),
-                context_window: None,
+                input_price: Some(0.0),
+                output_price: Some(0.0),
+                tags: vec!["teste".into()],
+                ..Default::default()
             }],
             default_model: Some(MODEL.into()),
         }

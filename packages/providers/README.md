@@ -12,23 +12,22 @@ AIProvider: start · resume · execute · stream · cancel · spawnAgent · insp
 | ------ | -------- |
 | `provider.rs` | trait `AIProvider`, `ProviderDescriptor`, `ProviderCapabilities`, `ProviderStatus`, `NativeSession`, `SessionSpec` |
 | `context.rs` | `TurnContext` (saída, uso, cancelamento, `call_tool`) e `ToolExecutor` |
-| `registry.rs` | `ProviderRegistry` (registro, provider ativo, `PROVIDER_SWITCHED`) |
-| `manager.rs` | `SessionManager` (sessões, turnos, transcript, uso, cancelar, encerrar/retomar, subagentes) |
+| `registry.rs` | `ProviderRegistry` (registro, `replace`/`unregister`, provider ativo, `PROVIDER_SWITCHED`) |
+| `manager.rs` | `SessionManager` (sessões, turnos, transcript, uso, cancelar, encerrar/retomar, subagentes; provider resolvido pelo registro a cada turno) |
 | `log.rs` | transcript numerado com fusão de trechos e limite |
 | `echo.rs` | provider de desenvolvimento sem IA |
 
 | Adapter | Fase |
 | ------- | ---- |
-| `openai/` — OpenAI / Codex | 4 |
-| `claude/` — Claude Code | 5 |
+| [`api/`](./api/README.md) — conexões de API cadastradas pelo usuário: OpenAI e compatíveis, Anthropic, Gemini e qualquer API por perfil genérico ([ADR-0010](../../docs/adr/0010-providers-por-api-com-cadastro-livre.md)) | 4 |
 
 Regras:
 
 - Nenhuma chamada específica de fornecedor fora do adapter correspondente.
 - Providers nunca executam operações de sistema: pedem ferramentas com
   `TurnContext::call_tool` e o Orchestrator executa via Tool Runtime.
-- Novos providers (Gemini, modelos locais) entram como novos crates sem
-  alterar o núcleo.
+- Uma IA nova entra como conexão cadastrada (sem código) ou como protocolo
+  novo em `api/`, sem alterar o núcleo.
 
 Testes: `cargo test -p orchestrator-providers` (inclui o contrato de ponta a
 ponta com o Tool Runtime real em `tests/sessions.rs`).

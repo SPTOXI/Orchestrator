@@ -15,7 +15,9 @@ tauri-build.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+keyring.workspace = true
 orchestrator-core.workspace = true
+orchestrator-provider-api.workspace = true
 orchestrator-providers.workspace = true
 orchestrator-runtime.workspace = true
 parking_lot.workspace = true

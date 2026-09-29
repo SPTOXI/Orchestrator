@@ -1,5 +1,6 @@
 import { type MouseEvent as ReactMouseEvent, type ReactNode, useCallback, useEffect, useState } from "react";
 import { CommandPanel } from "./components/CommandPanel";
+import { ConnectionEditor } from "./components/ConnectionEditor";
 import { ContextBar } from "./components/ContextBar";
 import { DiffView } from "./components/DiffView";
 import { DiscoveryView } from "./components/DiscoveryView";
@@ -29,7 +30,8 @@ import { TerminalPanel } from "./components/TerminalPanel";
 import { baseName } from "./lib/format";
 import { addRecent, loadRecent, removeRecent, saveRecent, type RecentProject } from "./lib/recent";
 import { appApi, errorMessage, isTauri, projectApi, sessionApi, shellApi } from "./lib/runtime";
-import type { AppInfo, ProjectProfile, SessionInfo, ShellList } from "./lib/types";
+import type { AppInfo, ConnectionsView, ProjectProfile, SessionInfo, ShellList } from "./lib/types";
+import { useConnections } from "./lib/useConnections";
 import { useGitStatus } from "./lib/useGitStatus";
 import { useProviders } from "./lib/useProviders";
 import { useRuntimeSessions } from "./lib/useRuntimeSessions";
@@ -43,7 +45,8 @@ type Tab =
   | { id: string; kind: "diff"; repo: string; file: string; staged: boolean }
   | { id: "profile"; kind: "profile" }
   | { id: "discovery"; kind: "discovery" }
-  | { id: string; kind: "session"; sessionId: string };
+  | { id: string; kind: "session"; sessionId: string }
+  | { id: string; kind: "connection"; connectionId: string | null };
 
 const ACTIVITIES: Array<{ id: PanelId; label: string; icon: () => ReactNode }> = [
   { id: "project", label: "PROJECT", icon: FolderIcon },
@@ -75,7 +78,7 @@ function storeProject(path: string | null) {
   }
 }
 
-function tabTitle(tab: Tab, sessions: Map<string, SessionInfo>): string {
+function tabTitle(tab: Tab, sessions: Map<string, SessionInfo>, connections: ConnectionsView | null): string {
   switch (tab.kind) {
     case "file":
       return baseName(tab.path);
@@ -87,6 +90,9 @@ function tabTitle(tab: Tab, sessions: Map<string, SessionInfo>): string {
       return "Procurar projetos";
     case "session":
       return sessions.get(tab.sessionId)?.title ?? "Sessão";
+    case "connection":
+      if (!tab.connectionId) return "Nova API";
+      return `API · ${connections?.connections.find((c) => c.connection.id === tab.connectionId)?.connection.name ?? tab.connectionId}`;
   }
 }
 
@@ -109,6 +115,7 @@ export function App() {
   const sessions = useRuntimeSessions(ready);
   const git = useGitStatus(profile?.path ?? null, ready && profile !== null);
   const providers = useProviders(ready);
+  const connections = useConnections(ready);
   const sessionsById = new Map(providers.sessions.map((s) => [s.id, s]));
   const activeProvider = providers.view?.providers.find((p) => p.active) ?? null;
   const runningSessions = providers.sessions.filter((s) => s.status === "running").length;
@@ -192,10 +199,10 @@ export function App() {
   const openFile = (path: string) => showTab({ id: `file:${path}`, kind: "file", path });
   const openSession = (sessionId: string) => showTab({ id: `session:${sessionId}`, kind: "session", sessionId });
 
-  const newSession = async () => {
+  const newSession = async (provider: string, model: string | null) => {
     setStartingSession(true);
     try {
-      const session = await sessionApi.start();
+      const session = await sessionApi.start({ provider, model: model ?? undefined });
       openSession(session.id);
     } catch (e) {
       setStartupError(`Não foi possível iniciar a sessão: ${errorMessage(e)}`);
@@ -203,6 +210,15 @@ export function App() {
       setStartingSession(false);
     }
   };
+  /** One editor tab per connection; each "Adicionar API" opens a new one. */
+  const editConnection = (connectionId: string | null) => {
+    const open = connectionId ? tabs.find((t) => t.kind === "connection" && t.connectionId === connectionId) : null;
+    if (open) setActiveTab(open.id);
+    else showTab({ id: `connection:${Date.now()}`, kind: "connection", connectionId });
+  };
+  /** After a save the tab follows the (possibly new or renamed) connection. */
+  const connectionSaved = (tabId: string, connectionId: string) =>
+    setTabs((all) => all.map((t) => (t.id === tabId && t.kind === "connection" ? { ...t, connectionId } : t)));
   const openDiff = (file: string, staged: boolean) => {
     const repo = git.status?.root ?? profile?.path;
     if (repo) showTab({ id: `diff:${staged ? "s" : "u"}:${file}`, kind: "diff", repo, file, staged });
@@ -286,8 +302,10 @@ export function App() {
             projectPath={profile?.path ?? null}
             activeSessionId={activeTab?.startsWith("session:") ? activeTab.slice("session:".length) : null}
             starting={startingSession}
-            onNewSession={() => void newSession()}
+            connections={connections}
+            onNewSession={(provider, model) => void newSession(provider, model)}
             onOpenSession={openSession}
+            onEditConnection={editConnection}
           />
         );
       case "tasks":
@@ -398,7 +416,7 @@ export function App() {
                       onClick={() => setActiveTab(tab.id)}
                       title={tab.kind === "file" ? tab.path : tab.kind === "diff" ? `${tab.repo} — ${tab.file}` : undefined}
                     >
-                      <span>{tabTitle(tab, sessionsById)}</span>
+                      <span>{tabTitle(tab, sessionsById, connections.view)}</span>
                       {confirmClose === tab.id ? (
                         <span className="confirm">
                           descartar?
@@ -491,6 +509,18 @@ export function App() {
                     />
                   );
                 }
+                case "connection":
+                  return (
+                    <ConnectionEditor
+                      key={tab.id}
+                      ready={ready}
+                      active={active}
+                      connectionId={tab.connectionId}
+                      view={connections.view}
+                      onSaved={(id) => connectionSaved(tab.id, id)}
+                      onDeleted={() => closeTab(tab.id)}
+                    />
+                  );
                 case "discovery":
                   return (
                     <DiscoveryView
@@ -607,8 +637,9 @@ function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenPr
                   árvore.
                 </li>
                 <li>
-                  <strong>AI PROVIDERS</strong>: interface comum <code>AIProvider</code>, registro de providers e
-                  sessões com streaming, tool calls pelo Orchestrator, cancelamento, subagentes e uso de tokens.
+                  <strong>AI PROVIDERS</strong>: quantas APIs você quiser — OpenAI e compatíveis, Anthropic, Gemini
+                  ou qualquer API descrita por perfil — com chave no cofre do sistema, modelos, preços e sessões com
+                  streaming, ferramentas pelo Orchestrator, cancelamento, subagentes, tokens e custo.
                 </li>
                 <li>
                   <strong>HISTORY</strong>: toda chamada de ferramenta é auditada, inclusive as feitas por IAs.
@@ -620,7 +651,7 @@ function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenPr
         <div>
           <h2>Próximas fases</h2>
           <ul>
-            <li>4–5 — OpenAI/Codex, Claude Code</li>
+            <li>5 — Roteador de modelos e Conselho de IAs</li>
             <li>6–7 — SQLite, memória, Context Builder, Handoff</li>
             <li>8–9 — Tasks, agentes, File Locks, autonomia</li>
             <li>10–11 — GitHub, otimização de tokens</li>

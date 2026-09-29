@@ -2,7 +2,7 @@
 //! about a conversation with an AI provider (ADR-0009).
 //!
 //! A session belongs to the Orchestrator, not to the provider: the provider
-//! only holds a native session (e.g. a Codex thread) referenced by
+//! only holds a native session (e.g. an API conversation) referenced by
 //! [`SessionInfo::native_ref`].
 
 use crate::ids::{ProviderId, SessionId, TurnId};

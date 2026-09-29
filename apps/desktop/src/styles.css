@@ -57,6 +57,13 @@ select {
   outline: none;
 }
 
+/* WebKitGTK lets the text of a long <option> spill into the parent's
+   scrollable area (a phantom horizontal scrollbar) even though the control
+   clips it; paint containment keeps it inside. */
+select {
+  contain: paint;
+}
+
 input:focus,
 select:focus,
 textarea:focus {
@@ -378,6 +385,7 @@ kbd {
 
 .main {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
 }
@@ -641,6 +649,7 @@ kbd {
 .editor-area {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   min-height: 0;
   background: var(--bg);
 }
@@ -1494,4 +1503,179 @@ kbd {
   border-radius: 5px;
   padding: 6px 8px;
   outline: none;
+}
+
+/* -------------------------------------------------- API connections -- */
+
+.kind-connection_saved,
+.kind-connection_removed {
+  color: #79c0ff;
+}
+
+.add-connection {
+  display: block;
+  margin: 4px 12px 8px;
+  font-size: 12px;
+}
+
+.new-session {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px;
+  padding: 6px 12px 8px;
+}
+
+.new-session .button {
+  grid-column: 1 / -1;
+  justify-content: center;
+}
+
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  padding: 14px 18px;
+  overflow: auto;
+}
+
+.preset-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  text-align: left;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  cursor: pointer;
+}
+
+.preset-card:hover {
+  border-color: var(--accent);
+}
+
+.connection-editor .inline-notice.ok div,
+.connection-editor .inline-error div {
+  margin-top: 3px;
+}
+
+.connection-editor .confirm {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--warn);
+}
+
+.connection-form section:nth-of-type(3),
+.connection-form section:nth-of-type(5),
+.connection-form details {
+  grid-column: 1 / -1;
+}
+
+.connection-form details summary {
+  cursor: pointer;
+  padding: 4px 0 8px;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 3px 0;
+}
+
+.form-row.top {
+  align-items: start;
+}
+
+.form-row > span {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.form-row.check-row input {
+  justify-self: start;
+}
+
+.form-hint {
+  padding: 4px 0 2px;
+  line-height: 1.45;
+}
+
+textarea.json-field,
+.form-row textarea {
+  width: 100%;
+  min-height: 64px;
+  resize: vertical;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 6px 8px;
+  outline: none;
+}
+
+textarea.json-field.tall {
+  min-height: 260px;
+}
+
+.models-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  table-layout: fixed;
+}
+
+.models-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-dim);
+  padding: 3px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.models-table th:nth-child(1),
+.models-table th:nth-child(2) {
+  width: 50px;
+}
+
+.models-table th:nth-child(3) {
+  width: 30%;
+}
+
+.models-table th:nth-child(4),
+.models-table th:nth-child(5),
+.models-table th:nth-child(6) {
+  width: 80px;
+}
+
+.models-table th:last-child {
+  width: 30px;
+}
+
+.models-table td {
+  padding: 2px 4px;
+  border-bottom: 1px solid rgba(36, 46, 58, 0.5);
+}
+
+.models-table td input:not([type]) {
+  width: 100%;
+  padding: 2px 5px;
+}
+
+.models-table tr.muted td {
+  color: var(--text-dim);
+}
+
+input.num {
+  width: 100%;
+  max-width: 120px;
+  font-variant-numeric: tabular-nums;
+}
+
+.model-add {
+  gap: 6px;
+  padding-top: 8px;
 }

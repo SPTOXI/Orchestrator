@@ -19,6 +19,7 @@ pub mod package;
 pub mod platform;
 pub mod process;
 pub mod project;
+pub mod schema;
 pub mod shell;
 pub mod terminal;
 
@@ -27,8 +28,8 @@ pub use shell::{ShellInfo, ShellKind, ShellRegistry};
 
 use chrono::Utc;
 use orchestrator_core::{
-    AuditEvent, CallOrigin, EventKind, EventSink, TerminalId, ToolCall, ToolError, ToolErrorKind,
-    ToolResult, ToolSpec,
+    AuditEvent, CallOrigin, EventKind, EventSink, TerminalId, ToolCall, ToolDefinition, ToolError,
+    ToolErrorKind, ToolResult, ToolSpec,
 };
 use orchestrator_git::{DiffOptions, Git, PullOptions, PushOptions, ResetMode};
 use parking_lot::RwLock;
@@ -122,6 +123,12 @@ impl ToolRuntime {
 
     pub fn catalog() -> &'static [ToolSpec] {
         CATALOG
+    }
+
+    /// Catalog plus the JSON Schema of each tool's arguments, as offered to
+    /// AI models (ADR-0010).
+    pub fn definitions() -> &'static [ToolDefinition] {
+        schema::definitions()
     }
 
     /// Current base directory: the open project, or the initial directory.
@@ -714,9 +721,10 @@ impl ToolRuntime {
     }
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct OpenArgs {
+pub(crate) struct OpenArgs {
+    /// Project folder to open (absolute, or relative to the current base directory).
     path: String,
 }
 
@@ -762,9 +770,9 @@ fn process_started(origin: &CallOrigin, out: &process::ProcessInfo) -> AuditEven
 }
 
 /// Arguments of tools that take none.
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct Empty {}
+pub(crate) struct Empty {}
 
 fn parse<T: DeserializeOwned>(args: &Value) -> Result<T, ToolError> {
     let args = if args.is_null() {

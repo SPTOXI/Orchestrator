@@ -7,9 +7,11 @@
 mod audit_log;
 mod commands;
 mod provider_commands;
+mod vault;
 
 use audit_log::AuditLog;
 use orchestrator_core::{AuditEvent, EventSink, StreamEvent};
+use orchestrator_provider_api::ConnectionManager;
 use orchestrator_providers::{EchoProvider, ProviderRegistry, SessionManager};
 use orchestrator_runtime::{RuntimeConfig, ToolRuntime};
 use provider_commands::RuntimeTools;
@@ -58,6 +60,10 @@ impl EventSink for DesktopSink {
 pub struct AppState {
     pub runtime: ToolRuntime,
     pub sessions: SessionManager,
+    /// The user's API connections (ADR-0010); `None` if they could not be
+    /// initialized.
+    pub connections: Option<Arc<ConnectionManager>>,
+    pub connection_warnings: Vec<String>,
     pub sink: Arc<DesktopSink>,
     pub data_dir: PathBuf,
 }
@@ -69,8 +75,8 @@ fn echo_provider_enabled() -> bool {
         || std::env::var("ORCHESTRATOR_ECHO_PROVIDER").is_ok_and(|value| value == "1")
 }
 
-/// Registered AI providers. OpenAI/Codex (Phase 4) and Claude Code (Phase 5)
-/// are added here.
+/// Built-in providers. The user's API connections are added by the
+/// `ConnectionManager` (ADR-0010).
 fn provider_registry(sink: Arc<DesktopSink>) -> Arc<ProviderRegistry> {
     let registry = Arc::new(ProviderRegistry::new(sink));
     if echo_provider_enabled() {
@@ -118,14 +124,29 @@ pub fn run() {
                 log: AuditLog::open(&data_dir.join("audit.jsonl")),
             });
             let runtime = ToolRuntime::new(RuntimeConfig::default(), sink.clone());
+            let registry = provider_registry(sink.clone());
+            let (connections, connection_warnings) = match ConnectionManager::open(
+                &data_dir.join("connections.json"),
+                registry.clone(),
+                Arc::new(vault::OsVault),
+                sink.clone(),
+            ) {
+                Ok((manager, warnings)) => (Some(Arc::new(manager)), warnings),
+                Err(err) => (None, vec![err.message]),
+            };
+            for warning in &connection_warnings {
+                eprintln!("[orchestrator] {warning}");
+            }
             let sessions = SessionManager::new(
-                provider_registry(sink.clone()),
+                registry,
                 Arc::new(RuntimeTools(runtime.clone())),
                 sink.clone(),
             );
             app.manage(AppState {
                 runtime,
                 sessions,
+                connections,
+                connection_warnings,
                 sink,
                 data_dir,
             });
@@ -152,6 +173,11 @@ pub fn run() {
             provider_commands::session_close,
             provider_commands::session_resume,
             provider_commands::session_spawn,
+            provider_commands::connections_list,
+            provider_commands::connection_save,
+            provider_commands::connection_delete,
+            provider_commands::connection_test,
+            provider_commands::connection_models,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build the Orchestrator desktop app");

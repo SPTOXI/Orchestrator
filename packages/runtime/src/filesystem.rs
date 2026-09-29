@@ -13,7 +13,9 @@ use std::io::{self, Read, Write};
 use std::path::Path;
 
 /// Content encoding for `read`/`write`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Encoding {
     #[default]
@@ -32,9 +34,10 @@ pub enum EntryKind {
 
 // ----------------------------------------------------------------- list ---
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ListArgs {
+    /// Absolute path, or relative to the open project.
     pub path: String,
 }
 
@@ -97,9 +100,10 @@ pub fn list(path: &Path) -> Result<ListOutput, ToolError> {
 
 // ----------------------------------------------------------------- read ---
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ReadArgs {
+    /// Absolute path, or relative to the open project.
     pub path: String,
     /// Requested encoding. `utf8` falls back to `base64` for binary content.
     #[serde(default)]
@@ -182,11 +186,14 @@ fn utf8_text(bytes: &[u8], truncated: bool) -> Option<String> {
 
 // ---------------------------------------------------------------- write ---
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WriteArgs {
+    /// Absolute path, or relative to the open project.
     pub path: String,
+    /// Text (utf8) or base64 data, per `encoding`.
     pub content: String,
+    /// Encoding of `content` (default: utf8).
     #[serde(default)]
     pub encoding: Encoding,
     /// Create missing parent directories (default: true).
@@ -249,10 +256,12 @@ pub fn write(path: &Path, args: &WriteArgs) -> Result<WriteOutput, ToolError> {
 
 // ----------------------------------------------------------------- move ---
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MoveArgs {
+    /// Source path.
     pub from: String,
+    /// Destination path.
     pub to: String,
     /// Replace an existing destination (default: false).
     #[serde(default)]
@@ -334,9 +343,10 @@ fn remove_file_or_link(path: &Path) -> io::Result<()> {
 
 // --------------------------------------------------------------- delete ---
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DeleteArgs {
+    /// Absolute path, or relative to the open project.
     pub path: String,
     /// Required to delete a non-empty directory (default: false).
     #[serde(default)]

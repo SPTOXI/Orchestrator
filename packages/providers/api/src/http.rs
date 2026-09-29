@@ -1,0 +1,460 @@
+//! HTTP transport shared by every protocol: requests with cancellation,
+//! error mapping and response framing (SSE, NDJSON, whole body).
+
+use crate::config::StreamFormat;
+use crate::jsonpath;
+use futures_util::StreamExt;
+use orchestrator_providers::{ProviderError, ProviderErrorKind};
+use serde_json::Value;
+use std::time::Duration;
+use tokio_util::sync::CancellationToken;
+
+/// A stream that sends nothing for this long is considered dead.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+/// Error bodies are read up to this size.
+const MAX_ERROR_BODY: usize = 64 * 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Method {
+    Get,
+    Post,
+}
+
+/// A fully built request. Headers may carry the API key: never log them.
+#[derive(Debug, Clone)]
+pub struct HttpCall {
+    pub method: Method,
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Option<Value>,
+}
+
+impl HttpCall {
+    pub fn post(url: String, body: Value) -> Self {
+        Self {
+            method: Method::Post,
+            url,
+            headers: Vec::new(),
+            body: Some(body),
+        }
+    }
+
+    pub fn get(url: String) -> Self {
+        Self {
+            method: Method::Get,
+            url,
+            headers: Vec::new(),
+            body: None,
+        }
+    }
+
+    pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.push((name.into(), value.into()));
+        self
+    }
+}
+
+/// One unit of a response: an SSE event, an NDJSON line or a whole body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Frame {
+    /// SSE `event:` name, if any.
+    pub event: Option<String>,
+    pub data: String,
+}
+
+#[derive(Clone)]
+pub struct HttpClient {
+    client: reqwest::Client,
+}
+
+impl HttpClient {
+    pub fn new() -> Result<Self, ProviderError> {
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(20))
+            .user_agent(concat!("Orchestrator/", env!("CARGO_PKG_VERSION")))
+            .build()
+            .map_err(|e| ProviderError::internal(format!("cannot build HTTP client: {e}")))?;
+        Ok(Self { client })
+    }
+
+    /// Sends `call`; non-2xx statuses become typed errors with the API's
+    /// own message.
+    pub async fn send(
+        &self,
+        call: &HttpCall,
+        cancel: &CancellationToken,
+    ) -> Result<reqwest::Response, ProviderError> {
+        let mut request = match call.method {
+            Method::Get => self.client.get(&call.url),
+            Method::Post => self.client.post(&call.url),
+        };
+        for (name, value) in &call.headers {
+            request = request.header(name, value);
+        }
+        if let Some(body) = &call.body {
+            request = request.json(body);
+        }
+        let response = tokio::select! {
+            result = request.send() => result.map_err(|e| transport_error(e, &call.url))?,
+            () = cancel.cancelled() => return Err(ProviderError::cancelled("request cancelled")),
+        };
+        let status = response.status();
+        if status.is_success() {
+            return Ok(response);
+        }
+        let body = read_limited(response, cancel).await.unwrap_or_default();
+        Err(status_error(status.as_u16(), &body))
+    }
+
+    /// Sends and parses a JSON response.
+    pub async fn json(
+        &self,
+        call: &HttpCall,
+        cancel: &CancellationToken,
+    ) -> Result<Value, ProviderError> {
+        let response = self.send(call, cancel).await?;
+        let text = read_all(response, cancel).await?;
+        serde_json::from_str(&text).map_err(|e| {
+            ProviderError::failed(format!(
+                "response is not JSON ({e}): {}",
+                truncate(&text, 300)
+            ))
+        })
+    }
+}
+
+/// Reads frames from a response in the given format.
+pub struct FrameReader {
+    response: Option<reqwest::Response>,
+    format: StreamFormat,
+    lines: LineSplitter,
+    sse: SseState,
+    pending: std::collections::VecDeque<Frame>,
+    done: bool,
+}
+
+impl FrameReader {
+    pub fn new(response: reqwest::Response, format: StreamFormat) -> Self {
+        Self {
+            response: Some(response),
+            format,
+            lines: LineSplitter::default(),
+            sse: SseState::default(),
+            pending: Default::default(),
+            done: false,
+        }
+    }
+
+    /// Next frame, `None` at the end of the response.
+    pub async fn next(
+        &mut self,
+        cancel: &CancellationToken,
+    ) -> Result<Option<Frame>, ProviderError> {
+        loop {
+            if let Some(frame) = self.pending.pop_front() {
+                return Ok(Some(frame));
+            }
+            if self.done {
+                return Ok(None);
+            }
+            let Some(response) = self.response.as_mut() else {
+                return Ok(None);
+            };
+            if self.format == StreamFormat::None {
+                let response = self.response.take().expect("response present");
+                let data = read_all(response, cancel).await?;
+                self.done = true;
+                return Ok(Some(Frame { event: None, data }));
+            }
+            let chunk = tokio::select! {
+                chunk = tokio::time::timeout(IDLE_TIMEOUT, response.chunk()) => chunk
+                    .map_err(|_| ProviderError::failed("stream stalled: no data for 300 s"))?
+                    .map_err(|e| ProviderError::failed(format!("stream interrupted: {}", e.without_url())))?,
+                () = cancel.cancelled() => return Err(ProviderError::cancelled("stream cancelled")),
+            };
+            let lines = match chunk {
+                Some(bytes) => self.lines.push(&bytes),
+                None => {
+                    self.done = true;
+                    self.lines.finish()
+                }
+            };
+            for line in lines {
+                self.feed_line(line);
+            }
+            if self.done {
+                if let Some(frame) = self.sse.flush() {
+                    self.pending.push_back(frame);
+                }
+            }
+        }
+    }
+
+    fn feed_line(&mut self, line: String) {
+        match self.format {
+            StreamFormat::Ndjson => {
+                if !line.trim().is_empty() {
+                    self.pending.push_back(Frame {
+                        event: None,
+                        data: line,
+                    });
+                }
+            }
+            StreamFormat::Sse => {
+                if let Some(frame) = self.sse.line(&line) {
+                    self.pending.push_back(frame);
+                }
+            }
+            StreamFormat::None => {}
+        }
+    }
+}
+
+/// Splits bytes into lines (`\n` or `\r\n`), decoding each complete line
+/// as UTF-8 so multi-byte characters split across chunks stay intact.
+#[derive(Default)]
+pub struct LineSplitter {
+    buffer: Vec<u8>,
+}
+
+impl LineSplitter {
+    pub fn push(&mut self, bytes: &[u8]) -> Vec<String> {
+        self.buffer.extend_from_slice(bytes);
+        let mut lines = Vec::new();
+        while let Some(pos) = self.buffer.iter().position(|b| *b == b'\n') {
+            let mut line: Vec<u8> = self.buffer.drain(..=pos).collect();
+            line.pop();
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            lines.push(String::from_utf8_lossy(&line).into_owned());
+        }
+        lines
+    }
+
+    pub fn finish(&mut self) -> Vec<String> {
+        if self.buffer.is_empty() {
+            return Vec::new();
+        }
+        let rest = std::mem::take(&mut self.buffer);
+        vec![String::from_utf8_lossy(&rest)
+            .trim_end_matches('\r')
+            .to_owned()]
+    }
+}
+
+/// Server-sent events assembly (`event:`/`data:` fields, blank line ends
+/// an event; comments and other fields are ignored).
+#[derive(Default)]
+pub struct SseState {
+    event: Option<String>,
+    data: Vec<String>,
+}
+
+impl SseState {
+    pub fn line(&mut self, line: &str) -> Option<Frame> {
+        if line.is_empty() {
+            return self.flush();
+        }
+        if line.starts_with(':') {
+            return None;
+        }
+        let (field, value) = match line.split_once(':') {
+            Some((field, value)) => (field, value.strip_prefix(' ').unwrap_or(value)),
+            None => (line, ""),
+        };
+        match field {
+            "event" => self.event = Some(value.to_owned()),
+            "data" => self.data.push(value.to_owned()),
+            _ => {}
+        }
+        None
+    }
+
+    pub fn flush(&mut self) -> Option<Frame> {
+        if self.data.is_empty() {
+            self.event = None;
+            return None;
+        }
+        Some(Frame {
+            event: self.event.take(),
+            data: std::mem::take(&mut self.data).join("\n"),
+        })
+    }
+}
+
+async fn read_all(
+    response: reqwest::Response,
+    cancel: &CancellationToken,
+) -> Result<String, ProviderError> {
+    tokio::select! {
+        text = response.text() => text.map_err(|e| ProviderError::failed(format!("cannot read response: {}", e.without_url()))),
+        () = cancel.cancelled() => Err(ProviderError::cancelled("request cancelled")),
+    }
+}
+
+async fn read_limited(
+    response: reqwest::Response,
+    cancel: &CancellationToken,
+) -> Result<String, ProviderError> {
+    let mut stream = response.bytes_stream();
+    let mut body = Vec::new();
+    loop {
+        let next = tokio::select! {
+            next = stream.next() => next,
+            () = cancel.cancelled() => return Err(ProviderError::cancelled("request cancelled")),
+        };
+        match next {
+            Some(Ok(bytes)) => {
+                body.extend_from_slice(&bytes);
+                if body.len() >= MAX_ERROR_BODY {
+                    break;
+                }
+            }
+            _ => break,
+        }
+    }
+    Ok(String::from_utf8_lossy(&body).into_owned())
+}
+
+/// Transport failure. The URL is dropped from the message: a query-string
+/// key (generic APIs) must never be echoed.
+fn transport_error(error: reqwest::Error, url: &str) -> ProviderError {
+    let host = url
+        .split("://")
+        .nth(1)
+        .and_then(|rest| rest.split(['/', '?']).next())
+        .unwrap_or("?");
+    let detail = error.without_url();
+    ProviderError::unavailable(format!("cannot reach {host}: {detail}"))
+}
+
+/// Maps an HTTP error status plus the API's error body.
+pub fn status_error(status: u16, body: &str) -> ProviderError {
+    let message = error_message(body);
+    // Gemini answers a bad key with 400 + reason API_KEY_INVALID.
+    let auth = matches!(status, 401 | 403) || (status == 400 && body.contains("API_KEY_INVALID"));
+    let (kind, what) = match status {
+        _ if auth => (
+            ProviderErrorKind::Unavailable,
+            "authentication rejected — check the API key",
+        ),
+        404 => (
+            ProviderErrorKind::InvalidRequest,
+            "not found — check the base URL and the model",
+        ),
+        400 | 409 | 413 | 422 => (ProviderErrorKind::InvalidRequest, "request rejected"),
+        429 => (ProviderErrorKind::Failed, "rate limit or quota exceeded"),
+        500..=599 => (ProviderErrorKind::Failed, "server error"),
+        _ => (ProviderErrorKind::Failed, "unexpected status"),
+    };
+    ProviderError::new(kind, format!("{what} (HTTP {status}): {message}"))
+}
+
+/// Best-effort error text from a JSON (or plain) error body.
+pub fn error_message(body: &str) -> String {
+    if let Ok(json) = serde_json::from_str::<Value>(body) {
+        for path in [
+            "error.message",
+            "error",
+            "message",
+            "detail",
+            "error_description",
+        ] {
+            if let Some(text) = jsonpath::get(&json, path).and_then(Value::as_str) {
+                return truncate(text, 500);
+            }
+        }
+        return truncate(&json.to_string(), 500);
+    }
+    let text = body.trim();
+    if text.is_empty() {
+        "(empty body)".into()
+    } else {
+        truncate(text, 500)
+    }
+}
+
+pub fn truncate(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_owned();
+    }
+    let cut: String = text.chars().take(max_chars).collect();
+    format!("{cut}…")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lines_survive_split_utf8_and_crlf() {
+        let mut splitter = LineSplitter::default();
+        let text = "olá\r\nmundo\n".as_bytes();
+        let (a, b) = text.split_at(3); // splits inside "á"
+        assert!(splitter.push(a).is_empty());
+        assert_eq!(splitter.push(b), vec!["olá", "mundo"]);
+        assert_eq!(splitter.push(b"fim"), Vec::<String>::new());
+        assert_eq!(splitter.finish(), vec!["fim"]);
+    }
+
+    #[test]
+    fn sse_assembles_events() {
+        let mut sse = SseState::default();
+        let mut frames = Vec::new();
+        for line in [
+            ": ping",
+            "event: message_start",
+            "data: {\"a\":1}",
+            "",
+            "data: linha 1",
+            "data: linha 2",
+            "",
+            "data: [DONE]",
+        ] {
+            frames.extend(sse.line(line));
+        }
+        frames.extend(sse.flush());
+        assert_eq!(
+            frames,
+            vec![
+                Frame {
+                    event: Some("message_start".into()),
+                    data: "{\"a\":1}".into()
+                },
+                Frame {
+                    event: None,
+                    data: "linha 1\nlinha 2".into()
+                },
+                Frame {
+                    event: None,
+                    data: "[DONE]".into()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn errors_carry_the_api_message() {
+        let err = status_error(401, r#"{"error":{"message":"Invalid API key"}}"#);
+        assert_eq!(err.kind, ProviderErrorKind::Unavailable);
+        assert!(err.message.contains("Invalid API key"), "{}", err.message);
+        let gemini = r#"{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT","details":[{"reason":"API_KEY_INVALID"}]}}"#;
+        let err = status_error(400, gemini);
+        assert_eq!(err.kind, ProviderErrorKind::Unavailable);
+        assert!(
+            err.message.starts_with("authentication rejected"),
+            "{}",
+            err.message
+        );
+        assert_eq!(
+            status_error(400, "{}").kind,
+            ProviderErrorKind::InvalidRequest
+        );
+        let err = status_error(429, "slow down");
+        assert_eq!(err.kind, ProviderErrorKind::Failed);
+        assert!(err.message.contains("slow down"));
+        assert_eq!(error_message(r#"{"detail":"x"}"#), "x");
+        assert_eq!(error_message(""), "(empty body)");
+    }
+}

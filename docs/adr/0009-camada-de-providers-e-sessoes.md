@@ -1,6 +1,9 @@
 # ADR-0009 — Camada de providers: `AIProvider`, registro e sessões
 
-- **Estado:** Aceita
+- **Estado:** Aceita; os adapters `providers/openai` e `providers/claude`
+  (item 1 e Consequências) foram substituídos pela
+  [ADR-0010](./0010-providers-por-api-com-cadastro-livre.md): providers por
+  API com cadastro livre.
 - **Fase:** 3
 
 ## Contexto

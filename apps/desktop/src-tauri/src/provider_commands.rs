@@ -5,7 +5,10 @@
 use crate::AppState;
 use async_trait::async_trait;
 use orchestrator_core::{
-    CallOrigin, ProviderId, SessionId, SessionInfo, ToolCall, ToolResult, ToolSpec, TurnId,
+    CallOrigin, ProviderId, SessionId, SessionInfo, ToolCall, ToolDefinition, ToolResult, TurnId,
+};
+use orchestrator_provider_api::{
+    ConnectionManager, ConnectionView, ModelEntry, Preset, ProbeRequest, SaveRequest, TestReport,
 };
 use orchestrator_providers::{
     ProviderError, ProviderInfo, ProviderStatus, SessionSnapshot, StartRequest, ToolExecutor,
@@ -19,8 +22,8 @@ pub struct RuntimeTools(pub ToolRuntime);
 
 #[async_trait]
 impl ToolExecutor for RuntimeTools {
-    fn catalog(&self) -> Vec<ToolSpec> {
-        ToolRuntime::catalog().to_vec()
+    fn tools(&self) -> Vec<ToolDefinition> {
+        ToolRuntime::definitions().to_vec()
     }
 
     async fn execute(&self, call: ToolCall) -> ToolResult {
@@ -161,4 +164,71 @@ pub async fn session_spawn(
             CallOrigin::User,
         )
         .await
+}
+
+// ------------------------------------------------------ API connections ---
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionsView {
+    pub connections: Vec<ConnectionView>,
+    pub presets: Vec<Preset>,
+    /// Where keys are stored (OS vault name).
+    pub vault: String,
+    /// Problems found when loading `connections.json`.
+    pub warnings: Vec<String>,
+}
+
+fn connections(state: &AppState) -> Result<&ConnectionManager, ProviderError> {
+    state.connections.as_deref().ok_or_else(|| {
+        ProviderError::unavailable("API connections are unavailable (see the app log)")
+    })
+}
+
+#[tauri::command]
+pub async fn connections_list(
+    state: State<'_, AppState>,
+) -> Result<ConnectionsView, ProviderError> {
+    let manager = connections(&state)?;
+    Ok(ConnectionsView {
+        connections: manager.list().await,
+        presets: manager.presets(),
+        vault: manager.secrets_backend(),
+        warnings: state.connection_warnings.clone(),
+    })
+}
+
+/// Creates or updates a connection; a typed key goes to the OS vault.
+#[tauri::command]
+pub async fn connection_save(
+    state: State<'_, AppState>,
+    request: SaveRequest,
+) -> Result<ConnectionView, ProviderError> {
+    connections(&state)?.save(request, CallOrigin::User).await
+}
+
+#[tauri::command]
+pub async fn connection_delete(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), ProviderError> {
+    connections(&state)?.remove(&id, CallOrigin::User).await
+}
+
+/// Tests a (possibly unsaved) connection: short reply + tool call check.
+#[tauri::command]
+pub async fn connection_test(
+    state: State<'_, AppState>,
+    request: ProbeRequest,
+) -> Result<TestReport, ProviderError> {
+    connections(&state)?.test(request).await
+}
+
+/// Models available to a (possibly unsaved) connection.
+#[tauri::command]
+pub async fn connection_models(
+    state: State<'_, AppState>,
+    request: ProbeRequest,
+) -> Result<Vec<ModelEntry>, ProviderError> {
+    connections(&state)?.models(request).await
 }

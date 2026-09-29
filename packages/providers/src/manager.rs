@@ -87,7 +87,9 @@ enum Mode {
 
 struct Session {
     id: SessionId,
-    provider: Arc<dyn AIProvider>,
+    /// Instance that served the last turn (to cancel it). Each turn takes the
+    /// provider registered now under `info.provider` (see `Inner::provider`).
+    provider: Mutex<Arc<dyn AIProvider>>,
     sink: Arc<dyn EventSink>,
     state: Mutex<SessionState>,
 }
@@ -111,6 +113,7 @@ struct RunningTurn {
 
 /// Everything a turn task needs, taken while the session is locked.
 struct TurnStart {
+    provider: Arc<dyn AIProvider>,
     turn_id: TurnId,
     cancel: CancellationToken,
     done: watch::Sender<bool>,
@@ -165,6 +168,21 @@ struct Inner {
     config: ManagerConfig,
     /// Creation order.
     sessions: RwLock<Vec<Arc<Session>>>,
+}
+
+impl Inner {
+    /// The session's provider as registered now: an edited connection
+    /// (replaced in the registry) applies to open sessions from their next
+    /// turn; a removed or disabled one fails the turn with a clear error.
+    fn provider(&self, session: &Session) -> Result<Arc<dyn AIProvider>, ProviderError> {
+        let id = session.state.lock().info.provider.clone();
+        self.registry.get(&id).ok_or_else(|| {
+            ProviderError::unavailable(format!(
+                "provider {id} is no longer registered (its connection was removed, renamed \
+                 or disabled); start a new session"
+            ))
+        })
+    }
 }
 
 /// Owns every provider session. Cheap to clone (shared state).
@@ -269,7 +287,7 @@ impl SessionManager {
         let parent = self.session(parent_id)?;
         let provider = match &request.provider {
             Some(id) => self.inner.registry.require(id)?,
-            None => parent.provider.clone(),
+            None => self.inner.provider(&parent)?,
         };
         let project_path = parent.state.lock().spec.project_path.clone();
         self.open(provider, request, project_path, Some(parent), origin)
@@ -299,7 +317,7 @@ impl SessionManager {
         };
 
         let native = match &parent {
-            Some(parent) if parent.provider.descriptor().id == descriptor.id => {
+            Some(parent) if parent.state.lock().info.provider == descriptor.id => {
                 let parent_native = parent.state.lock().native.clone();
                 provider.spawn_agent(&parent_native, &spec).await?
             }
@@ -324,7 +342,7 @@ impl SessionManager {
         };
         let session = Arc::new(Session {
             id: id.clone(),
-            provider,
+            provider: Mutex::new(provider),
             sink: self.inner.sink.clone(),
             state: Mutex::new(SessionState {
                 info: info.clone(),
@@ -443,6 +461,7 @@ impl SessionManager {
             return Err(ProviderError::invalid("input is empty"));
         }
         let session = self.session(id)?;
+        let provider = self.inner.provider(&session)?;
         let mut state = session.state.lock();
         match state.info.status {
             SessionStatus::Closed => {
@@ -477,7 +496,9 @@ impl SessionManager {
             },
         );
         session.set_status(&mut state, SessionStatus::Running);
+        *session.provider.lock() = provider.clone();
         let turn = TurnStart {
+            provider,
             turn_id,
             cancel,
             done,
@@ -501,7 +522,8 @@ impl SessionManager {
                 None => return Ok(state.info.clone()),
             }
         };
-        if let Err(err) = session.provider.cancel(&native).await {
+        let provider = session.provider.lock().clone();
+        if let Err(err) = provider.cancel(&native).await {
             let mut state = session.state.lock();
             session.record(
                 &mut state,
@@ -570,7 +592,8 @@ impl SessionManager {
             }
             (state.native.clone(), state.spec.clone())
         };
-        let native = session.provider.resume(&native, &spec).await?;
+        let provider = self.inner.provider(&session)?;
+        let native = provider.resume(&native, &spec).await?;
         let info = {
             let mut state = session.state.lock();
             if state.info.status != SessionStatus::Closed {
@@ -581,6 +604,7 @@ impl SessionManager {
                 state.info.model = native.model.clone();
             }
             state.native = native;
+            *session.provider.lock() = provider;
             session.set_status(&mut state, SessionStatus::Idle);
             state.info.clone()
         };
@@ -609,9 +633,9 @@ impl SessionManager {
                 })
             };
             if let Some(native) = native {
+                let provider = session.provider.lock().clone();
                 let _ =
-                    tokio::time::timeout(Duration::from_secs(2), session.provider.cancel(&native))
-                        .await;
+                    tokio::time::timeout(Duration::from_secs(2), provider.cancel(&native)).await;
             }
         }
     }
@@ -626,7 +650,7 @@ async fn run_turn(
     origin: CallOrigin,
 ) -> TurnResult {
     let clock = Instant::now();
-    let provider = session.provider.clone();
+    let provider = turn.provider.clone();
     let descriptor = provider.descriptor();
     let ctx = TurnContext::new(
         session.id.clone(),

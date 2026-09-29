@@ -4,7 +4,7 @@
 use async_trait::async_trait;
 use orchestrator_core::{
     AuditEvent, CallOrigin, EventKind, MemorySink, ProviderId, SessionEvent, SessionId,
-    SessionInfo, SessionStatus, StreamEvent, ToolCall, ToolErrorKind, ToolResult, ToolSpec,
+    SessionInfo, SessionStatus, StreamEvent, ToolCall, ToolDefinition, ToolErrorKind, ToolResult,
     TurnStatus,
 };
 use orchestrator_providers::{
@@ -24,8 +24,8 @@ struct RuntimeTools(ToolRuntime);
 
 #[async_trait]
 impl ToolExecutor for RuntimeTools {
-    fn catalog(&self) -> Vec<ToolSpec> {
-        ToolRuntime::catalog().to_vec()
+    fn tools(&self) -> Vec<ToolDefinition> {
+        ToolRuntime::definitions().to_vec()
     }
 
     async fn execute(&self, call: ToolCall) -> ToolResult {
@@ -500,6 +500,17 @@ async fn registry_selects_the_active_provider() {
 
     // New sessions use the active provider.
     assert_eq!(h.start().await.provider, ProviderId::from("echo-b"));
+
+    // Replacing keeps the position; removing the active one picks the next.
+    registry.replace(Arc::new(
+        EchoProvider::with_identity("echo-b", "Echo B v2").with_chunk_delay(Duration::ZERO),
+    ));
+    assert_eq!(registry.list()[1].descriptor.name, "Echo B v2");
+    assert!(registry.unregister(&ProviderId::from("echo-b"), CallOrigin::User));
+    assert!(!registry.unregister(&ProviderId::from("echo-b"), CallOrigin::User));
+    assert_eq!(registry.active_id(), Some(ProviderId::from("echo")));
+    let removed = h.audits(EventKind::ProviderSwitched);
+    assert_eq!(removed.last().unwrap().data["reason"], "removed");
     let status = registry.inspect(&ProviderId::from("echo")).await.unwrap();
     assert!(status.available);
 
@@ -513,6 +524,132 @@ async fn registry_selects_the_active_provider() {
         .await
         .unwrap_err();
     assert_eq!(none.kind, ProviderErrorKind::NotFound);
+}
+
+/// Answers with the version it was built with (an edited API connection is a
+/// new instance under the same id).
+struct Versioned(&'static str);
+
+#[async_trait]
+impl AIProvider for Versioned {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            id: ProviderId::from("versioned"),
+            name: format!("Versioned {}", self.0),
+            vendor: "tests".into(),
+            description: String::new(),
+        }
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities::default()
+    }
+
+    async fn inspect(&self) -> ProviderStatus {
+        ProviderStatus {
+            available: true,
+            version: Some(self.0.into()),
+            authenticated: None,
+            detail: None,
+            checked_at: chrono::Utc::now(),
+        }
+    }
+
+    async fn start(
+        &self,
+        _spec: &SessionSpec,
+    ) -> Result<NativeSession, orchestrator_providers::ProviderError> {
+        Ok(NativeSession {
+            reference: "versioned-1".into(),
+            model: None,
+            data: Value::Null,
+        })
+    }
+
+    async fn resume(
+        &self,
+        native: &NativeSession,
+        _spec: &SessionSpec,
+    ) -> Result<NativeSession, orchestrator_providers::ProviderError> {
+        Ok(native.clone())
+    }
+
+    async fn execute(
+        &self,
+        _native: &NativeSession,
+        _input: &TurnInput,
+        _ctx: &TurnContext,
+    ) -> Result<TurnOutput, orchestrator_providers::ProviderError> {
+        Ok(TurnOutput {
+            text: format!("served by {}", self.0),
+        })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn open_sessions_follow_the_provider_registered_now() {
+    let h = harness_with(vec![Arc::new(Versioned("v1"))]);
+    let registry = h.manager.registry().clone();
+    let request = || StartRequest {
+        provider: Some(ProviderId::from("versioned")),
+        ..Default::default()
+    };
+    let path = h._dir.path().to_path_buf();
+    let session = h
+        .manager
+        .start(request(), path.clone(), CallOrigin::User)
+        .await
+        .unwrap();
+    let parent = h.start().await;
+    let ask = |id: SessionId| {
+        let manager = h.manager.clone();
+        async move { manager.execute(&id, "oi".into(), CallOrigin::User).await }
+    };
+    assert_eq!(ask(session.id.clone()).await.unwrap().text, "served by v1");
+
+    // Editing the connection replaces the instance: the next turn uses it.
+    registry.replace(Arc::new(Versioned("v2")));
+    assert_eq!(ask(session.id.clone()).await.unwrap().text, "served by v2");
+
+    // A subagent of an echo session may still pick the edited provider.
+    let child = h
+        .manager
+        .spawn(&parent.id, request(), CallOrigin::User)
+        .await
+        .unwrap();
+    assert_eq!(ask(child.id.clone()).await.unwrap().text, "served by v2");
+
+    // Removing it fails the next turn clearly; the session stays listed.
+    assert!(registry.unregister(&ProviderId::from("versioned"), CallOrigin::User));
+    let err = ask(session.id.clone()).await.unwrap_err();
+    assert_eq!(err.kind, ProviderErrorKind::Unavailable);
+    assert!(
+        err.message.contains("no longer registered"),
+        "{}",
+        err.message
+    );
+    assert_eq!(
+        h.manager.info(&session.id).unwrap().status,
+        SessionStatus::Idle
+    );
+    h.manager
+        .close(&session.id, CallOrigin::User)
+        .await
+        .unwrap();
+    let err = h
+        .manager
+        .resume(&session.id, CallOrigin::User)
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, ProviderErrorKind::Unavailable);
+
+    // Registered again (e.g. re-enabled), the session works again.
+    registry.register(Arc::new(Versioned("v3"))).unwrap();
+    h.manager
+        .resume(&session.id, CallOrigin::User)
+        .await
+        .unwrap();
+    assert_eq!(ask(session.id.clone()).await.unwrap().text, "served by v3");
 }
 
 /// Ignores cancellation, then tries a tool after being cancelled.
@@ -611,7 +748,7 @@ struct SlowTools;
 
 #[async_trait]
 impl ToolExecutor for SlowTools {
-    fn catalog(&self) -> Vec<ToolSpec> {
+    fn tools(&self) -> Vec<ToolDefinition> {
         Vec::new()
     }
 
@@ -636,7 +773,7 @@ struct NoTools;
 
 #[async_trait]
 impl ToolExecutor for NoTools {
-    fn catalog(&self) -> Vec<ToolSpec> {
+    fn tools(&self) -> Vec<ToolDefinition> {
         Vec::new()
     }
 

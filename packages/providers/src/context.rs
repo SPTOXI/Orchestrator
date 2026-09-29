@@ -7,8 +7,8 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use orchestrator_core::{
-    CallOrigin, NoticeLevel, ProviderId, SessionEvent, SessionId, TokenUsage, ToolCall, ToolError,
-    ToolErrorKind, ToolResult, ToolSpec, TurnId,
+    CallOrigin, NoticeLevel, ProviderId, SessionEvent, SessionId, TokenUsage, ToolCall,
+    ToolDefinition, ToolError, ToolErrorKind, ToolResult, TurnId,
 };
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -21,8 +21,9 @@ use tokio_util::sync::CancellationToken;
 /// the user's.
 #[async_trait]
 pub trait ToolExecutor: Send + Sync + 'static {
-    /// Tools the provider may request.
-    fn catalog(&self) -> Vec<ToolSpec>;
+    /// Tools the provider may request, with the JSON Schema of their
+    /// arguments (ADR-0010).
+    fn tools(&self) -> Vec<ToolDefinition>;
 
     async fn execute(&self, call: ToolCall) -> ToolResult;
 }
@@ -82,8 +83,8 @@ impl TurnContext {
     }
 
     /// Tools the provider may request through [`Self::call_tool`].
-    pub fn tools(&self) -> Vec<ToolSpec> {
-        self.tools.catalog()
+    pub fn tools(&self) -> Vec<ToolDefinition> {
+        self.tools.tools()
     }
 
     /// Assistant output (streaming).
@@ -131,6 +132,11 @@ impl TurnContext {
     /// Resolves when the turn is cancelled.
     pub async fn cancelled(&self) {
         self.cancel.cancelled().await
+    }
+
+    /// The turn's cancellation token (to pass into I/O helpers).
+    pub fn cancellation(&self) -> CancellationToken {
+        self.cancel.clone()
     }
 
     /// Asks the Orchestrator to execute a tool and waits for the result.

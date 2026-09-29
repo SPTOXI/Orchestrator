@@ -12,8 +12,9 @@ Rust Runtime (packages/runtime) ──▶ Orchestrator Core (packages/core)
 Provider Layer (packages/providers) ──tool_call──▶ ToolRuntime::invoke
 ```
 
-Decisões registradas em [ADR-0003](./adr/0003-gateway-ipc-unico.md) e
-[ADR-0009](./adr/0009-camada-de-providers-e-sessoes.md).
+Decisões registradas em [ADR-0003](./adr/0003-gateway-ipc-unico.md),
+[ADR-0009](./adr/0009-camada-de-providers-e-sessoes.md) e
+[ADR-0010](./adr/0010-providers-por-api-com-cadastro-livre.md).
 
 ## Comandos
 
@@ -55,6 +56,26 @@ Não são ferramentas do sistema operacional, então não passam por
 
 Ferramentas pedidas pelo provider passam pelo mesmo `ToolRuntime::invoke` e
 geram `TOOL_CALLED` com `origin = agent { agentId, sessionId, provider }`.
+
+### Conexões de API (Fase 4, ADR-0010)
+
+Cadastro das APIs que viram providers. Mesmo formato de erro
+(`{ kind, message }`). Referência: [`api-connections.md`](./api-connections.md).
+
+| Comando | Argumentos | Retorno | Histórico |
+| ------- | ---------- | ------- | --------- |
+| `connections_list` | — | `{ connections: ConnectionView[], presets, vault, warnings }` | — |
+| `connection_save` | `request: { connection, apiKey?, clearKey?, previousId? }` | `ConnectionView` | `CONNECTION_SAVED` (e `PROVIDER_SWITCHED` se o ativo sair) |
+| `connection_delete` | `id` | `void` | `CONNECTION_REMOVED` |
+| `connection_test` | `request: { connection, apiKey?, model? }` | `TestReport` | — |
+| `connection_models` | `request: { connection, apiKey? }` | `ModelEntry[]` descobertos | — |
+
+- `ConnectionView = { connection, key: { source, present, detail } }`: a
+  chave **nunca** volta para a webview, só se ela existe.
+- `apiKey` vai direto para o cofre do sistema (`connection_save`) ou é usada
+  só naquela chamada (`connection_test`, `connection_models`), para testar
+  uma configuração antes de salvar.
+- `previousId` indica a conexão editada quando o id muda (renomear).
 
 ## Eventos
 

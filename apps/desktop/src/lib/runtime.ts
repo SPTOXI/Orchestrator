@@ -23,8 +23,14 @@ import type {
   NodeRuntime,
   PackageOutput,
   ProjectProfile,
+  ConnectionsView,
+  ConnectionView,
+  ModelEntry,
+  ProbeRequest,
   ProviderError,
   ProviderErrorKind,
+  SaveConnectionRequest,
+  TestReport,
   ProvidersView,
   ProviderStatus,
   SessionInfo,
@@ -241,4 +247,13 @@ export const sessionApi = {
   /** Subagent session (spawnAgent). */
   spawn: (parentId: string, request: StartRequest = {}) =>
     callProvider<SessionInfo>("session_spawn", { parentId, request }),
+};
+
+/** User-registered AI APIs (ADR-0010). Keys go to the OS vault, never back. */
+export const connectionApi = {
+  list: () => callProvider<ConnectionsView>("connections_list"),
+  save: (request: SaveConnectionRequest) => callProvider<ConnectionView>("connection_save", { request }),
+  remove: (id: string) => callProvider<void>("connection_delete", { id }),
+  test: (request: ProbeRequest) => callProvider<TestReport>("connection_test", { request }),
+  models: (request: ProbeRequest) => callProvider<ModelEntry[]>("connection_models", { request }),
 };

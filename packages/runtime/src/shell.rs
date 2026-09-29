@@ -357,15 +357,18 @@ fn detect_windows() -> (Vec<ShellInfo>, String) {
 }
 
 /// Arguments of `shell.execute`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExecuteArgs {
+    /// Command line, interpreted by the shell.
     pub command: String,
+    /// Working directory (default: the open project).
     #[serde(default)]
     pub cwd: Option<String>,
     /// Shell id, kind or path. Default: the system default shell.
     #[serde(default)]
     pub shell: Option<String>,
+    /// Extra environment variables.
     #[serde(default)]
     pub env: HashMap<String, String>,
     /// No timeout when absent.
@@ -374,7 +377,7 @@ pub struct ExecuteArgs {
     /// Text written to the command's stdin (stdin is empty otherwise).
     #[serde(default)]
     pub stdin: Option<String>,
-    /// Cap per output stream. Default: [`DEFAULT_MAX_OUTPUT_BYTES`].
+    /// Cap per output stream in bytes (default: 4 MiB, see [`DEFAULT_MAX_OUTPUT_BYTES`]).
     #[serde(default)]
     pub max_output_bytes: Option<usize>,
 }

@@ -67,13 +67,21 @@ export function useProviders(enabled: boolean): Providers {
     });
     const unsubscribeAudit = auditEvents.subscribe((event) => {
       if (event.kind === "SESSION_STARTED") reloadSessions();
-      else if (event.kind === "PROVIDER_SWITCHED") void refresh().catch((e) => setError(errorMessage(e)));
+      else if (
+        event.kind === "PROVIDER_SWITCHED" ||
+        event.kind === "CONNECTION_SAVED" ||
+        event.kind === "CONNECTION_REMOVED"
+      ) {
+        // The set of providers (or their models) changed.
+        void refresh().catch((e) => setError(errorMessage(e)));
+        if (event.kind === "CONNECTION_SAVED" && typeof event.data.id === "string") void inspect(event.data.id);
+      }
     });
     return () => {
       unsubscribeStream();
       unsubscribeAudit();
     };
-  }, [enabled, refresh, refreshSessions]);
+  }, [enabled, refresh, refreshSessions, inspect]);
 
   // Check availability once per provider.
   const ids = view?.providers.map((p) => p.id).join("|") ?? "";

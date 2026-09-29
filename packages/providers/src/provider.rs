@@ -20,18 +20,26 @@ pub struct ProviderDescriptor {
     pub description: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelInfo {
     pub id: String,
     pub name: String,
     /// Context window in tokens, when known.
     pub context_window: Option<u32>,
+    /// Can call tools natively, when known.
+    pub supports_tools: Option<bool>,
+    /// USD per million input tokens, when known.
+    pub input_price: Option<f64>,
+    /// USD per million output tokens, when known.
+    pub output_price: Option<f64>,
+    /// Free labels (e.g. "código", "barato"), used to route work (Phase 5).
+    pub tags: Vec<String>,
 }
 
 /// What a provider supports. The Orchestrator adapts to it instead of
 /// assuming a specific vendor.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderCapabilities {
     /// Emits output incrementally (`stream`).
@@ -67,7 +75,7 @@ pub struct ProviderStatus {
     pub checked_at: DateTime<Utc>,
 }
 
-/// The provider's own session (e.g. a Codex thread). Opaque to the
+/// The provider's own session (e.g. an API conversation). Opaque to the
 /// Orchestrator, which only stores it to call the provider again.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -108,7 +116,7 @@ pub struct TurnOutput {
 }
 
 /// An AI provider adapter. Implementations live in their own crates
-/// (`providers/openai`, `providers/claude`, …) and never touch the operating
+/// (`packages/providers/api`, …) and never touch the operating
 /// system: every operation goes through [`TurnContext::call_tool`].
 ///
 /// Text output goes to the context (`emit_text`) only in `stream`; `execute`

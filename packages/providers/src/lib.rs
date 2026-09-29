@@ -12,9 +12,10 @@
 //!   (the Tool Runtime in the app).
 //! - [`EchoProvider`]: development provider without AI.
 //!
-//! Vendor adapters (OpenAI/Codex, Claude Code, …) live in their own crates
-//! under `packages/providers/*` and depend only on this crate and
-//! `orchestrator-core`.
+//! Adapters live in their own crates under `packages/providers/*` and
+//! depend only on this crate and `orchestrator-core`; the API connections
+//! (OpenAI and compatible, Anthropic, Gemini, generic profile) are in
+//! `packages/providers/api` (ADR-0010).
 
 mod context;
 mod echo;

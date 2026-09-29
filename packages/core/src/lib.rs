@@ -28,4 +28,6 @@ pub use project::{
 pub use session::{
     NoticeLevel, SessionEvent, SessionInfo, SessionLogEntry, SessionStatus, TokenUsage, TurnStatus,
 };
-pub use tool::{CallOrigin, ToolCall, ToolError, ToolErrorKind, ToolResult, ToolSpec};
+pub use tool::{
+    CallOrigin, ToolCall, ToolDefinition, ToolError, ToolErrorKind, ToolResult, ToolSpec,
+};

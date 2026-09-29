@@ -13,6 +13,7 @@ base64.workspace = true
 chrono.workspace = true
 parking_lot.workspace = true
 portable-pty.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

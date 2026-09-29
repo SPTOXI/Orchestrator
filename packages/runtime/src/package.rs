@@ -17,7 +17,7 @@ pub const SUPPORTED_MANAGERS: &[&str] = &[
     "pnpm", "yarn", "npm", "bun", "poetry", "uv", "pipenv", "pip", "cargo", "go",
 ];
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct InstallArgs {
     /// Project folder (default: the open project).
@@ -32,25 +32,30 @@ pub struct InstallArgs {
     /// Override the detected manager.
     #[serde(default)]
     pub manager: Option<String>,
+    /// Give up after this many milliseconds (no timeout when absent).
     #[serde(default)]
     pub timeout_ms: Option<u64>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RunArgs {
     /// Script (npm/pnpm/yarn/bun), command (poetry/uv/pipenv run) or cargo/go
     /// subcommand (`test`, `build`, …).
     pub script: String,
+    /// Extra arguments passed to the script.
     #[serde(default)]
     pub args: Vec<String>,
+    /// Project folder (default: the open project).
     #[serde(default)]
     pub path: Option<String>,
+    /// Override the detected package manager.
     #[serde(default)]
     pub manager: Option<String>,
     /// Start as a managed process (dev servers, watchers) instead of waiting.
     #[serde(default)]
     pub background: bool,
+    /// Give up after this many milliseconds (no timeout when absent).
     #[serde(default)]
     pub timeout_ms: Option<u64>,
 }

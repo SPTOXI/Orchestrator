@@ -43,7 +43,7 @@ export function ContextBar({
         : "—",
       hint: providerName
         ? `Provider ativo de ${providerCount} registrado${providerCount === 1 ? "" : "s"} (painel AI PROVIDERS)`
-        : "Nenhum provider registrado: OpenAI/Codex (Fase 4) e Claude Code (Fase 5)",
+        : "Nenhuma API cadastrada: adicione uma no painel AI PROVIDERS",
       pending: !providerName,
     },
     { label: "Task", value: "—", hint: "Task Manager: Fase 8", pending: true },

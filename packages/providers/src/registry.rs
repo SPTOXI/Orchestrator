@@ -9,7 +9,7 @@ use serde_json::json;
 use std::sync::Arc;
 
 /// A registered provider as listed to the UI.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderInfo {
     #[serde(flatten)]
@@ -50,6 +50,51 @@ impl ProviderRegistry {
             *active = Some(id);
         }
         Ok(())
+    }
+
+    /// Adds `provider`, or replaces the one registered with the same id
+    /// (e.g. an edited API connection). Open sessions keep the instance they
+    /// started with.
+    pub fn replace(&self, provider: Arc<dyn AIProvider>) {
+        let id = provider.descriptor().id;
+        let mut providers = self.providers.write();
+        match providers.iter().position(|p| p.descriptor().id == id) {
+            Some(index) => providers[index] = provider,
+            None => providers.push(provider),
+        }
+        let mut active = self.active.write();
+        if active.is_none() {
+            *active = Some(id);
+        }
+    }
+
+    /// Removes a provider. When it was the active one, the first remaining
+    /// provider becomes active (recorded as `PROVIDER_SWITCHED`).
+    pub fn unregister(&self, id: &ProviderId, origin: CallOrigin) -> bool {
+        let next = {
+            let mut providers = self.providers.write();
+            let before = providers.len();
+            providers.retain(|p| &p.descriptor().id != id);
+            if providers.len() == before {
+                return false;
+            }
+            providers.first().map(|p| p.descriptor())
+        };
+        let mut active = self.active.write();
+        if active.as_ref() == Some(id) {
+            *active = next.as_ref().map(|d| d.id.clone());
+            drop(active);
+            self.sink.audit(AuditEvent::new(
+                EventKind::ProviderSwitched,
+                origin,
+                format!(
+                    "provider {id} removed → {}",
+                    next.as_ref().map_or("—", |d| d.name.as_str())
+                ),
+                json!({ "from": id, "to": next.map(|d| d.id), "reason": "removed" }),
+            ));
+        }
+        true
     }
 
     pub fn get(&self, id: &ProviderId) -> Option<Arc<dyn AIProvider>> {

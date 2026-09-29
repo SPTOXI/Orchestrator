@@ -23,43 +23,52 @@ use std::sync::Arc;
 pub const DEFAULT_COLS: u16 = 120;
 pub const DEFAULT_ROWS: u16 = 30;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CreateArgs {
     /// Shell id, kind or path. Default: the system default shell.
     #[serde(default)]
     pub shell: Option<String>,
+    /// Working directory (default: the open project).
     #[serde(default)]
     pub cwd: Option<String>,
+    /// Columns (default: 120).
     #[serde(default)]
     pub cols: Option<u16>,
+    /// Rows (default: 30).
     #[serde(default)]
     pub rows: Option<u16>,
+    /// Extra environment variables.
     #[serde(default)]
     pub env: HashMap<String, String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WriteArgs {
+    #[schemars(with = "String")]
     pub id: TerminalId,
     /// Raw input. Use `\r` for Enter (e.g. `"npm test\r"`).
     pub data: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ReadArgs {
+    #[schemars(with = "String")]
     pub id: TerminalId,
+    /// Byte offset to read from (`next` of the previous read). Default: oldest buffered output.
     #[serde(default)]
     pub since: Option<u64>,
+    /// Maximum bytes to return.
     #[serde(default)]
     pub max_bytes: Option<usize>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IdArgs {
+    #[schemars(with = "String")]
     pub id: TerminalId,
 }
 

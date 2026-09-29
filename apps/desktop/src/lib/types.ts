@@ -53,6 +53,11 @@ export interface ToolSpec {
   readOnly: boolean;
 }
 
+export interface ToolDefinition extends ToolSpec {
+  /** JSON Schema of the arguments. */
+  parameters: Record<string, unknown>;
+}
+
 export type EventKind =
   | "PROJECT_CREATED"
   | "PROJECT_OPENED"
@@ -74,7 +79,9 @@ export type EventKind =
   | "SESSION_STARTED"
   | "SESSION_RESUMED"
   | "SESSION_CLOSED"
-  | "TURN_COMPLETED";
+  | "TURN_COMPLETED"
+  | "CONNECTION_SAVED"
+  | "CONNECTION_REMOVED";
 
 export interface AuditEvent {
   id: string;
@@ -511,6 +518,11 @@ export interface ModelInfo {
   id: string;
   name: string;
   contextWindow: number | null;
+  supportsTools: boolean | null;
+  /** USD per million input tokens. */
+  inputPrice: number | null;
+  outputPrice: number | null;
+  tags: string[];
 }
 
 export interface ProviderCapabilities {
@@ -571,4 +583,119 @@ export interface StartRequest {
   title?: string;
   model?: string;
   instructions?: string;
+}
+
+// ------------------------------------------------------- API connections ---
+
+export type ApiKind = "openai" | "anthropic" | "gemini" | "generic";
+export type CredentialSource = "none" | "vault" | "env";
+export type ToolMode = "native" | "prompt" | "none";
+export type StreamFormat = "none" | "sse" | "ndjson";
+export type MessageFormat = "chat" | "prompt";
+
+export type GenericAuth =
+  | { type: "bearer" }
+  | { type: "header"; name: string; prefix?: string }
+  | { type: "query"; param: string }
+  | { type: "none" };
+
+export interface GenericProfile {
+  path: string;
+  auth: GenericAuth;
+  messageFormat: MessageFormat;
+  roles: { system: string; user: string; assistant: string };
+  body: unknown;
+  stream: StreamFormat;
+  textPath: string;
+  donePath: string | null;
+  doneMarker: string | null;
+  inputTokensPath: string | null;
+  outputTokensPath: string | null;
+  errorPath: string | null;
+  modelsPath: string | null;
+  modelsListPath: string | null;
+  modelIdField: string | null;
+}
+
+export interface ModelEntry {
+  id: string;
+  name: string | null;
+  contextWindow: number | null;
+  maxOutputTokens: number | null;
+  supportsTools: boolean | null;
+  supportsVision: boolean | null;
+  inputPrice: number | null;
+  outputPrice: number | null;
+  tags: string[];
+  extraBody: unknown;
+  enabled: boolean;
+}
+
+export interface Connection {
+  id: string;
+  name: string;
+  kind: ApiKind;
+  baseUrl: string;
+  credential: { source: CredentialSource; envVar: string | null };
+  headers: Record<string, string>;
+  extraBody: unknown;
+  models: ModelEntry[];
+  defaultModel: string | null;
+  toolMode: ToolMode | null;
+  maxToolRounds: number;
+  maxOutputTokens: number | null;
+  options: { streamUsage: boolean | null; eagerToolStreaming: boolean | null; refusalFallback: boolean | null };
+  generic: GenericProfile | null;
+  enabled: boolean;
+  notes: string | null;
+}
+
+export interface KeyStatus {
+  source: CredentialSource;
+  present: boolean;
+  detail: string | null;
+}
+
+export interface ConnectionView {
+  connection: Connection;
+  key: KeyStatus;
+}
+
+export interface Preset {
+  key: string;
+  label: string;
+  hint: string;
+  connection: Connection;
+}
+
+export interface ConnectionsView {
+  connections: ConnectionView[];
+  presets: Preset[];
+  vault: string;
+  warnings: string[];
+}
+
+export interface TestReport {
+  ok: boolean;
+  model: string | null;
+  servedModel: string | null;
+  latencyMs: number;
+  reply: string | null;
+  usage: TokenUsage | null;
+  tools: "notTested" | "passed" | "noCall" | "failed";
+  toolsDetail: string | null;
+  error: string | null;
+}
+
+export interface SaveConnectionRequest {
+  connection: Connection;
+  apiKey?: string;
+  clearKey?: boolean;
+  previousId?: string;
+}
+
+export interface ProbeRequest {
+  connection: Connection;
+  apiKey?: string;
+  model?: string;
 }

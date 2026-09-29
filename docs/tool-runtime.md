@@ -3,8 +3,9 @@
 O Tool Runtime (`packages/runtime`, crate `orchestrator-runtime`) é o único
 componente que executa operações no sistema operacional. Toda chamada entra por
 `ToolRuntime::invoke(ToolCall) -> ToolResult` — pela UI hoje (via
-`runtime_invoke`) e pelas sessões de provider de IA (Fase 3, via
-`TurnContext::call_tool`; ver [`providers.md`](./providers.md)).
+`runtime_invoke`) e pelas sessões de provider de IA (Fases 3–4, via
+`TurnContext::call_tool`; ver [`providers.md`](./providers.md) e
+[`api-connections.md`](./api-connections.md)).
 
 ## Contrato
 
@@ -37,6 +38,26 @@ componente que executa operações no sistema operacional. Toda chamada entra po
   uma **ação**. `runtime_tools` devolve a marca e o `TOOL_CALLED` a registra.
 - Não existe lista de comandos proibidos nem confirmação oculta no runtime. O
   gate de autonomia (Fase 9) ficará explicitamente na frente de `invoke`.
+
+### Schemas dos argumentos
+
+`ToolRuntime::definitions()` devolve o catálogo como `ToolDefinition`
+(`name`, `group`, `description`, `readOnly`, `parameters`), em que
+`parameters` é o **JSON Schema** dos argumentos (Fase 4,
+[ADR-0010](./adr/0010-providers-por-api-com-cadastro-livre.md)). É o que as
+APIs de IA recebem como definição de ferramenta.
+
+- O schema é gerado com `schemars` a partir dos mesmos tipos que `invoke`
+  desserializa (`packages/runtime/src/schema.rs`), então o modelo vê
+  exatamente o que o runtime aceita: nomes em `camelCase`, campos
+  obrigatórios, enums, valores padrão e `additionalProperties: false`.
+- Os comentários de documentação dos campos viram `description`.
+- Formato portátil: draft-07, sem `$ref`, sem `$schema`/`title`, e sempre
+  com `properties` (mesmo vazio). O adapter do Gemini converte para o
+  subconjunto OpenAPI que essa API aceita.
+- Testes garantem que toda ferramenta do catálogo tem schema de objeto. Para
+  ver todos: `cargo test -p orchestrator-runtime print_schemas -- --ignored
+  --nocapture`.
 
 ## Eventos
 

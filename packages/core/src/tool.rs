@@ -182,6 +182,19 @@ pub struct ToolSpec {
     pub read_only: bool,
 }
 
+/// A tool as offered to an AI model: catalog entry plus the JSON Schema of
+/// its arguments (ADR-0010).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolDefinition {
+    pub name: String,
+    pub group: String,
+    pub description: String,
+    pub read_only: bool,
+    /// JSON Schema (draft 7, no `$ref`) of the `args` object.
+    pub parameters: Value,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

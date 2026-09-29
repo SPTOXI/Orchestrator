@@ -51,14 +51,18 @@ pub struct ProcessInfo {
     pub ended_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StartArgs {
+    /// Command line, interpreted by the shell.
     pub command: String,
+    /// Working directory (default: the open project).
     #[serde(default)]
     pub cwd: Option<String>,
+    /// Shell id, kind or path. Default: the system default shell.
     #[serde(default)]
     pub shell: Option<String>,
+    /// Extra environment variables.
     #[serde(default)]
     pub env: HashMap<String, String>,
     /// Display name (default: the command).
@@ -66,21 +70,25 @@ pub struct StartArgs {
     pub name: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StopArgs {
+    #[schemars(with = "String")]
     pub id: ProcessId,
     /// Kill immediately instead of asking the process to terminate first.
     #[serde(default)]
     pub force: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ReadArgs {
+    #[schemars(with = "String")]
     pub id: ProcessId,
+    /// Byte offset to read from (`next` of the previous read). Default: oldest buffered output.
     #[serde(default)]
     pub since: Option<u64>,
+    /// Maximum bytes to return.
     #[serde(default)]
     pub max_bytes: Option<usize>,
 }

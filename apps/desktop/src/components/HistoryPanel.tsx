@@ -45,6 +45,8 @@ const KIND_FILTERS: Array<{ value: EventKind | ""; label: string }> = [
   { value: "SESSION_RESUMED", label: "SESSION_RESUMED" },
   { value: "SESSION_CLOSED", label: "SESSION_CLOSED" },
   { value: "TURN_COMPLETED", label: "TURN_COMPLETED" },
+  { value: "CONNECTION_SAVED", label: "CONNECTION_SAVED" },
+  { value: "CONNECTION_REMOVED", label: "CONNECTION_REMOVED" },
 ];
 
 interface Props {

@@ -45,6 +45,11 @@ pub enum EventKind {
     /// A session turn ended: status, duration, tool calls and token usage
     /// (ADR-0009).
     TurnCompleted,
+    /// An API connection was added or changed (never includes the key;
+    /// ADR-0010).
+    ConnectionSaved,
+    /// An API connection was removed (ADR-0010).
+    ConnectionRemoved,
 }
 
 /// A durable, provider-independent history entry.
