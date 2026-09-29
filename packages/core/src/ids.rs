@@ -75,6 +75,10 @@ define_id!(
     /// Identifies one turn (input → provider output) of a session.
     TurnId
 );
+define_id!(
+    /// Identifies one deliberation of the model Council (ADR-0011).
+    DeliberationId
+);
 
 /// Stable, human-chosen identifier of a registered AI provider, e.g.
 /// `openai-codex` or `claude-code`. Not generated: it names an adapter.

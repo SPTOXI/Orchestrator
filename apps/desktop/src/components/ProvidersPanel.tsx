@@ -4,9 +4,11 @@
 
 import { useEffect, useState } from "react";
 import { formatPrices } from "../lib/connections";
+import { memberLabel, MODE_LABELS } from "../lib/council";
 import { baseName } from "../lib/format";
 import { formatTokens } from "../lib/transcript";
 import type { Connections } from "../lib/useConnections";
+import type { Council } from "../lib/useCouncil";
 import type { ProviderHealth, Providers } from "../lib/useProviders";
 import type { ConnectionView, ProviderCapabilities, ProviderInfo, SessionInfo, SessionStatus } from "../lib/types";
 import { EditIcon, PlusIcon, RefreshIcon } from "./icons";
@@ -23,6 +25,10 @@ interface Props {
   onOpenSession: (id: string) => void;
   /** Opens the connection editor; null = new connection. */
   onEditConnection: (id: string | null) => void;
+  council: Council;
+  onOpenCouncil: () => void;
+  /** Opens "Nova sessão com o Conselho". */
+  onOpenRoute: () => void;
 }
 
 const CAPABILITY_LABELS: Array<[keyof ProviderCapabilities, string]> = [
@@ -34,6 +40,7 @@ const CAPABILITY_LABELS: Array<[keyof ProviderCapabilities, string]> = [
   ["reasoning", "raciocínio"],
   ["tokenUsage", "uso de tokens"],
   ["cost", "custo"],
+  ["completion", "conselho"],
 ];
 
 export function statusDot(status: SessionStatus): string {
@@ -226,6 +233,9 @@ export function ProvidersPanel({
   onNewSession,
   onOpenSession,
   onEditConnection,
+  council,
+  onOpenCouncil,
+  onOpenRoute,
 }: Props) {
   const list = providers.view?.providers ?? [];
   const byId = new Map((connections.view?.connections ?? []).map((c) => [c.connection.id, c]));
@@ -311,6 +321,36 @@ export function ProvidersPanel({
                 </li>
               ))}
             </ul>
+          </>
+        )}
+
+        {list.length > 0 && (
+          <>
+            <div className="section-title row">
+              <span className="grow">Conselho</span>
+              <button className="link" disabled={!ready} onClick={onOpenCouncil}>
+                Configurar
+              </button>
+            </div>
+            <div className="council-summary">
+              {council.error && <div className="meta err-text">{council.error}</div>}
+              {council.view && (
+                <div className="meta">
+                  Modo <strong>{MODE_LABELS[council.view.settings.mode]}</strong>
+                  {council.view.settings.members.length === 0
+                    ? " · sem membros (só o roteador)"
+                    : ` · ${council.view.settings.members.map((m) => memberLabel(m, list)).join("; ")}`}
+                </div>
+              )}
+              <button
+                className="button small primary"
+                disabled={!ready}
+                title="Descreva a tarefa: o roteador e o Conselho escolhem o modelo"
+                onClick={onOpenRoute}
+              >
+                Nova sessão com o Conselho
+              </button>
+            </div>
           </>
         )}
 

@@ -21,7 +21,9 @@ pub mod tool;
 pub use event::{
     AuditEvent, EventKind, EventSink, MemorySink, NullSink, OutputStream, StreamEvent,
 };
-pub use ids::{EventId, ProcessId, ProviderId, SessionId, TerminalId, ToolCallId, TurnId};
+pub use ids::{
+    DeliberationId, EventId, ProcessId, ProviderId, SessionId, TerminalId, ToolCallId, TurnId,
+};
 pub use project::{
     DockerInfo, GitRemote, GitSummary, ProjectCandidate, ProjectProfile, RuntimeRequirement,
 };

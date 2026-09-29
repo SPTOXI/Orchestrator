@@ -6,11 +6,12 @@
 
 ```text
 AIProvider: start · resume · execute · stream · cancel · spawnAgent · inspect · capabilities
+            complete (Fase 5: resposta avulsa, sem sessão nem ferramentas; usada pelo Conselho)
 ```
 
 | Módulo | Conteúdo |
 | ------ | -------- |
-| `provider.rs` | trait `AIProvider`, `ProviderDescriptor`, `ProviderCapabilities`, `ProviderStatus`, `NativeSession`, `SessionSpec` |
+| `provider.rs` | trait `AIProvider`, `ProviderDescriptor`, `ProviderCapabilities`, `ProviderStatus`, `NativeSession`, `SessionSpec`, `CompletionRequest`/`Completion` |
 | `context.rs` | `TurnContext` (saída, uso, cancelamento, `call_tool`) e `ToolExecutor` |
 | `registry.rs` | `ProviderRegistry` (registro, `replace`/`unregister`, provider ativo, `PROVIDER_SWITCHED`) |
 | `manager.rs` | `SessionManager` (sessões, turnos, transcript, uso, cancelar, encerrar/retomar, subagentes; provider resolvido pelo registro a cada turno) |

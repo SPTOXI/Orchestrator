@@ -1,18 +1,21 @@
 //! Orchestrator desktop shell.
 //!
-//! This crate is only an IPC bridge (ADR-0001, ADR-0003, ADR-0009): it turns
-//! Tauri commands into `ToolRuntime` / `SessionManager` calls and runtime
-//! events into Tauri events. It contains no domain logic.
+//! This crate is only an IPC bridge (ADR-0001, ADR-0003, ADR-0009,
+//! ADR-0011): it turns Tauri commands into `ToolRuntime` / `SessionManager`
+//! / `RouterService` calls and runtime events into Tauri events. It contains
+//! no domain logic.
 
 mod audit_log;
 mod commands;
 mod provider_commands;
+mod router_commands;
 mod vault;
 
 use audit_log::AuditLog;
 use orchestrator_core::{AuditEvent, EventSink, StreamEvent};
 use orchestrator_provider_api::ConnectionManager;
 use orchestrator_providers::{EchoProvider, ProviderRegistry, SessionManager};
+use orchestrator_router::RouterService;
 use orchestrator_runtime::{RuntimeConfig, ToolRuntime};
 use provider_commands::RuntimeTools;
 use std::path::PathBuf;
@@ -64,6 +67,10 @@ pub struct AppState {
     /// initialized.
     pub connections: Option<Arc<ConnectionManager>>,
     pub connection_warnings: Vec<String>,
+    /// Model router and Council (ADR-0011).
+    pub router: RouterService,
+    /// Problem loading `council.json`, if any.
+    pub router_warning: Option<String>,
     pub sink: Arc<DesktopSink>,
     pub data_dir: PathBuf,
 }
@@ -137,6 +144,14 @@ pub fn run() {
             for warning in &connection_warnings {
                 eprintln!("[orchestrator] {warning}");
             }
+            let (router, router_warning) = RouterService::open(
+                &data_dir.join("council.json"),
+                registry.clone(),
+                sink.clone(),
+            );
+            if let Some(warning) = &router_warning {
+                eprintln!("[orchestrator] {warning}");
+            }
             let sessions = SessionManager::new(
                 registry,
                 Arc::new(RuntimeTools(runtime.clone())),
@@ -147,6 +162,8 @@ pub fn run() {
                 sessions,
                 connections,
                 connection_warnings,
+                router,
+                router_warning,
                 sink,
                 data_dir,
             });
@@ -178,6 +195,12 @@ pub fn run() {
             provider_commands::connection_delete,
             provider_commands::connection_test,
             provider_commands::connection_models,
+            router_commands::router_recommend,
+            router_commands::council_get,
+            router_commands::council_save,
+            router_commands::council_run,
+            router_commands::council_history,
+            router_commands::route_start_session,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build the Orchestrator desktop app");

@@ -8,7 +8,9 @@ export type CallOrigin =
   | { type: "user" }
   /** Until Phase 8 each provider session is its own agent (ADR-0009). */
   | { type: "agent"; agentId: string; sessionId?: string; provider?: string }
-  | { type: "system" };
+  | { type: "system" }
+  /** The model Council acting on its own in Full mode (ADR-0011). */
+  | { type: "council"; deliberationId?: string };
 
 export type ToolErrorKind =
   | "UNKNOWN_TOOL"
@@ -81,7 +83,10 @@ export type EventKind =
   | "SESSION_CLOSED"
   | "TURN_COMPLETED"
   | "CONNECTION_SAVED"
-  | "CONNECTION_REMOVED";
+  | "CONNECTION_REMOVED"
+  | "COUNCIL_CONFIGURED"
+  | "COUNCIL_DELIBERATED"
+  | "ROUTE_DECIDED";
 
 export interface AuditEvent {
   id: string;
@@ -534,6 +539,8 @@ export interface ProviderCapabilities {
   reasoning: boolean;
   tokenUsage: boolean;
   cost: boolean;
+  /** Answers one-off requests: can sit on the Council (ADR-0011). */
+  completion: boolean;
   models: ModelInfo[];
   defaultModel: string | null;
 }
@@ -698,4 +705,162 @@ export interface ProbeRequest {
   connection: Connection;
   apiKey?: string;
   model?: string;
+}
+
+// ---------------------------------------------------------------- router ---
+// packages/router (ADR-0011).
+
+export type Activity = "code" | "debug" | "review" | "tests" | "planning" | "docs" | "summary" | "general";
+
+export type Preference = "quality" | "balanced" | "cost" | "speed";
+
+export interface ActivityProfile {
+  activity: Activity;
+  label: string;
+  tags: string[];
+  needsTools: boolean;
+  preference: Preference;
+}
+
+export interface RouteRequest {
+  task: string;
+  /** null = detected from the task. */
+  activity?: Activity | null;
+  preference?: Preference | null;
+  needsTools?: boolean | null;
+  minContext?: number | null;
+}
+
+export interface ModelRef {
+  provider: string;
+  model: string;
+}
+
+export interface Criteria {
+  tags: number;
+  quality: number;
+  cost: number;
+  speed: number;
+  context: number;
+  tools: number;
+}
+
+export interface Candidate extends ModelRef {
+  providerName: string;
+  modelName: string;
+  /** 0–100. */
+  score: number;
+  criteria: Criteria;
+  reasons: string[];
+  contextWindow: number | null;
+  inputPrice: number | null;
+  outputPrice: number | null;
+  supportsTools: boolean | null;
+  tags: string[];
+}
+
+export interface Excluded extends ModelRef {
+  providerName: string;
+  reason: string;
+}
+
+export interface Recommendation {
+  activity: Activity;
+  detected: boolean;
+  preference: Preference;
+  needsTools: boolean;
+  minContext: number | null;
+  candidates: Candidate[];
+  excluded: Excluded[];
+}
+
+export type CouncilMode = "off" | "suggest" | "full";
+
+export interface CouncilMember {
+  provider: string;
+  /** null = the provider's default model. */
+  model: string | null;
+}
+
+export interface CouncilSettings {
+  mode: CouncilMode;
+  members: CouncilMember[];
+  shortlist: number;
+  cacheMinutes: number;
+  timeoutSecs: number;
+  preference: Preference | null;
+  sendTask: boolean;
+}
+
+export interface CouncilView {
+  settings: CouncilSettings;
+  activities: ActivityProfile[];
+  maxMembers: number;
+  warning: string | null;
+}
+
+export interface Vote {
+  member: CouncilMember;
+  providerName: string;
+  model: string | null;
+  choice: ModelRef | null;
+  ranking: ModelRef[];
+  confidence: number | null;
+  reason: string | null;
+  error: string | null;
+  usage: TokenUsage;
+  durationMs: number;
+}
+
+export type DecisionSource = "router" | "council";
+
+export interface Decision extends ModelRef {
+  providerName: string;
+  modelName: string;
+  source: DecisionSource;
+  reason: string;
+  agreement: number | null;
+}
+
+export interface Deliberation {
+  id: string;
+  createdAt: string;
+  task: string;
+  mode: CouncilMode;
+  recommendation: Recommendation;
+  shortlist: ModelRef[];
+  votes: Vote[];
+  decision: Decision | null;
+  usage: TokenUsage;
+  cached: boolean;
+  cachedFrom: string | null;
+  savedUsage: TokenUsage | null;
+  notices: string[];
+  autoApply: boolean;
+  durationMs: number;
+}
+
+export interface DeliberateRequest extends RouteRequest {
+  /** Ignore the cache. */
+  force?: boolean;
+}
+
+export interface RouteStart {
+  deliberationId?: string | null;
+  provider: string;
+  model?: string | null;
+  title?: string | null;
+  task?: string | null;
+  sendTask?: boolean | null;
+}
+
+export interface RouteStarted {
+  session: SessionInfo;
+  turnId: string | null;
+  sendError: string | null;
+}
+
+export interface RunOutcome {
+  deliberation: Deliberation;
+  started: RouteStarted | null;
 }

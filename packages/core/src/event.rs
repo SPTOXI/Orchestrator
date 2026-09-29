@@ -50,6 +50,14 @@ pub enum EventKind {
     ConnectionSaved,
     /// An API connection was removed (ADR-0010).
     ConnectionRemoved,
+    /// The Council settings (mode, members) were saved (ADR-0011).
+    CouncilConfigured,
+    /// The Council deliberated which model fits a task: candidates, votes,
+    /// decision, usage and cost; also recorded for cache hits (ADR-0011).
+    CouncilDeliberated,
+    /// A model was applied to a new session, by the user or by the Council
+    /// in Full mode (ADR-0011).
+    RouteDecided,
 }
 
 /// A durable, provider-independent history entry.

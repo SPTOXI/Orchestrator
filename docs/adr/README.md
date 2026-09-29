@@ -15,5 +15,6 @@ adiciona algo fora dela, é registrada aqui **antes** de ser implementada.
 | [0008](./0008-projeto-deteccao-e-diretorio-base.md) | Projeto: detecção no runtime, diretório base e ferramentas auxiliares | Aceita |
 | [0009](./0009-camada-de-providers-e-sessoes.md) | Camada de providers: `AIProvider`, registro e sessões | Aceita (adapters: ver 0010) |
 | [0010](./0010-providers-por-api-com-cadastro-livre.md) | Providers por API com cadastro livre e nova ordem das Fases 4–5 | Aceita |
+| [0011](./0011-roteador-de-modelos-e-conselho.md) | Roteador de modelos e Conselho de IAs | Aceita |
 
 Formato: Contexto → Decisão → Consequências.

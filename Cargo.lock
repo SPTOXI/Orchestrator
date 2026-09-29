@@ -2678,6 +2678,7 @@ dependencies = [
  "orchestrator-core",
  "orchestrator-provider-api",
  "orchestrator-providers",
+ "orchestrator-router",
  "orchestrator-runtime",
  "parking_lot",
  "serde",
@@ -2734,6 +2735,22 @@ dependencies = [
  "tokio",
  "tokio-util",
  "uuid",
+]
+
+[[package]]
+name = "orchestrator-router"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "orchestrator-core",
+ "orchestrator-providers",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]

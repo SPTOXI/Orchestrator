@@ -204,7 +204,12 @@ pub async fn connection_save(
     state: State<'_, AppState>,
     request: SaveRequest,
 ) -> Result<ConnectionView, ProviderError> {
-    connections(&state)?.save(request, CallOrigin::User).await
+    let view = connections(&state)?.save(request, CallOrigin::User).await?;
+    // A new key or URL may change whether the provider is available.
+    state
+        .router
+        .forget_availability(&ProviderId::from(view.connection.id.as_str()));
+    Ok(view)
 }
 
 #[tauri::command]
@@ -212,7 +217,9 @@ pub async fn connection_delete(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<(), ProviderError> {
-    connections(&state)?.remove(&id, CallOrigin::User).await
+    connections(&state)?.remove(&id, CallOrigin::User).await?;
+    state.router.forget_availability(&ProviderId::from(id));
+    Ok(())
 }
 
 /// Tests a (possibly unsaved) connection: short reply + tool call check.

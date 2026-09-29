@@ -19,7 +19,7 @@ A arquitetura completa está em [`ARCHITECTURE.md`](./ARCHITECTURE.md). As
 decisões arquiteturais estão em [`docs/adr/`](./docs/adr) e o relatório de
 cada fase em [`docs/phases/`](./docs/phases).
 
-![Orchestrator — sessão com uma API cadastrada chamando ferramentas (Fase 4)](./docs/assets/fase-4-sessao.png)
+![Orchestrator — o Conselho de IAs escolhendo o modelo de uma tarefa (Fase 5)](./docs/assets/fase-5-conselho.png)
 
 ## Estado atual
 
@@ -30,8 +30,9 @@ cada fase em [`docs/phases/`](./docs/phases).
 | 2 | Project Discovery, Project Profile, Git | ✅ concluída |
 | 3 | AIProvider, Provider Registry, Provider Sessions | ✅ concluída |
 | 4 | Providers por API com cadastro livre (OpenAI e compatíveis, Anthropic, Gemini, qualquer API por perfil) | ✅ concluída |
-| 5 | Roteador de modelos e Conselho de IAs (modos Sugerir e Full) | ⏳ próxima |
-| 6–11 | memória, contexto, tasks/agentes, autonomia, GitHub, otimização | planejadas |
+| 5 | Roteador de modelos e Conselho de IAs (modos Sugerir e Full) | ✅ concluída |
+| 6 | SQLite, memória L1/L2/L3, histórico e decisões | ⏳ próxima |
+| 7–11 | contexto e handoff, tasks/agentes, autonomia, GitHub, otimização | planejadas |
 
 A ordem das Fases 4–5 foi redefinida na
 [ADR-0010](./docs/adr/0010-providers-por-api-com-cadastro-livre.md):
@@ -52,9 +53,10 @@ orchestrator/
 │   ├── agents/             # (Fase 8) Agent Manager, subagentes, File Lock Manager
 │   ├── memory/             # (Fase 6) SQLite, memória L1/L2/L3, histórico, decisões
 │   ├── git/                # [Rust] Git local via `git` do sistema (GitHub na Fase 10)
-│   └── providers/          # [Rust] AIProvider, Provider Registry, Provider Sessions
-│       └── api/            # [Rust] conexões de API: OpenAI e compatíveis, Anthropic,
-│                           #        Gemini e perfil genérico (qualquer API HTTP/JSON)
+│   ├── providers/          # [Rust] AIProvider, Provider Registry, Provider Sessions
+│   │   └── api/            # [Rust] conexões de API: OpenAI e compatíveis, Anthropic,
+│   │                       #        Gemini e perfil genérico (qualquer API HTTP/JSON)
+│   └── router/             # [Rust] roteador de modelos e Conselho de IAs
 ├── docs/                   # ADRs, relatórios de fase, referência de IPC e ferramentas
 ├── ARCHITECTURE.md
 ├── Cargo.toml              # workspace Cargo (crates Rust)
@@ -96,7 +98,7 @@ pnpm build            # gera o executável/instalador de produção
 ## Como testar
 
 ```bash
-pnpm test             # testes Rust (core, git, runtime, providers, desktop) e do frontend
+pnpm test             # testes Rust (core, git, runtime, providers, router, desktop) e do frontend
 pnpm test:rust        # somente cargo test --workspace
 pnpm test:web         # somente vitest
 pnpm typecheck        # checagem de tipos TypeScript
@@ -104,6 +106,32 @@ pnpm check            # typecheck + cargo fmt --check + cargo clippy -D warnings
 ```
 
 ## O que já funciona
+
+### Fase 5 — Roteador de modelos e Conselho de IAs
+
+- **Nova sessão com o Conselho** (AI PROVIDERS): descreva a tarefa e o
+  Orchestrator escolhe o modelo. A atividade (código, depuração, revisão,
+  testes, planejamento, documentação, resumo) é detectada pela descrição.
+- **Roteador:** dá nota de 0 a 100 a todos os modelos cadastrados, pelas
+  etiquetas, preço, contexto, ferramentas e perfil, **sem gastar tokens**.
+  Cada nota e cada exclusão vêm com o motivo.
+- **Conselho de 1 a 5 IAs** (com uma, ela é o "gerenciador"). Os membros
+  recebem os melhores candidatos do roteador, votam em paralelo com motivo e
+  confiança, e o Orchestrator soma os votos. Um membro que falha ou demora
+  só se abstém. Os membros não recebem arquivos, chaves nem ferramentas.
+- **Modos:**
+  - *Desligado:* só o roteador;
+  - *Sugerir:* você aprova, ou usa outro modelo do ranking;
+  - *Full:* o Conselho abre a sessão com o modelo escolhido e envia a
+    tarefa sozinho.
+- **Custo visível e cache:** o custo de cada deliberação aparece na tela, e
+  a mesma pergunta não gasta tokens de novo.
+- **Histórico:** tudo vai para o HISTORY (`COUNCIL_DELIBERATED`,
+  `ROUTE_DECIDED`), com a origem "Conselho (Full)" quando ele agiu sozinho.
+
+![Configuração do Conselho](./docs/assets/fase-5-configuracao.png)
+
+Referência: [`docs/router.md`](./docs/router.md).
 
 ### Fase 4 — APIs de IA com cadastro livre
 

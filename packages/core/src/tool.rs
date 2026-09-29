@@ -4,7 +4,7 @@
 //! [`ToolCall`]; the Orchestrator executes it through the Tool Runtime and
 //! answers with a [`ToolResult`].
 
-use crate::ids::{ProviderId, SessionId, ToolCallId};
+use crate::ids::{DeliberationId, ProviderId, SessionId, ToolCallId};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -33,6 +33,12 @@ pub enum CallOrigin {
     },
     /// The Orchestrator itself (e.g. shutdown cleanup).
     System,
+    /// The model Council acting on its own in Full mode (ADR-0011).
+    Council {
+        /// Deliberation whose decision was applied.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        deliberation_id: Option<DeliberationId>,
+    },
 }
 
 impl CallOrigin {
@@ -222,6 +228,20 @@ mod tests {
             ))
             .unwrap(),
             json!({"type": "agent", "agentId": "s1", "sessionId": "s1", "provider": "echo"})
+        );
+        assert_eq!(
+            serde_json::to_value(CallOrigin::Council {
+                deliberation_id: Some(DeliberationId::from("d1")),
+            })
+            .unwrap(),
+            json!({"type": "council", "deliberationId": "d1"})
+        );
+        let origin: CallOrigin = serde_json::from_value(json!({"type": "council"})).unwrap();
+        assert_eq!(
+            origin,
+            CallOrigin::Council {
+                deliberation_id: None
+            }
         );
     }
 

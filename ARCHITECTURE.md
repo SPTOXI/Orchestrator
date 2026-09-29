@@ -70,15 +70,15 @@ apenas apresentação.
 
 | Módulo | Local | Linguagem | Fase | Estado |
 | ------ | ----- | --------- | ---- | ------ |
-| Desktop UI | `apps/desktop/src` | React/TS | 1–4 | ✅ shell, PROJECT, AI PROVIDERS (cadastro de APIs) + sessões, GIT, terminal, processos, HISTORY |
-| Ponte IPC | `apps/desktop/src-tauri` | Rust | 1–4 | ✅ (inclui o cofre do SO, `vault.rs`) |
-| Core (contratos) | `packages/core` | Rust | 1–4 | ✅ `ToolCall`, `ToolResult`, `ToolDefinition`, `AuditEvent`, `StreamEvent`, `EventSink`, `ProjectProfile`, `SessionInfo`, `SessionEvent`, `TokenUsage` |
+| Desktop UI | `apps/desktop/src` | React/TS | 1–5 | ✅ shell, PROJECT, AI PROVIDERS (cadastro de APIs, Conselho) + sessões, GIT, terminal, processos, HISTORY |
+| Ponte IPC | `apps/desktop/src-tauri` | Rust | 1–5 | ✅ (inclui o cofre do SO, `vault.rs`) |
+| Core (contratos) | `packages/core` | Rust | 1–5 | ✅ `ToolCall`, `ToolResult`, `ToolDefinition`, `AuditEvent`, `StreamEvent`, `EventSink`, `ProjectProfile`, `SessionInfo`, `SessionEvent`, `TokenUsage` |
 | Tool Runtime | `packages/runtime` | Rust | 1–4 | ✅ filesystem, shell, terminal, process, project, git, package, runtime; JSON Schema dos argumentos (Fase 4) |
 | Git local | `packages/git` | Rust | 2 | ✅ `git` do sistema (ADR-0007) |
 | Project Discovery / Profile | `packages/core` (tipos) + `packages/runtime` (detecção) | Rust | 2 | ✅ (ADR-0008) |
-| AIProvider / Registry / Sessions | `packages/providers` | Rust | 3 | ✅ trait, registro, sessões, provider `echo` de desenvolvimento (ADR-0009) |
+| AIProvider / Registry / Sessions | `packages/providers` | Rust | 3, 5 | ✅ trait, registro, sessões, provider `echo` de desenvolvimento (ADR-0009); respostas avulsas `complete` (ADR-0011) |
 | Conexões de API (OpenAI e compatíveis, Anthropic, Gemini, perfil genérico) | `packages/providers/api` | Rust | 4 | ✅ cadastro livre, cofre do SO, ferramentas nativas ou por prompt, custo, teste de conexão (ADR-0010) |
-| Roteador de modelos e Conselho | a definir em ADR | Rust | 5 | planejado (ADR-0010) |
+| Roteador de modelos e Conselho | `packages/router` | Rust | 5 | ✅ ranking sem tokens, Conselho de 1 a 5 IAs com votos e cache, modos Desligado/Sugerir/Full (ADR-0011) |
 | SQLite, Memory, History, Decisions | `packages/memory` | Rust | 6 | planejado |
 | Context Builder, Handoff | `packages/orchestrator` | Rust | 7 | planejado |
 | Task Manager, Agent Manager, Subagents, File Locks | `packages/orchestrator` + `packages/agents` | Rust | 8 | planejado |
@@ -92,7 +92,9 @@ Alterações à estrutura original:
   ([ADR-0002](./docs/adr/0002-pacote-runtime-para-o-tool-runtime.md));
 - `packages/providers/openai` e `packages/providers/claude` substituídos por
   `packages/providers/api`, com providers só por API e cadastro livre
-  ([ADR-0010](./docs/adr/0010-providers-por-api-com-cadastro-livre.md)).
+  ([ADR-0010](./docs/adr/0010-providers-por-api-com-cadastro-livre.md));
+- adição de `packages/router` para o roteador de modelos e o Conselho
+  ([ADR-0011](./docs/adr/0011-roteador-de-modelos-e-conselho.md)).
 
 ## 4. Tool Runtime (Fases 1–2)
 
@@ -196,7 +198,8 @@ a conter fora do gate explícito da Fase 9.
 ## 5. Contratos e eventos (packages/core)
 
 - `ToolCall`, `ToolResult`, `ToolError`, `ToolErrorKind`, `CallOrigin`
-  (`user` | `agent { agentId, sessionId?, provider? }` | `system`), `ToolSpec`,
+  (`user` | `agent { agentId, sessionId?, provider? }` | `system` |
+  `council { deliberationId? }`, Fase 5), `ToolSpec`,
   `ToolDefinition` (com o JSON Schema dos argumentos, Fase 4).
 - `SessionInfo`, `SessionEvent`, `SessionLogEntry`, `TokenUsage`,
   `SessionStatus`, `TurnStatus`, ids `SessionId`/`TurnId`/`ProviderId` —
@@ -210,7 +213,9 @@ a conter fora do gate explícito da Fase 9.
   `SESSION_STARTED`, `SESSION_RESUMED`, `SESSION_CLOSED`, `TURN_COMPLETED`
   ([ADR-0009](./docs/adr/0009-camada-de-providers-e-sessoes.md)),
   `CONNECTION_SAVED`, `CONNECTION_REMOVED`
-  ([ADR-0010](./docs/adr/0010-providers-por-api-com-cadastro-livre.md)).
+  ([ADR-0010](./docs/adr/0010-providers-por-api-com-cadastro-livre.md)),
+  `COUNCIL_CONFIGURED`, `COUNCIL_DELIBERATED`, `ROUTE_DECIDED`
+  ([ADR-0011](./docs/adr/0011-roteador-de-modelos-e-conselho.md)).
 - `StreamEvent` — eventos de alta frequência e não duráveis (saída de
   terminal/processo, término, eventos de sessão de provider).
 - `EventSink` — trait que desacopla o runtime de quem consome eventos (Tauri
@@ -270,6 +275,7 @@ já existem para que o Context Builder envie apenas saída nova.
 interface AIProvider {
   start(); resume(); execute(); stream(); cancel();
   spawnAgent(); inspect(); capabilities();
+  complete(); // Fase 5: resposta avulsa, sem sessão nem ferramentas
 }
 ```
 
@@ -307,7 +313,7 @@ Crate `packages/providers/api`:
 - **Credenciais:** a chave fica no cofre do SO ou numa variável de
   ambiente. Nunca vai para arquivo, histórico, log ou UI.
 - **Modelos:** descoberta pela API, preços informados pelo usuário (custo
-  por turno), contexto e etiquetas usadas pelo Conselho na Fase 5.
+  por turno), contexto e etiquetas usadas pelo roteador e pelo Conselho (9.2).
 - **Sessões:** usam a instância registrada a cada turno. Editar uma conexão
   vale para as sessões abertas, sem perder a conversa.
 
@@ -316,10 +322,33 @@ como conexão cadastrada (sem código) ou como um protocolo novo no crate.
 
 ### 9.2 Roteador e Conselho (Fase 5)
 
-Um roteador de modelos e um **Conselho** de IAs (1 a N membros; com um
-membro, é o "gerenciador") vão recomendar o melhor modelo para cada
-atividade. O modo *Sugerir* pede aprovação ao usuário; o modo *Full*
-decide e aplica sozinho. Decisão em ADR próprio.
+Escolha do modelo de cada tarefa
+([ADR-0011](./docs/adr/0011-roteador-de-modelos-e-conselho.md), referência
+em [`docs/router.md`](./docs/router.md)). Crate `packages/router`, que
+depende só de `core` e `providers`:
+
+- **Roteador:** detecta a atividade (código, depuração, revisão, testes,
+  planejamento, documentação, resumo, geral) e dá nota de 0 a 100 a cada
+  modelo registrado. A nota combina etiquetas, preço, contexto, ferramentas
+  e perfil (qualidade/velocidade), com pesos pela preferência. Não gasta
+  tokens e explica cada nota e cada exclusão.
+- **Conselho:** de 1 a 5 membros (provider + modelo; com um, é o
+  "gerenciador").
+  - Os membros recebem a lista curta do roteador por
+    `AIProvider::complete`, sem sessão e sem ferramentas, e respondem com
+    JSON em paralelo.
+  - Uma contagem de Borda ponderada pela confiança decide.
+  - Abstenções (erro, prazo, JSON inválido) não travam a decisão.
+- **Modos:**
+  - *Desligado:* só o roteador;
+  - *Sugerir:* o usuário aprova ou escolhe outro modelo;
+  - *Full:* o Conselho abre a sessão e envia a tarefa, com origem
+    `council`. O Full não dispensa o gate de autonomia da Fase 9.
+- **Cache:** mesma pergunta, mesmos candidatos e mesmos membros = zero
+  tokens.
+- **Histórico:** `COUNCIL_CONFIGURED`, `COUNCIL_DELIBERATED` e
+  `ROUTE_DECIDED`.
+- **Configuração:** `council.json`, até o SQLite.
 
 ## 10. Plataformas
 

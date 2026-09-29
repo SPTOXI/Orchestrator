@@ -30,7 +30,7 @@ pub use echo::EchoProvider;
 pub use error::{ProviderError, ProviderErrorKind};
 pub use manager::{ManagerConfig, SessionManager, SessionSnapshot, StartRequest, TurnResult};
 pub use provider::{
-    AIProvider, ModelInfo, NativeSession, ProviderCapabilities, ProviderDescriptor, ProviderStatus,
-    SessionSpec, TurnInput, TurnOutput,
+    AIProvider, Completion, CompletionRequest, ModelInfo, NativeSession, ProviderCapabilities,
+    ProviderDescriptor, ProviderStatus, SessionSpec, TurnInput, TurnOutput,
 };
 pub use registry::{ProviderInfo, ProviderRegistry};

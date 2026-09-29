@@ -456,7 +456,7 @@ export function ConnectionEditor({ ready, active, connectionId, view, onSaved, o
                 <th>Contexto</th>
                 <th title="USD por 1M de tokens de entrada">$ entrada</th>
                 <th title="USD por 1M de tokens de saída">$ saída</th>
-                <th title="Etiquetas livres, usadas pelo Conselho (Fase 5)">Etiquetas</th>
+                <th title="Etiquetas livres, usadas pelo roteador e pelo Conselho">Etiquetas</th>
                 <th />
               </tr>
             </thead>

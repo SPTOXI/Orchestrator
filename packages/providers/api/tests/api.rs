@@ -6,7 +6,7 @@ mod support;
 
 use orchestrator_core::{CallOrigin, EventKind, SessionEvent, TurnStatus};
 use orchestrator_provider_api::{ConnectionManager, ProbeRequest, SaveRequest, SecretStore};
-use orchestrator_providers::ProviderErrorKind;
+use orchestrator_providers::{CompletionRequest, ProviderErrorKind};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 use support::{connection, FakeApi, Harness, Reply};
@@ -884,4 +884,116 @@ async fn editing_a_connection_keeps_open_sessions_and_removing_it_ends_them() {
         err.message
     );
     assert_eq!(api.calls("/v1/chat/completions").len(), 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_answers_once_without_tools_or_history() {
+    let api = FakeApi::start(|request, _| {
+        if request.path.ends_with("/messages") {
+            Reply::sse(vec![
+                anthropic_event(
+                    "message_start",
+                    json!({"type": "message_start", "message": {
+                    "model": "claude-served", "usage": {"input_tokens": 40, "output_tokens": 1}}}),
+                ),
+                anthropic_event(
+                    "content_block_start",
+                    json!({"type": "content_block_start", "index": 0,
+                    "content_block": {"type": "text", "text": ""}}),
+                ),
+                anthropic_event(
+                    "content_block_delta",
+                    json!({"type": "content_block_delta", "index": 0,
+                    "delta": {"type": "text_delta", "text": "{\"choice\":\"c1\"}"}}),
+                ),
+                anthropic_event(
+                    "content_block_stop",
+                    json!({"type": "content_block_stop", "index": 0}),
+                ),
+                anthropic_event(
+                    "message_delta",
+                    json!({"type": "message_delta",
+                    "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 8}}),
+                ),
+                anthropic_event("message_stop", json!({"type": "message_stop"})),
+            ])
+        } else {
+            Reply::sse(vec![
+                openai_chunk(json!({"role": "assistant", "content": "resposta"}), None),
+                openai_chunk(json!({}), Some("stop")),
+                openai_usage(30, 2),
+            ])
+            .sse_done()
+        }
+    })
+    .await;
+    let h = Harness::new();
+    h.add(
+        connection(json!({
+            "id": "claude", "name": "Claude", "kind": "anthropic",
+            "baseUrl": api.url("/v1"),
+            "models": [{"id": "claude-test", "inputPrice": 3.0, "outputPrice": 15.0}]
+        })),
+        None,
+    )
+    .await;
+    h.add(
+        connection(json!({
+            "id": "local", "name": "Local", "kind": "openai", "baseUrl": api.url("/v1"),
+            "models": [{"id": "small"}, {"id": "large"}]
+        })),
+        None,
+    )
+    .await;
+    let cancel = tokio_util::sync::CancellationToken::new();
+
+    let claude = h.registry.get(&"claude".into()).unwrap();
+    assert!(claude.capabilities().completion);
+    let request = CompletionRequest {
+        model: None,
+        system: Some("Você é o gerenciador.".into()),
+        prompt: "Qual candidato?".into(),
+    };
+    let answer = claude.complete(&request, &cancel).await.unwrap();
+    assert_eq!(answer.text, "{\"choice\":\"c1\"}");
+    assert_eq!(answer.model.as_deref(), Some("claude-served"));
+    assert_eq!(answer.usage.input_tokens, 40);
+    assert_eq!(answer.usage.output_tokens, 8);
+    let cost = answer.usage.cost_usd.unwrap();
+    assert!(
+        (cost - (40.0 * 3.0 + 8.0 * 15.0) / 1e6).abs() < 1e-12,
+        "{cost}"
+    );
+    let sent = &api.calls("/v1/messages")[0].body;
+    assert_eq!(sent["system"], "Você é o gerenciador.");
+    assert_eq!(sent["messages"].as_array().unwrap().len(), 1);
+    assert!(sent.get("tools").is_none(), "no tools on a completion");
+
+    // Model override, and nothing is kept between completions.
+    let local = h.registry.get(&"local".into()).unwrap();
+    for _ in 0..2 {
+        let answer = local
+            .complete(
+                &CompletionRequest {
+                    model: Some("large".into()),
+                    system: None,
+                    prompt: "oi".into(),
+                },
+                &cancel,
+            )
+            .await
+            .unwrap();
+        assert_eq!(answer.text, "resposta");
+        assert_eq!(answer.usage.cost_usd, None, "no prices configured");
+    }
+    let calls = api.calls("/v1/chat/completions");
+    assert_eq!(calls.len(), 2);
+    for call in &calls {
+        assert_eq!(call.body["model"], "large");
+        assert_eq!(call.body["messages"].as_array().unwrap().len(), 1);
+        assert!(call.body.get("tools").is_none());
+    }
+    // No session, no turn, no tool call in the history.
+    assert!(h.sessions.list().is_empty());
+    assert!(h.audits(EventKind::TurnCompleted).is_empty());
 }

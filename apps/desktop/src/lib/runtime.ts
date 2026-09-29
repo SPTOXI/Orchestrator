@@ -25,6 +25,15 @@ import type {
   ProjectProfile,
   ConnectionsView,
   ConnectionView,
+  CouncilSettings,
+  CouncilView,
+  DeliberateRequest,
+  Deliberation,
+  Recommendation,
+  RouteRequest,
+  RouteStart,
+  RouteStarted,
+  RunOutcome,
   ModelEntry,
   ProbeRequest,
   ProviderError,
@@ -256,4 +265,17 @@ export const connectionApi = {
   remove: (id: string) => callProvider<void>("connection_delete", { id }),
   test: (request: ProbeRequest) => callProvider<TestReport>("connection_test", { request }),
   models: (request: ProbeRequest) => callProvider<ModelEntry[]>("connection_models", { request }),
+};
+
+/** Model router and Council (ADR-0011). */
+export const councilApi = {
+  get: () => callProvider<CouncilView>("council_get"),
+  save: (settings: CouncilSettings) => callProvider<CouncilSettings>("council_save", { settings }),
+  /** Router ranking only (no tokens). */
+  recommend: (request: RouteRequest) => callProvider<Recommendation>("router_recommend", { request }),
+  /** Deliberates; in Full mode the Council also opens the session. */
+  run: (request: DeliberateRequest) => callProvider<RunOutcome>("council_run", { request }),
+  history: () => callProvider<Deliberation[]>("council_history"),
+  /** Opens a session with the approved or picked model (ROUTE_DECIDED). */
+  startSession: (request: RouteStart) => callProvider<RouteStarted>("route_start_session", { request }),
 };

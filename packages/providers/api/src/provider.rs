@@ -17,8 +17,9 @@ use async_trait::async_trait;
 use chrono::Utc;
 use orchestrator_core::{NoticeLevel, ProviderId, TokenUsage, ToolDefinition};
 use orchestrator_providers::{
-    AIProvider, NativeSession, ProviderCapabilities, ProviderDescriptor, ProviderError,
-    ProviderErrorKind, ProviderStatus, SessionSpec, TurnContext, TurnInput, TurnOutput,
+    AIProvider, Completion, CompletionRequest, NativeSession, ProviderCapabilities,
+    ProviderDescriptor, ProviderError, ProviderErrorKind, ProviderStatus, SessionSpec, TurnContext,
+    TurnInput, TurnOutput,
 };
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -576,6 +577,7 @@ impl AIProvider for ApiProvider {
                 .conn
                 .enabled_models()
                 .any(|m| m.input_price.is_some() || m.output_price.is_some()),
+            completion: true,
             models: self.conn.enabled_models().map(ModelEntry::info).collect(),
             default_model: self.conn.default_model_id(),
         }
@@ -685,5 +687,41 @@ impl AIProvider for ApiProvider {
         ctx: &TurnContext,
     ) -> Result<TurnOutput, ProviderError> {
         self.run(native, input, ctx, true).await
+    }
+
+    /// One request with no tools and no stored conversation (ADR-0011).
+    async fn complete(
+        &self,
+        request: &CompletionRequest,
+        cancel: &CancellationToken,
+    ) -> Result<Completion, ProviderError> {
+        let model_id = request
+            .model
+            .clone()
+            .filter(|m| !m.trim().is_empty())
+            .or_else(|| self.conn.default_model_id())
+            .ok_or_else(|| ProviderError::invalid("this connection has no model"))?;
+        let model = self.model_entry(&model_id);
+        let quiet = |_: Delta| {};
+        let reply = self
+            .call_model(
+                &model,
+                request.system.as_deref(),
+                &[Message::user(request.prompt.clone())],
+                &[],
+                &quiet,
+                cancel,
+            )
+            .await?;
+        if let Stop::Refusal(reason) = &reply.stop {
+            return Err(ProviderError::failed(format!(
+                "the model declined the request ({reason})"
+            )));
+        }
+        Ok(Completion {
+            text: reply.text,
+            model: reply.served_model.or(Some(model_id)),
+            usage: self.priced(&model, reply.usage),
+        })
     }
 }

@@ -127,8 +127,9 @@ servidores locais).
 | `generic` | `generic.modelsPath` + `modelsListPath` + `modelIdField`, se configurados |
 
 Cada modelo guarda contexto, limite de saída, suporte a ferramentas e visão,
-preços e **etiquetas livres** ("código", "barato", "raciocínio"…). O Conselho
-(Fase 5) vai usar esses dados para recomendar modelos.
+preços e **etiquetas livres** ("código", "barato", "raciocínio"…). O
+roteador e o Conselho usam esses dados para escolher o modelo de cada tarefa
+([router.md](./router.md)): quanto mais completos, melhor a escolha.
 
 ## Ferramentas
 

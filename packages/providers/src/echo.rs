@@ -14,14 +14,15 @@
 use crate::context::TurnContext;
 use crate::error::ProviderError;
 use crate::provider::{
-    AIProvider, ModelInfo, NativeSession, ProviderCapabilities, ProviderDescriptor, ProviderStatus,
-    SessionSpec, TurnInput, TurnOutput,
+    AIProvider, Completion, CompletionRequest, ModelInfo, NativeSession, ProviderCapabilities,
+    ProviderDescriptor, ProviderStatus, SessionSpec, TurnInput, TurnOutput,
 };
 use async_trait::async_trait;
 use chrono::Utc;
 use orchestrator_core::{ProviderId, TokenUsage};
 use serde_json::{json, Value};
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 
 const MODEL: &str = "echo-1";
 const REFERENCE_PREFIX: &str = "echo-";
@@ -157,6 +158,7 @@ impl AIProvider for EchoProvider {
             reasoning: false,
             token_usage: true,
             cost: false,
+            completion: true,
             models: vec![ModelInfo {
                 id: MODEL.into(),
                 name: "Echo".into(),
@@ -214,6 +216,31 @@ impl AIProvider for EchoProvider {
         ctx: &TurnContext,
     ) -> Result<TurnOutput, ProviderError> {
         self.run(input, ctx, false).await
+    }
+
+    /// Echoes the prompt (no AI): exercises the Council plumbing.
+    async fn complete(
+        &self,
+        request: &CompletionRequest,
+        _cancel: &CancellationToken,
+    ) -> Result<Completion, ProviderError> {
+        if let Some(model) = request.model.as_deref().filter(|m| *m != MODEL) {
+            return Err(ProviderError::invalid(format!(
+                "unknown model {model}; available: {MODEL}"
+            )));
+        }
+        let text = format!("Eco: {}", request.prompt.trim());
+        Ok(Completion {
+            usage: TokenUsage {
+                input_tokens: estimate_tokens(&request.prompt)
+                    + request.system.as_deref().map_or(0, estimate_tokens),
+                output_tokens: estimate_tokens(&text),
+                estimated: true,
+                ..Default::default()
+            },
+            model: Some(MODEL.into()),
+            text,
+        })
     }
 
     async fn stream(
@@ -397,5 +424,33 @@ mod tests {
         assert_eq!(estimate_tokens(""), 0);
         assert_eq!(estimate_tokens("abcd"), 1);
         assert_eq!(estimate_tokens("abcde"), 2);
+    }
+
+    #[tokio::test]
+    async fn completes_without_a_session() {
+        let echo = EchoProvider::new();
+        assert!(echo.capabilities().completion);
+        let cancel = CancellationToken::new();
+        let answer = echo
+            .complete(
+                &CompletionRequest {
+                    model: None,
+                    system: Some("instruções".into()),
+                    prompt: " qual modelo? ".into(),
+                },
+                &cancel,
+            )
+            .await
+            .unwrap();
+        assert_eq!(answer.text, "Eco: qual modelo?");
+        assert_eq!(answer.model.as_deref(), Some(MODEL));
+        assert!(answer.usage.input_tokens > 0 && answer.usage.estimated);
+
+        let wrong = CompletionRequest {
+            model: Some("gpt".into()),
+            prompt: "x".into(),
+            ..Default::default()
+        };
+        assert!(echo.complete(&wrong, &cancel).await.is_err());
     }
 }

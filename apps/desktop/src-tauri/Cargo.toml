@@ -19,6 +19,7 @@ keyring.workspace = true
 orchestrator-core.workspace = true
 orchestrator-provider-api.workspace = true
 orchestrator-providers.workspace = true
+orchestrator-router.workspace = true
 orchestrator-runtime.workspace = true
 parking_lot.workspace = true
 serde.workspace = true

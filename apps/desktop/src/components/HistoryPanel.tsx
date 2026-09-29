@@ -19,6 +19,8 @@ function originLabel(event: AuditEvent): string {
         : `agente ${event.origin.agentId}`;
     case "system":
       return "sistema";
+    case "council":
+      return "Conselho (Full)";
   }
 }
 
@@ -47,6 +49,9 @@ const KIND_FILTERS: Array<{ value: EventKind | ""; label: string }> = [
   { value: "TURN_COMPLETED", label: "TURN_COMPLETED" },
   { value: "CONNECTION_SAVED", label: "CONNECTION_SAVED" },
   { value: "CONNECTION_REMOVED", label: "CONNECTION_REMOVED" },
+  { value: "COUNCIL_CONFIGURED", label: "COUNCIL_CONFIGURED" },
+  { value: "COUNCIL_DELIBERATED", label: "COUNCIL_DELIBERATED" },
+  { value: "ROUTE_DECIDED", label: "ROUTE_DECIDED" },
 ];
 
 interface Props {

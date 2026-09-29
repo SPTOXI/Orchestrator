@@ -19,8 +19,9 @@ requests e manualmente:
 
 - **rust** (Linux, Windows, macOS): `cargo fmt --check`, `cargo clippy` e
   `cargo test` de `orchestrator-core`, `orchestrator-git` (Fase 2),
-  `orchestrator-runtime`, `orchestrator-providers` (Fase 3) e
-  `orchestrator-provider-api` (Fase 4, com servidor HTTP falso local).
+  `orchestrator-runtime`, `orchestrator-providers` (Fase 3),
+  `orchestrator-provider-api` (Fase 4, com servidor HTTP falso local) e
+  `orchestrator-router` (Fase 5).
 - **desktop** (Linux): dependências de sistema do Tauri, `pnpm install`,
   typecheck, testes do frontend, build do frontend e `cargo clippy`/`cargo
   test` do crate Tauri.

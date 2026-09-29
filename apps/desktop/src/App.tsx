@@ -2,6 +2,7 @@ import { type MouseEvent as ReactMouseEvent, type ReactNode, useCallback, useEff
 import { CommandPanel } from "./components/CommandPanel";
 import { ConnectionEditor } from "./components/ConnectionEditor";
 import { ContextBar } from "./components/ContextBar";
+import { CouncilEditor } from "./components/CouncilEditor";
 import { DiffView } from "./components/DiffView";
 import { DiscoveryView } from "./components/DiscoveryView";
 import { FileEditor } from "./components/FileEditor";
@@ -23,6 +24,7 @@ import { ProcessesPanel } from "./components/ProcessesPanel";
 import { ProfileView } from "./components/ProfileView";
 import { ProjectPanel, RecentList } from "./components/ProjectPanel";
 import { ProvidersPanel } from "./components/ProvidersPanel";
+import { RouteView } from "./components/RouteView";
 import { SessionsPanel } from "./components/SessionsPanel";
 import { SessionView } from "./components/SessionView";
 import { StatusBar } from "./components/StatusBar";
@@ -30,8 +32,9 @@ import { TerminalPanel } from "./components/TerminalPanel";
 import { baseName } from "./lib/format";
 import { addRecent, loadRecent, removeRecent, saveRecent, type RecentProject } from "./lib/recent";
 import { appApi, errorMessage, isTauri, projectApi, sessionApi, shellApi } from "./lib/runtime";
-import type { AppInfo, ConnectionsView, ProjectProfile, SessionInfo, ShellList } from "./lib/types";
+import type { AppInfo, ConnectionsView, Deliberation, ProjectProfile, SessionInfo, ShellList } from "./lib/types";
 import { useConnections } from "./lib/useConnections";
+import { useCouncil } from "./lib/useCouncil";
 import { useGitStatus } from "./lib/useGitStatus";
 import { useProviders } from "./lib/useProviders";
 import { useRuntimeSessions } from "./lib/useRuntimeSessions";
@@ -46,7 +49,10 @@ type Tab =
   | { id: "profile"; kind: "profile" }
   | { id: "discovery"; kind: "discovery" }
   | { id: string; kind: "session"; sessionId: string }
-  | { id: string; kind: "connection"; connectionId: string | null };
+  | { id: string; kind: "connection"; connectionId: string | null }
+  | { id: "council"; kind: "council" }
+  /** Pick a model with the router / Council; `deliberation` from the history. */
+  | { id: "route"; kind: "route"; deliberation: Deliberation | null };
 
 const ACTIVITIES: Array<{ id: PanelId; label: string; icon: () => ReactNode }> = [
   { id: "project", label: "PROJECT", icon: FolderIcon },
@@ -90,6 +96,10 @@ function tabTitle(tab: Tab, sessions: Map<string, SessionInfo>, connections: Con
       return "Procurar projetos";
     case "session":
       return sessions.get(tab.sessionId)?.title ?? "Sessão";
+    case "council":
+      return "Conselho de IAs";
+    case "route":
+      return "Nova sessão · Conselho";
     case "connection":
       if (!tab.connectionId) return "Nova API";
       return `API · ${connections?.connections.find((c) => c.connection.id === tab.connectionId)?.connection.name ?? tab.connectionId}`;
@@ -116,6 +126,7 @@ export function App() {
   const git = useGitStatus(profile?.path ?? null, ready && profile !== null);
   const providers = useProviders(ready);
   const connections = useConnections(ready);
+  const council = useCouncil(ready);
   const sessionsById = new Map(providers.sessions.map((s) => [s.id, s]));
   const activeProvider = providers.view?.providers.find((p) => p.active) ?? null;
   const runningSessions = providers.sessions.filter((s) => s.status === "running").length;
@@ -209,6 +220,22 @@ export function App() {
     } finally {
       setStartingSession(false);
     }
+  };
+  const openCouncil = () => showTab({ id: "council", kind: "council" });
+  /** The route tab is reused; opening a past deliberation shows it there. */
+  const openRoute = (deliberation: Deliberation | null = null) => {
+    setTabs((all) =>
+      all.some((t) => t.id === "route")
+        ? deliberation
+          ? all.map((t) => (t.id === "route" ? { ...t, deliberation } : t))
+          : all
+        : [...all, { id: "route", kind: "route", deliberation }],
+    );
+    setActiveTab("route");
+  };
+  const routedSession = (session: SessionInfo) => {
+    void providers.refresh();
+    openSession(session.id);
   };
   /** One editor tab per connection; each "Adicionar API" opens a new one. */
   const editConnection = (connectionId: string | null) => {
@@ -306,6 +333,9 @@ export function App() {
             onNewSession={(provider, model) => void newSession(provider, model)}
             onOpenSession={openSession}
             onEditConnection={editConnection}
+            council={council}
+            onOpenCouncil={openCouncil}
+            onOpenRoute={() => openRoute()}
           />
         );
       case "tasks":
@@ -521,6 +551,30 @@ export function App() {
                       onDeleted={() => closeTab(tab.id)}
                     />
                   );
+                case "council":
+                  return (
+                    <CouncilEditor
+                      key={tab.id}
+                      ready={ready}
+                      active={active}
+                      council={council}
+                      providers={providers.view?.providers ?? []}
+                      onOpenDeliberation={openRoute}
+                    />
+                  );
+                case "route":
+                  return (
+                    <RouteView
+                      key={tab.id}
+                      ready={ready}
+                      active={active}
+                      council={council}
+                      projectPath={profile?.path ?? null}
+                      initial={tab.deliberation}
+                      onSessionStarted={routedSession}
+                      onOpenCouncil={openCouncil}
+                    />
+                  );
                 case "discovery":
                   return (
                     <DiscoveryView
@@ -642,6 +696,10 @@ function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenPr
                   streaming, ferramentas pelo Orchestrator, cancelamento, subagentes, tokens e custo.
                 </li>
                 <li>
+                  <strong>Conselho de IAs</strong>: o roteador ordena os modelos para cada tarefa sem gastar tokens, e o
+                  Conselho (1 a 5 IAs) decide o melhor — você aprova (Sugerir) ou ele aplica sozinho (Full).
+                </li>
+                <li>
                   <strong>HISTORY</strong>: toda chamada de ferramenta é auditada, inclusive as feitas por IAs.
                 </li>
               </ul>
@@ -651,7 +709,6 @@ function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenPr
         <div>
           <h2>Próximas fases</h2>
           <ul>
-            <li>5 — Roteador de modelos e Conselho de IAs</li>
             <li>6–7 — SQLite, memória, Context Builder, Handoff</li>
             <li>8–9 — Tasks, agentes, File Locks, autonomia</li>
             <li>10–11 — GitHub, otimização de tokens</li>

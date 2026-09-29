@@ -4,10 +4,11 @@ use crate::context::TurnContext;
 use crate::error::ProviderError;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use orchestrator_core::{ProviderId, SessionId};
+use orchestrator_core::{ProviderId, SessionId, TokenUsage};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
+use tokio_util::sync::CancellationToken;
 
 /// Who a provider is.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -33,7 +34,7 @@ pub struct ModelInfo {
     pub input_price: Option<f64>,
     /// USD per million output tokens, when known.
     pub output_price: Option<f64>,
-    /// Free labels (e.g. "código", "barato"), used to route work (Phase 5).
+    /// Free labels (e.g. "código", "barato"), used to route work (ADR-0011).
     pub tags: Vec<String>,
 }
 
@@ -58,6 +59,9 @@ pub struct ProviderCapabilities {
     pub token_usage: bool,
     /// Reports cost.
     pub cost: bool,
+    /// Answers one-off requests without a session or tools (`complete`);
+    /// required to sit on the model Council (ADR-0011).
+    pub completion: bool,
     pub models: Vec<ModelInfo>,
     pub default_model: Option<String>,
 }
@@ -113,6 +117,25 @@ pub struct TurnInput {
 pub struct TurnOutput {
     /// Final assistant text.
     pub text: String,
+}
+
+/// A one-off request: no session, no history, no tools (ADR-0011).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CompletionRequest {
+    /// Model; `None` = the provider's default.
+    pub model: Option<String>,
+    pub system: Option<String>,
+    pub prompt: String,
+}
+
+/// Answer to a [`CompletionRequest`].
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Completion {
+    pub text: String,
+    /// Model that answered (reported by the API, else the requested one).
+    pub model: Option<String>,
+    /// Tokens and cost, when known.
+    pub usage: TokenUsage,
 }
 
 /// An AI provider adapter. Implementations live in their own crates
@@ -172,6 +195,20 @@ pub trait AIProvider: Send + Sync + 'static {
     /// context.
     async fn cancel(&self, _native: &NativeSession) -> Result<(), ProviderError> {
         Ok(())
+    }
+
+    /// Answers a one-off request without a session, history or tools. The
+    /// model Council uses it to deliberate (ADR-0011); a provider that
+    /// implements it sets `capabilities().completion`.
+    async fn complete(
+        &self,
+        _request: &CompletionRequest,
+        _cancel: &CancellationToken,
+    ) -> Result<Completion, ProviderError> {
+        Err(ProviderError::unsupported(format!(
+            "{} cannot answer one-off requests",
+            self.descriptor().name
+        )))
     }
 
     /// Opens a subagent session derived from `parent`. The default opens an

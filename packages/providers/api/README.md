@@ -13,7 +13,7 @@ perfil.
 | ------ | -------- |
 | `config.rs` | `Connection`, `ModelEntry`, credencial, modo de ferramentas, perfil genérico, validação |
 | `manager.rs` | `ConnectionManager`: `connections.json`, cofre, registro, `CONNECTION_*`, teste e descoberta |
-| `provider.rs` | `ApiProvider` (`AIProvider`): loop modelo → ferramentas → modelo, custo, teste de conexão |
+| `provider.rs` | `ApiProvider` (`AIProvider`): loop modelo → ferramentas → modelo, custo, teste de conexão, `complete` (resposta avulsa para o Conselho) |
 | `protocol.rs` | trait `Protocol` (requisição, decodificador, descoberta de modelos) |
 | `openai.rs`, `anthropic.rs`, `gemini.rs`, `generic.rs` | um módulo por protocolo |
 | `tools.rs` | nomes de ferramentas, protocolo por prompt (`<tool_call>`), `MarkupFilter`, schema do Gemini |

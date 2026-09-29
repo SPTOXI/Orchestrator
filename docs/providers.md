@@ -1,10 +1,11 @@
-# AI Provider Layer (Fases 3–4)
+# AI Provider Layer (Fases 3–5)
 
 Referência de `packages/providers` (crate `orchestrator-providers`). Decisão
 registrada em [ADR-0009](./adr/0009-camada-de-providers-e-sessoes.md).
 Os providers reais são as **conexões de API** cadastradas pelo usuário
 (Fase 4, [ADR-0010](./adr/0010-providers-por-api-com-cadastro-livre.md)):
-ver [api-connections.md](./api-connections.md).
+ver [api-connections.md](./api-connections.md). O roteador e o Conselho
+(Fase 5) escolhem entre eles: ver [router.md](./router.md).
 
 ```text
 UI ──session_send──▶ SessionManager ──stream()──▶ AIProvider (adapter)
@@ -28,7 +29,7 @@ Trait async (`Send + Sync`), mapeada 1:1 na seção 18 do documento mestre.
 | Método | Faz | Padrão |
 | ------ | --- | ------ |
 | `descriptor()` | id estável, nome, fornecedor, descrição | — (obrigatório) |
-| `capabilities()` | streaming, ferramentas, retomada, cancelamento, subagentes nativos, raciocínio, uso de tokens, custo, modelos | — (obrigatório) |
+| `capabilities()` | streaming, ferramentas, retomada, cancelamento, subagentes nativos, raciocínio, uso de tokens, custo, respostas avulsas (`completion`), modelos | — (obrigatório) |
 | `inspect()` | disponível?, versão, autenticado?, detalhe | — (obrigatório) |
 | `start(spec)` | abre a sessão nativa → `NativeSession` | — (obrigatório) |
 | `resume(native, spec)` | reabre a sessão nativa | `UNSUPPORTED` |
@@ -36,6 +37,7 @@ Trait async (`Send + Sync`), mapeada 1:1 na seção 18 do documento mestre.
 | `stream(native, input, ctx)` | um turno com saída incremental (`ctx.emit_text`) | chama `execute` e emite o texto de uma vez |
 | `cancel(native)` | limpeza do lado do fornecedor | nada (cancelamento cooperativo pelo `ctx`) |
 | `spawn_agent(parent, spec)` | sessão filha (subagente) | `start(spec)` |
+| `complete(request, cancel)` | resposta avulsa: instruções + texto + modelo, **sem sessão, histórico nem ferramentas** → `Completion { text, model, usage }`; usada pelo Conselho (Fase 5) | `UNSUPPORTED` |
 
 - `NativeSession { reference, model, data }` é opaca para o núcleo: o
   Orchestrator só a guarda para chamar o provider de novo (e, a partir da
@@ -44,6 +46,10 @@ Trait async (`Send + Sync`), mapeada 1:1 na seção 18 do documento mestre.
   `instructions` será preenchido pelo Context Builder (Fase 7).
 - Em `stream`, o texto vai para o contexto; em `execute`, volta em
   `TurnOutput` e o Orchestrator o registra.
+- `complete` não recebe `TurnContext`: sem ferramentas, o modelo não tem
+  como agir no sistema. Quem implementa marca `capabilities().completion`;
+  só esses providers podem ser membros do Conselho
+  ([ADR-0011](./adr/0011-roteador-de-modelos-e-conselho.md)).
 
 ### `TurnContext`
 
@@ -163,6 +169,9 @@ Sem IA e sem rede. Existe para exercitar o contrato em testes e no app
 | `/tool <ferramenta> [args JSON]` | pede a ferramenta ao Orchestrator e mostra o resultado, ex.: `/tool filesystem.list {"path": "."}` |
 | `/wait <segundos>` | espera (cancelável) |
 | `/fail [mensagem]` | faz o turno falhar |
+
+`complete` devolve `Eco: <prompt>`: como membro do Conselho, o `echo` se
+abstém (a resposta não é JSON), o que exercita as abstenções.
 
 Uso de tokens estimado (≈ 4 caracteres por token), `estimated: true`.
 

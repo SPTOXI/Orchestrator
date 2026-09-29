@@ -77,6 +77,20 @@ Cadastro das APIs que viram providers. Mesmo formato de erro
   uma configuração antes de salvar.
 - `previousId` indica a conexão editada quando o id muda (renomear).
 
+### Roteador e Conselho (Fase 5, ADR-0011)
+
+Escolha do modelo de cada tarefa. Mesmo formato de erro. Referência:
+[`router.md`](./router.md).
+
+| Comando | Argumentos | Retorno | Histórico |
+| ------- | ---------- | ------- | --------- |
+| `router_recommend` | `request: { task, activity?, preference?, needsTools?, minContext? }` | `Recommendation` (ranking + excluídos; sem tokens) | — |
+| `council_get` | — | `{ settings, activities, maxMembers, warning }` | — |
+| `council_save` | `settings: CouncilSettings` | `CouncilSettings` | `COUNCIL_CONFIGURED` |
+| `council_run` | `request: { …router_recommend, force? }` | `{ deliberation, started }` — no modo Full, `started` traz a sessão aberta pelo Conselho | `COUNCIL_DELIBERATED`; no Full também `SESSION_STARTED`, `ROUTE_DECIDED` e `TURN_COMPLETED` com `origin = council` |
+| `council_history` | — | `Deliberation[]` (últimas 50) | — |
+| `route_start_session` | `request: { deliberationId?, provider, model?, title?, task?, sendTask? }` | `{ session, turnId, sendError }` | `SESSION_STARTED`, `ROUTE_DECIDED` (e o turno da tarefa) |
+
 ## Eventos
 
 | Evento | Payload | Uso |
