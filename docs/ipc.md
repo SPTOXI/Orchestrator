@@ -24,8 +24,8 @@ Decisões registradas em [ADR-0003](./adr/0003-gateway-ipc-unico.md),
 | `runtime_tools` | — | `ToolSpec[]` | não (somente leitura do catálogo) |
 | `terminal_input` | `id: string`, `data: string` | `void` | não por tecla (ADR-0003) |
 | `terminal_resize` | `id: string`, `cols: number`, `rows: number` | `void` | não |
-| `history_recent` | `limit?: number` (padrão 200) | `AuditEvent[]` (mais antigo primeiro) | não |
-| `app_info` | — | `{ version, os, arch, baseDir, dataDir, auditLog, defaultShell }` (`baseDir`: projeto aberto ou pasta do usuário) | não |
+| `history_recent` | `limit?: number` (padrão 200) | `AuditEvent[]` (mais antigo primeiro), lidos do banco | não |
+| `app_info` | — | `{ version, os, arch, baseDir, dataDir, database, databaseWarning, defaultShell }` (`baseDir`: projeto aberto ou pasta do usuário; `database`: caminho do banco ou `(memória)`) | não |
 | `pick_folder` | — | `string \| null` — seletor nativo de pasta; só interação de UI, a pasta é aberta depois com `project.open` (auditado) | não |
 
 `runtime_invoke` sempre resolve com um `ToolResult` (falhas vêm em
@@ -91,6 +91,29 @@ Escolha do modelo de cada tarefa. Mesmo formato de erro. Referência:
 | `council_history` | — | `Deliberation[]` (últimas 50) | — |
 | `route_start_session` | `request: { deliberationId?, provider, model?, title?, task?, sendTask? }` | `{ session, turnId, sendError }` | `SESSION_STARTED`, `ROUTE_DECIDED` (e o turno da tarefa) |
 
+### Histórico, projetos e memória (Fase 6, ADR-0012)
+
+Leem e escrevem o banco local. Erros rejeitam a promessa com uma mensagem.
+As escritas têm origem `user`. Referência: [`memory.md`](./memory.md).
+
+| Comando | Argumentos | Retorno | Histórico |
+| ------- | ---------- | ------- | --------- |
+| `history_query` | `query?: { projectId?, kinds?, text?, hideReads?, before?, limit? }` | `{ events, next }`: página mais antigo primeiro; `next` é o cursor para `before` | — |
+| `projects_recent` | `limit?` (padrão 8) | `Project[]` (último aberto primeiro) | — |
+| `project_current` | — | `Project \| null` | — |
+| `project_forget` | `id` | `void` (sai da lista; memória e histórico ficam) | — |
+| `projects_import_recent` | `list: { path, name, openedAt }[]` | quantos entraram | — |
+| `memory_overview` | `projectId?` (padrão: o aberto) | `MemoryOverview \| null`: L1 e contagens | — |
+| `memory_list` | `projectId` | `MemoryEntry[]` (fixadas primeiro) | — |
+| `memory_save` | `input: { id?, projectId, kind, title, content, tags, pinned }` | `MemoryEntry` | `MEMORY_SAVED` |
+| `memory_delete` | `id` | `void` | `MEMORY_REMOVED` |
+| `memory_search` | `projectId`, `text`, `limit?` (padrão 30) | `SearchHit[]` (L3, por relevância) | — |
+| `decisions_list` | `projectId` | `ProjectDecision[]` | — |
+| `decision_save` | `input: { id?, projectId, title, context, decision, consequences, status }` | `ProjectDecision` | `DECISION_SAVED` |
+
+`council_history` também passa a vir do banco: as deliberações e o cache do
+Conselho sobrevivem ao reinício.
+
 ## Eventos
 
 | Evento | Payload | Uso |
@@ -131,12 +154,21 @@ repete.
 
 ## Persistência
 
-`DesktopSink` grava cada `AuditEvent` como uma linha JSON em
-`<app-data>/audit.jsonl` (Linux: `~/.local/share/dev.orchestrator.desktop/`,
+`DesktopSink` grava cada `AuditEvent` no banco local
+`<app-data>/orchestrator.db` (Linux: `~/.local/share/dev.orchestrator.desktop/`,
 Windows: `%APPDATA%\dev.orchestrator.desktop\`, macOS:
-`~/Library/Application Support/dev.orchestrator.desktop/`) e mantém os 1000
-mais recentes em memória. Substituído por SQLite na Fase 6
-([ADR-0005](./adr/0005-observabilidade-antes-do-sqlite.md)).
+`~/Library/Application Support/dev.orchestrator.desktop/`), marca o projeto
+e depois emite `runtime://audit`. Eventos derivados (`PROJECT_CREATED`, a
+entrada "Stack" da memória) seguem o mesmo caminho
+([ADR-0012](./adr/0012-sqlite-memoria-e-historico.md)).
+
+- O `audit.jsonl` das fases anteriores é importado na primeira execução e
+  renomeado para `audit.jsonl.imported`.
+- Sessões de provider, transcripts e deliberações do Conselho também ficam
+  no banco.
+- Se o arquivo não abrir, o app usa um banco em memória e avisa
+  (`app_info.databaseWarning`, na barra de status; o rodapé do HISTORY
+  mostra `banco: (memória)`).
 
 ## Segurança da webview
 

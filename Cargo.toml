@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "packages/core",
     "packages/git",
+    "packages/memory",
     "packages/providers",
     "packages/providers/api",
     "packages/router",
@@ -19,6 +20,7 @@ publish = false
 [workspace.dependencies]
 orchestrator-core = { path = "packages/core" }
 orchestrator-git = { path = "packages/git" }
+orchestrator-memory = { path = "packages/memory" }
 orchestrator-providers = { path = "packages/providers" }
 orchestrator-provider-api = { path = "packages/providers/api" }
 orchestrator-router = { path = "packages/router" }
@@ -32,6 +34,7 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "sync-s
 libc = "0.2"
 parking_lot = "0.12"
 portable-pty = "0.9"
+rusqlite = { version = "0.40", features = ["bundled"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "rustls-tls-native-roots", "stream", "json", "http2", "charset"] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }

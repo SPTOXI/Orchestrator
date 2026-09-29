@@ -27,6 +27,15 @@ import type {
   ConnectionView,
   CouncilSettings,
   CouncilView,
+  HistoryPage,
+  HistoryQuery,
+  MemoryEntry,
+  MemoryInput,
+  MemoryOverview,
+  Project,
+  ProjectDecision,
+  ProjectDecisionInput,
+  SearchHit,
   DeliberateRequest,
   Deliberation,
   Recommendation,
@@ -278,4 +287,23 @@ export const councilApi = {
   history: () => callProvider<Deliberation[]>("council_history"),
   /** Opens a session with the approved or picked model (ROUTE_DECIDED). */
   startSession: (request: RouteStart) => callProvider<RouteStarted>("route_start_session", { request }),
+};
+
+/** History, projects and project memory in the local database (ADR-0012). */
+export const memoryApi = {
+  history: (query: HistoryQuery = {}) => callProvider<HistoryPage>("history_query", { query }),
+  projectsRecent: (limit = 8) => callProvider<Project[]>("projects_recent", { limit }),
+  projectCurrent: () => callProvider<Project | null>("project_current"),
+  projectForget: (id: string) => callProvider<void>("project_forget", { id }),
+  importRecent: (list: Array<{ path: string; name: string; openedAt: string }>) =>
+    callProvider<number>("projects_import_recent", { list }),
+  /** L1 and totals; default: the open project. */
+  overview: (projectId?: string) => callProvider<MemoryOverview | null>("memory_overview", { projectId }),
+  list: (projectId: string) => callProvider<MemoryEntry[]>("memory_list", { projectId }),
+  save: (input: MemoryInput) => callProvider<MemoryEntry>("memory_save", { input }),
+  remove: (id: string) => callProvider<void>("memory_delete", { id }),
+  search: (projectId: string, text: string, limit = 30) =>
+    callProvider<SearchHit[]>("memory_search", { projectId, text, limit }),
+  decisions: (projectId: string) => callProvider<ProjectDecision[]>("decisions_list", { projectId }),
+  saveDecision: (input: ProjectDecisionInput) => callProvider<ProjectDecision>("decision_save", { input }),
 };

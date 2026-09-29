@@ -86,7 +86,10 @@ pub struct AppInfo {
     /// Base directory of the runtime: the open project, or the home directory.
     pub base_dir: String,
     pub data_dir: String,
-    pub audit_log: String,
+    /// The database file (history, sessions, memory), or `(memória)`.
+    pub database: String,
+    /// Problem opening the database, if any.
+    pub database_warning: Option<String>,
     pub default_shell: String,
 }
 
@@ -98,7 +101,11 @@ pub fn app_info(state: State<'_, AppState>) -> AppInfo {
         arch: std::env::consts::ARCH,
         base_dir: state.runtime.base_dir().display().to_string(),
         data_dir: state.data_dir.display().to_string(),
-        audit_log: state.sink.audit_log_path(),
+        database: state
+            .store
+            .path()
+            .map_or_else(|| "(memória)".to_owned(), |p| p.display().to_string()),
+        database_warning: state.store_warning.clone(),
         default_shell: state.runtime.shells().default_id().to_owned(),
     }
 }

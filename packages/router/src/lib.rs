@@ -20,6 +20,7 @@ mod council;
 mod score;
 mod service;
 mod settings;
+mod store;
 
 pub use activity::{detect, normalize, profiles, Activity, ActivityProfile};
 pub use catalog::{Availability, CatalogModel};
@@ -29,3 +30,4 @@ pub use score::{
 };
 pub use service::{DeliberateRequest, RouteStart, RouteStarted, RouterService, RunOutcome};
 pub use settings::{CouncilMember, CouncilMode, CouncilSettings, MAX_MEMBERS};
+pub use store::DeliberationStore;

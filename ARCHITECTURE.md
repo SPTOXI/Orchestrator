@@ -39,10 +39,11 @@ estrutural é registrada antes como ADR em [`docs/adr/`](./docs/adr).
 ├───────────────────────────────────────────────────────────────────────┤
 │ Orchestrator Core                                                     │
 │   core (contratos)  · provider layer (Fase 3: AIProvider, registro,   │
-│   sessões; Fase 4: conexões de API) · orchestrator engine · agent     │
-│   manager · task manager · context builder · memory/history           │
+│   sessões; Fase 4: conexões de API) · router/Conselho (Fase 5) ·      │
+│   memory/history (Fase 6) · orchestrator engine · agent manager ·     │
+│   task manager · context builder                                      │
 ├───────────────────────────────────────────────────────────────────────┤
-│ Local Database (SQLite, Fase 6)                                       │
+│ Local Database (SQLite, Fase 6)        <app-data>/orchestrator.db     │
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -70,16 +71,16 @@ apenas apresentação.
 
 | Módulo | Local | Linguagem | Fase | Estado |
 | ------ | ----- | --------- | ---- | ------ |
-| Desktop UI | `apps/desktop/src` | React/TS | 1–5 | ✅ shell, PROJECT, AI PROVIDERS (cadastro de APIs, Conselho) + sessões, GIT, terminal, processos, HISTORY |
-| Ponte IPC | `apps/desktop/src-tauri` | Rust | 1–5 | ✅ (inclui o cofre do SO, `vault.rs`) |
-| Core (contratos) | `packages/core` | Rust | 1–5 | ✅ `ToolCall`, `ToolResult`, `ToolDefinition`, `AuditEvent`, `StreamEvent`, `EventSink`, `ProjectProfile`, `SessionInfo`, `SessionEvent`, `TokenUsage` |
+| Desktop UI | `apps/desktop/src` | React/TS | 1–6 | ✅ shell, PROJECT, AI PROVIDERS (cadastro de APIs, Conselho) + sessões, GIT, terminal, processos, MEMORY, HISTORY |
+| Ponte IPC | `apps/desktop/src-tauri` | Rust | 1–6 | ✅ (inclui o cofre do SO, `vault.rs`, e a ligação dos stores com o banco, `persistence.rs`) |
+| Core (contratos) | `packages/core` | Rust | 1–6 | ✅ `ToolCall`, `ToolResult`, `ToolDefinition`, `AuditEvent`, `StreamEvent`, `EventSink`, `ProjectProfile`, `SessionInfo`, `SessionEvent`, `TokenUsage` |
 | Tool Runtime | `packages/runtime` | Rust | 1–4 | ✅ filesystem, shell, terminal, process, project, git, package, runtime; JSON Schema dos argumentos (Fase 4) |
 | Git local | `packages/git` | Rust | 2 | ✅ `git` do sistema (ADR-0007) |
 | Project Discovery / Profile | `packages/core` (tipos) + `packages/runtime` (detecção) | Rust | 2 | ✅ (ADR-0008) |
-| AIProvider / Registry / Sessions | `packages/providers` | Rust | 3, 5 | ✅ trait, registro, sessões, provider `echo` de desenvolvimento (ADR-0009); respostas avulsas `complete` (ADR-0011) |
-| Conexões de API (OpenAI e compatíveis, Anthropic, Gemini, perfil genérico) | `packages/providers/api` | Rust | 4 | ✅ cadastro livre, cofre do SO, ferramentas nativas ou por prompt, custo, teste de conexão (ADR-0010) |
-| Roteador de modelos e Conselho | `packages/router` | Rust | 5 | ✅ ranking sem tokens, Conselho de 1 a 5 IAs com votos e cache, modos Desligado/Sugerir/Full (ADR-0011) |
-| SQLite, Memory, History, Decisions | `packages/memory` | Rust | 6 | planejado |
+| AIProvider / Registry / Sessions | `packages/providers` | Rust | 3, 5, 6 | ✅ trait, registro, sessões, provider `echo` de desenvolvimento (ADR-0009); respostas avulsas `complete` (ADR-0011); `snapshot` e `SessionStore` (ADR-0012) |
+| Conexões de API (OpenAI e compatíveis, Anthropic, Gemini, perfil genérico) | `packages/providers/api` | Rust | 4, 6 | ✅ cadastro livre, cofre do SO, ferramentas nativas ou por prompt, custo, teste de conexão (ADR-0010); conversa retomável após reiniciar (ADR-0012) |
+| Roteador de modelos e Conselho | `packages/router` | Rust | 5, 6 | ✅ ranking sem tokens, Conselho de 1 a 5 IAs com votos e cache, modos Desligado/Sugerir/Full (ADR-0011); deliberações e cache guardados (ADR-0012) |
+| SQLite, Memory, History, Decisions | `packages/memory` | Rust | 6 | ✅ banco local, histórico por projeto, projetos, sessões, memória L1/L2/L3, decisões, deliberações (ADR-0012) |
 | Context Builder, Handoff | `packages/orchestrator` | Rust | 7 | planejado |
 | Task Manager, Agent Manager, Subagents, File Locks | `packages/orchestrator` + `packages/agents` | Rust | 8 | planejado |
 | Autonomia (Assistido/Autônomo/Irrestrito) | `packages/orchestrator` | Rust | 9 | planejado |
@@ -94,7 +95,11 @@ Alterações à estrutura original:
   `packages/providers/api`, com providers só por API e cadastro livre
   ([ADR-0010](./docs/adr/0010-providers-por-api-com-cadastro-livre.md));
 - adição de `packages/router` para o roteador de modelos e o Conselho
-  ([ADR-0011](./docs/adr/0011-roteador-de-modelos-e-conselho.md)).
+  ([ADR-0011](./docs/adr/0011-roteador-de-modelos-e-conselho.md));
+- `packages/memory` como crate `orchestrator-memory`, que depende só de
+  `core`; providers e roteador expõem traits (`SessionStore`,
+  `DeliberationStore`) que o app liga ao banco
+  ([ADR-0012](./docs/adr/0012-sqlite-memoria-e-historico.md)).
 
 ## 4. Tool Runtime (Fases 1–2)
 
@@ -215,13 +220,15 @@ a conter fora do gate explícito da Fase 9.
   `CONNECTION_SAVED`, `CONNECTION_REMOVED`
   ([ADR-0010](./docs/adr/0010-providers-por-api-com-cadastro-livre.md)),
   `COUNCIL_CONFIGURED`, `COUNCIL_DELIBERATED`, `ROUTE_DECIDED`
-  ([ADR-0011](./docs/adr/0011-roteador-de-modelos-e-conselho.md)).
+  ([ADR-0011](./docs/adr/0011-roteador-de-modelos-e-conselho.md)),
+  `MEMORY_SAVED`, `MEMORY_REMOVED`, `DECISION_SAVED`
+  ([ADR-0012](./docs/adr/0012-sqlite-memoria-e-historico.md)).
 - `StreamEvent` — eventos de alta frequência e não duráveis (saída de
   terminal/processo, término, eventos de sessão de provider).
-- `EventSink` — trait que desacopla o runtime de quem consome eventos (Tauri
-  hoje; SQLite na Fase 6).
+- `EventSink` — trait que desacopla o runtime de quem consome eventos. O
+  sink do app grava no banco local e depois emite para a UI.
 
-IDs são UUID v7 (ordenáveis por tempo), prontos para chave primária no SQLite.
+IDs são UUID v7 (ordenáveis por tempo) e servem de chave primária no banco.
 
 ## 6. Camada IPC
 
@@ -234,31 +241,61 @@ Detalhada em [`docs/ipc.md`](./docs/ipc.md) e
 | `runtime_tools()` | catálogo de ferramentas |
 | `terminal_input(id, data)` | canal de digitação humana no terminal (streaming, não auditado por tecla) |
 | `terminal_resize(id, cols, rows)` | redimensionamento do PTY |
-| `history_recent(limit)` | eventos de auditoria recentes |
+| `history_recent(limit)`, `history_query(query)` | histórico do banco: janela recente ou página com filtros e cursor (Fase 6) |
 | `app_info()` | versão, SO, diretórios, projeto aberto |
 | `pick_folder()` | seletor nativo de pasta (só UI; a pasta escolhida é aberta via `project.open`) |
 | `providers_list`, `provider_inspect`, `provider_select` | registro de providers e provider ativo (Fase 3) |
 | `sessions_list`, `session_start`, `session_get`, `session_send`, `session_cancel`, `session_close`, `session_resume`, `session_spawn` | sessões de provider (Fase 3) |
 | `connections_list`, `connection_save`, `connection_delete`, `connection_test`, `connection_models` | cadastro de APIs (Fase 4); a chave nunca volta para a webview |
+| `router_recommend`, `council_*`, `route_start_session` | roteador e Conselho (Fase 5) |
+| `projects_recent`, `project_current`, `project_forget`, `projects_import_recent` | projetos registrados no banco (Fase 6) |
+| `memory_overview`, `memory_list`, `memory_save`, `memory_delete`, `memory_search`, `decisions_list`, `decision_save` | memória do projeto e decisões (Fase 6) |
 
 | Evento Tauri | Payload |
 | ------------ | ------- |
 | `runtime://stream` | `StreamEvent` (saída/término de terminal e processo, eventos de sessão) |
 | `runtime://audit` | `AuditEvent` |
 
-## 7. Modelo de dados planejado (Fase 6)
+## 7. Modelo de dados (Fase 6)
 
-SQLite com as entidades: `projects`, `tasks`, `task_dependencies`, `agents`,
-`agent_sessions`, `messages`, `tool_calls`, `memory`, `decisions`,
-`artifacts`, `file_locks`, `git_operations`, `audit_events`. Os tipos de
-`packages/core` já usam IDs e timestamps compatíveis com essas tabelas. Até lá,
-a auditoria é gravada em JSONL (`<app-data>/audit.jsonl`).
+Um banco SQLite por instalação, `<app-data>/orchestrator.db`, embutido e em
+WAL, com migrações por `PRAGMA user_version`
+([ADR-0012](./docs/adr/0012-sqlite-memoria-e-historico.md), referência em
+[`docs/memory.md`](./docs/memory.md)). Nada é gravado dentro da pasta do
+projeto.
+
+| Tabela | Conteúdo |
+| ------ | -------- |
+| `projects` | projetos abertos (caminho, nome, stack detectada) |
+| `audit_events` | histórico durável, com `project_id` e `session_id`; `tool_calls` é uma *view* sobre ele |
+| `sessions`, `session_entries` | sessões de provider (com a conversa nativa) e transcripts: o `agent_sessions`/`messages` do documento mestre |
+| `memory_entries` | memória L2 |
+| `decisions` | decisões do projeto |
+| `deliberations` | deliberações e cache do Conselho |
+| `search_index` | índice FTS5 da busca L3 |
+
+As tabelas `tasks`, `task_dependencies`, `agents`, `artifacts`, `file_locks`
+e `git_operations` entram com as migrações das Fases 8–10. Configuração
+(`connections.json`, `council.json`) continua em arquivos, e segredos só no
+cofre do SO.
 
 ## 8. Memória, contexto e handoff (Fases 6–7)
 
-- **L1 Working Memory**: task atual, arquivos, últimos comandos/erros, objetivo.
-- **L2 Project Memory**: arquitetura, stack, convenções, decisões, regras.
-- **L3 Historical Memory**: sessões, mensagens, tool calls, commits, erros.
+Implementado na Fase 6 (`packages/memory`):
+
+- **L1 Working Memory**: derivada do histórico do projeto: sessões, arquivos
+  alterados, comandos com código de saída e erros recentes. A task atual e o
+  objetivo entram com as tasks (Fase 8).
+- **L2 Project Memory**: entradas de arquitetura, stack, convenção, regra e
+  nota, com etiquetas, fixação e origem (usuário, IA ou detector). A stack
+  detectada vira uma entrada ao abrir o projeto.
+- **Decisões**: contexto, decisão, consequências e estado. Nunca são
+  apagadas.
+- **L3 Historical Memory**: busca FTS5 na memória, decisões, mensagens das
+  sessões e eventos notáveis (commits, comandos, falhas).
+
+Fase 7:
+
 - **Context Builder**: monta `TASK + L1 + L2 relevante + arquivos relevantes +
   erros recentes + histórico relevante + estado do Git + handoff`. Nunca envia
   L3 inteiro, o repositório inteiro ou todas as mensagens.
@@ -269,13 +306,14 @@ a auditoria é gravada em JSONL (`<app-data>/audit.jsonl`).
 Os buffers com offset do runtime (`terminal.read`/`process.read { since }`)
 já existem para que o Context Builder envie apenas saída nova.
 
-## 9. Providers (Fases 3–5)
+## 9. Providers (Fases 3–6)
 
 ```typescript
 interface AIProvider {
   start(); resume(); execute(); stream(); cancel();
   spawnAgent(); inspect(); capabilities();
   complete(); // Fase 5: resposta avulsa, sem sessão nem ferramentas
+  snapshot(); // Fase 6: estado da sessão nativa para retomar após reiniciar
 }
 ```
 
@@ -283,14 +321,16 @@ Implementado na Fase 3 como trait Rust em `packages/providers`
 ([ADR-0009](./docs/adr/0009-camada-de-providers-e-sessoes.md), referência em
 [`docs/providers.md`](./docs/providers.md)):
 
-- **`AIProvider`** — os oito métodos acima (+ `descriptor`), com padrões
-  sensatos para `stream`, `resume`, `cancel` e `spawn_agent`.
+- **`AIProvider`** — os métodos acima (+ `descriptor`), com padrões
+  sensatos para `stream`, `resume`, `cancel`, `spawn_agent`, `complete` e
+  `snapshot`.
 - **`ProviderRegistry`** — providers registrados, provider ativo,
   `PROVIDER_SWITCHED`.
 - **`SessionManager`** — a sessão pertence ao Orchestrator: um turno por vez,
   transcript numerado, uso de tokens/custo, cancelamento com prazo,
   encerrar/retomar, subagentes (mesmo provider ou outro), eventos ao vivo e
-  histórico.
+  histórico. Desde a Fase 6, com um `SessionStore`, sessões e transcripts
+  sobrevivem ao reinício e voltam encerradas, prontas para retomar.
 - **`TurnContext::call_tool`** — única saída do provider para o sistema; o
   Orchestrator executa pelo Tool Runtime com a sessão como origem.
 - **`echo`** — provider de desenvolvimento sem IA, para testes e builds de
@@ -315,7 +355,8 @@ Crate `packages/providers/api`:
 - **Modelos:** descoberta pela API, preços informados pelo usuário (custo
   por turno), contexto e etiquetas usadas pelo roteador e pelo Conselho (9.2).
 - **Sessões:** usam a instância registrada a cada turno. Editar uma conexão
-  vale para as sessões abertas, sem perder a conversa.
+  vale para as sessões abertas, sem perder a conversa. A conversa vai para
+  o banco ao fim de cada turno e continua depois de reiniciar o app.
 
 Nenhuma chamada específica de fornecedor fora do adapter. Uma IA nova entra
 como conexão cadastrada (sem código) ou como um protocolo novo no crate.
@@ -345,10 +386,11 @@ depende só de `core` e `providers`:
   - *Full:* o Conselho abre a sessão e envia a tarefa, com origem
     `council`. O Full não dispensa o gate de autonomia da Fase 9.
 - **Cache:** mesma pergunta, mesmos candidatos e mesmos membros = zero
-  tokens.
+  tokens, também entre execuções do app (Fase 6).
 - **Histórico:** `COUNCIL_CONFIGURED`, `COUNCIL_DELIBERATED` e
-  `ROUTE_DECIDED`.
-- **Configuração:** `council.json`, até o SQLite.
+  `ROUTE_DECIDED`; as deliberações ficam no banco.
+- **Configuração:** `council.json` (configuração continua em arquivo,
+  ADR-0012).
 
 ## 10. Plataformas
 

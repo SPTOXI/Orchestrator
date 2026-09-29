@@ -4,10 +4,13 @@
 
 mod support;
 
-use orchestrator_core::{CallOrigin, EventKind, SessionEvent, TurnStatus};
+use orchestrator_core::{CallOrigin, EventKind, SessionEvent, SessionStatus, TurnStatus};
 use orchestrator_provider_api::{ConnectionManager, ProbeRequest, SaveRequest, SecretStore};
-use orchestrator_providers::{CompletionRequest, ProviderErrorKind};
+use orchestrator_providers::{
+    CompletionRequest, MemorySessionStore, ProviderErrorKind, SessionStore,
+};
 use serde_json::{json, Value};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use support::{connection, FakeApi, Harness, Reply};
 
@@ -996,4 +999,61 @@ async fn complete_answers_once_without_tools_or_history() {
     // No session, no turn, no tool call in the history.
     assert!(h.sessions.list().is_empty());
     assert!(h.audits(EventKind::TurnCompleted).is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_conversation_continues_after_a_restart() {
+    let api = FakeApi::start(|_, index| {
+        Reply::sse(vec![
+            openai_chunk(json!({"content": format!("resposta {index}")}), None),
+            openai_chunk(json!({}), Some("stop")),
+            openai_usage(5, 2),
+        ])
+        .sse_done()
+    })
+    .await;
+    let conn = json!({
+        "id": "local", "name": "Local", "kind": "openai", "baseUrl": api.url("/v1"),
+        "credential": {"source": "vault"}, "models": [{"id": "gpt-test"}]
+    });
+    let store: Arc<dyn SessionStore> = Arc::new(MemorySessionStore::new());
+
+    let first = Harness::with_store(store.clone());
+    first.add(connection(conn.clone()), Some("sk-test")).await;
+    let session = first.start("local").await;
+    first.turn(&session.id, "primeiro").await;
+    drop(first);
+
+    // "Restart": new registry, new connection manager, empty memory.
+    let second = Harness::with_store(store.clone());
+    second.add(connection(conn), Some("sk-test")).await;
+    let restored = second.sessions.info(&session.id).unwrap();
+    assert_eq!(restored.status, SessionStatus::Closed);
+    second
+        .sessions
+        .resume(&session.id, CallOrigin::User)
+        .await
+        .unwrap();
+    second.turn(&session.id, "segundo").await;
+    assert_eq!(second.last_turn(&session.id), (TurnStatus::Completed, None));
+
+    let calls = api.calls("/v1/chat/completions");
+    assert_eq!(calls.len(), 2);
+    let messages = calls[1].body["messages"].as_array().unwrap();
+    let said: Vec<_> = messages
+        .iter()
+        .map(|m| {
+            format!(
+                "{}: {}",
+                m["role"].as_str().unwrap(),
+                m["content"].as_str().unwrap_or_default()
+            )
+        })
+        .collect();
+    assert_eq!(said.len(), 4, "{said:?}");
+    assert!(said[0].starts_with("system: You are an AI agent"));
+    assert_eq!(
+        &said[1..],
+        ["user: primeiro", "assistant: resposta 0", "user: segundo"]
+    );
 }

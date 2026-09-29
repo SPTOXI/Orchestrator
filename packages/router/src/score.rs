@@ -63,7 +63,7 @@ pub struct ModelRef {
 }
 
 /// Criteria of a score, each from 0 to 1.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Criteria {
     pub tags: f64,
@@ -75,7 +75,7 @@ pub struct Criteria {
 }
 
 /// A model that can do the task, with its score (0–100) and why.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Candidate {
     #[serde(flatten)]
@@ -94,7 +94,7 @@ pub struct Candidate {
 }
 
 /// A model left out, and why.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Excluded {
     #[serde(flatten)]
@@ -104,7 +104,7 @@ pub struct Excluded {
 }
 
 /// The router's answer.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Recommendation {
     pub activity: Activity,

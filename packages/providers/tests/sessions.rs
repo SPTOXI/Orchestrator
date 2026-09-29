@@ -8,9 +8,10 @@ use orchestrator_core::{
     TurnStatus,
 };
 use orchestrator_providers::{
-    AIProvider, EchoProvider, ManagerConfig, NativeSession, ProviderCapabilities,
-    ProviderDescriptor, ProviderErrorKind, ProviderRegistry, ProviderStatus, SessionManager,
-    SessionSpec, StartRequest, ToolExecutor, TurnContext, TurnInput, TurnOutput,
+    AIProvider, EchoProvider, ManagerConfig, MemorySessionStore, NativeSession,
+    ProviderCapabilities, ProviderDescriptor, ProviderErrorKind, ProviderRegistry, ProviderStatus,
+    SessionManager, SessionSpec, SessionStore, StartRequest, ToolExecutor, TurnContext, TurnInput,
+    TurnOutput,
 };
 use orchestrator_runtime::{RuntimeConfig, ToolRuntime};
 use parking_lot::Mutex;
@@ -966,4 +967,112 @@ async fn a_panicking_provider_fails_the_turn_without_wedging_the_session() {
     h.send(&info.id, "de novo").await;
     h.idle(&info.id).await;
     assert_eq!(h.last_turn(&info.id).0, TurnStatus::Completed);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sessions_and_transcripts_survive_a_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let store: Arc<MemorySessionStore> = Arc::new(MemorySessionStore::new());
+    let open = |sink: &Arc<MemorySink>| {
+        SessionManager::with_store(
+            registry(sink, Vec::new()),
+            Arc::new(RuntimeTools(ToolRuntime::new(
+                RuntimeConfig {
+                    base_dir: dir.path().to_path_buf(),
+                },
+                sink.clone(),
+            ))),
+            sink.clone(),
+            config(),
+            store.clone(),
+        )
+    };
+
+    // First run: a session with one turn and a subagent, left open.
+    let sink = Arc::new(MemorySink::new());
+    let first = open(&sink);
+    let parent = first
+        .start(
+            StartRequest {
+                instructions: Some("seja breve".into()),
+                ..Default::default()
+            },
+            dir.path().to_path_buf(),
+            CallOrigin::User,
+        )
+        .await
+        .unwrap();
+    let done = first
+        .execute(&parent.id, "olá".into(), CallOrigin::User)
+        .await
+        .unwrap();
+    assert_eq!(done.text, "Eco: olá");
+    let child = first
+        .spawn(&parent.id, StartRequest::default(), CallOrigin::User)
+        .await
+        .unwrap();
+    let before = first.snapshot(&parent.id).unwrap();
+    drop(first);
+
+    // Second run: both come back closed, with the same transcript.
+    let sink = Arc::new(MemorySink::new());
+    let second = open(&sink);
+    let listed: Vec<_> = second.list().into_iter().map(|s| s.id).collect();
+    assert_eq!(listed, [child.id.clone(), parent.id.clone()]);
+    let restored = second.snapshot(&parent.id).unwrap();
+    assert_eq!(restored.info.status, SessionStatus::Closed);
+    // The store is told too.
+    assert!(store
+        .load()
+        .iter()
+        .all(|(s, _)| s.info.status == SessionStatus::Closed));
+    assert_eq!(
+        (restored.info.turns, restored.info.usage),
+        (1, before.info.usage)
+    );
+    assert_eq!(restored.entries, before.entries);
+    assert_eq!(restored.last_seq, before.last_seq);
+    assert_eq!(
+        second.info(&child.id).unwrap().parent_id.as_ref(),
+        Some(&parent.id)
+    );
+
+    // A closed session refuses turns until resumed; then numbering goes on.
+    let closed = second
+        .send(&parent.id, "de novo".into(), CallOrigin::User)
+        .await;
+    assert_eq!(closed.unwrap_err().kind, ProviderErrorKind::Closed);
+    second.resume(&parent.id, CallOrigin::User).await.unwrap();
+    let done = second
+        .execute(&parent.id, "de novo".into(), CallOrigin::User)
+        .await
+        .unwrap();
+    assert_eq!(done.text, "Eco: de novo");
+    let after = second.snapshot(&parent.id).unwrap();
+    assert!(after.entries.first().unwrap().seq == before.entries.first().unwrap().seq);
+    assert!(after.entries.last().unwrap().seq > before.last_seq);
+    assert_eq!(after.info.turns, 2);
+    // A second subagent is numbered after the restored one.
+    let sub = second
+        .spawn(&parent.id, StartRequest::default(), CallOrigin::User)
+        .await
+        .unwrap();
+    assert!(sub.title.ends_with("sub 2"), "{}", sub.title);
+
+    // Everything reached the store, including what was said after the
+    // restart and the resumed status.
+    let stored = store.load();
+    let (session, entries) = stored.iter().find(|(s, _)| s.info.id == parent.id).unwrap();
+    assert_eq!(session.info.turns, 2);
+    assert_eq!(session.instructions.as_deref(), Some("seja breve"));
+    let now = second.snapshot(&parent.id).unwrap();
+    assert!(
+        now.last_seq > after.last_seq,
+        "the new subagent was recorded"
+    );
+    assert_eq!(entries.last().unwrap().seq, now.last_seq);
+    assert!(entries.iter().any(|e| matches!(
+        &e.event,
+        SessionEvent::TurnStarted { input, .. } if input == "de novo"
+    )));
 }

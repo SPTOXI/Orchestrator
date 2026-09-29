@@ -197,6 +197,14 @@ pub trait AIProvider: Send + Sync + 'static {
         Ok(())
     }
 
+    /// The native session with everything the provider needs to resume it
+    /// later, even after the app restarts (e.g. an API conversation). Called
+    /// after every turn and stored by the Orchestrator (ADR-0012). The
+    /// default returns it unchanged.
+    async fn snapshot(&self, native: &NativeSession) -> NativeSession {
+        native.clone()
+    }
+
     /// Answers a one-off request without a session, history or tools. The
     /// model Council uses it to deliberate (ADR-0011); a provider that
     /// implements it sets `capabilities().completion`.

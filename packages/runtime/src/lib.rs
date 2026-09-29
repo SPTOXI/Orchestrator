@@ -351,6 +351,12 @@ impl ToolRuntime {
                         "branch": profile.git.as_ref().and_then(|g| g.branch.as_ref()),
                         "languages": profile.languages,
                         "frameworks": profile.frameworks,
+                        "packageManagers": profile.package_managers,
+                        "runtimes": profile.runtimes,
+                        "databases": profile.databases,
+                        "tools": profile.tools,
+                        "docker": profile.docker,
+                        "monorepo": profile.monorepo,
                     }),
                 );
                 Dispatched::with_events(&profile, vec![event])

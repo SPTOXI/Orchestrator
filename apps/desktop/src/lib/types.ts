@@ -86,7 +86,10 @@ export type EventKind =
   | "CONNECTION_REMOVED"
   | "COUNCIL_CONFIGURED"
   | "COUNCIL_DELIBERATED"
-  | "ROUTE_DECIDED";
+  | "ROUTE_DECIDED"
+  | "MEMORY_SAVED"
+  | "MEMORY_REMOVED"
+  | "DECISION_SAVED";
 
 export interface AuditEvent {
   id: string;
@@ -451,7 +454,9 @@ export interface AppInfo {
   arch: string;
   baseDir: string;
   dataDir: string;
-  auditLog: string;
+  /** Database file (history, sessions, memory), or "(memória)". */
+  database: string;
+  databaseWarning: string | null;
   defaultShell: string;
 }
 
@@ -863,4 +868,141 @@ export interface RouteStarted {
 export interface RunOutcome {
   deliberation: Deliberation;
   started: RouteStarted | null;
+}
+
+// ---------------------------------------------------------------- memory ---
+// packages/memory (ADR-0012).
+
+export interface Project {
+  id: string;
+  path: string;
+  name: string;
+  createdAt: string;
+  lastOpenedAt: string;
+  stack: Record<string, unknown> | null;
+}
+
+export interface HistoryQuery {
+  projectId?: string | null;
+  kinds?: EventKind[];
+  text?: string | null;
+  hideReads?: boolean;
+  /** Cursor from `HistoryPage.next`. */
+  before?: string | null;
+  limit?: number;
+}
+
+export interface HistoryPage {
+  /** Oldest first. */
+  events: AuditEvent[];
+  /** Cursor of the previous (older) page. */
+  next: string | null;
+}
+
+export type MemoryKind = "architecture" | "stack" | "convention" | "rule" | "note";
+export type MemorySource = "user" | "agent" | "detector";
+
+export interface MemoryEntry {
+  id: string;
+  projectId: string;
+  kind: MemoryKind;
+  title: string;
+  content: string;
+  tags: string[];
+  pinned: boolean;
+  source: MemorySource;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MemoryInput {
+  id?: string | null;
+  projectId: string;
+  kind: MemoryKind;
+  title: string;
+  content: string;
+  tags: string[];
+  pinned: boolean;
+}
+
+export type DecisionStatus = "proposed" | "accepted" | "superseded" | "rejected";
+
+export interface ProjectDecision {
+  id: string;
+  projectId: string;
+  title: string;
+  context: string;
+  decision: string;
+  consequences: string;
+  status: DecisionStatus;
+  source: MemorySource;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectDecisionInput {
+  id?: string | null;
+  projectId: string;
+  title: string;
+  context: string;
+  decision: string;
+  consequences: string;
+  status: DecisionStatus;
+}
+
+export interface WorkingSession {
+  id: string;
+  title: string;
+  provider: string;
+  model: string | null;
+  status: SessionStatus;
+  turns: number;
+  updatedAt: string;
+}
+
+export interface WorkingFile {
+  path: string;
+  change: string;
+  at: string;
+  by: string;
+}
+
+export interface WorkingCommand {
+  command: string;
+  exitCode: number | null;
+  background: boolean;
+  at: string;
+  by: string;
+}
+
+export interface WorkingError {
+  kind: EventKind;
+  summary: string;
+  detail: string | null;
+  at: string;
+}
+
+export interface WorkingMemory {
+  sessions: WorkingSession[];
+  files: WorkingFile[];
+  commands: WorkingCommand[];
+  errors: WorkingError[];
+}
+
+export interface MemoryOverview {
+  project: Project;
+  working: WorkingMemory;
+  memoryEntries: number;
+  decisions: number;
+  sessions: number;
+  events: number;
+}
+
+export interface SearchHit {
+  kind: "memory" | "decision" | "message" | "event";
+  refId: string;
+  title: string;
+  /** Matching terms between `[` and `]`. */
+  snippet: string;
+  at: string;
 }

@@ -11,3 +11,4 @@ Cada fase termina com um relatório no formato exigido pelo documento mestre
 | 3 | [fase-3.md](./fase-3.md) |
 | 4 | [fase-4.md](./fase-4.md) |
 | 5 | [fase-5.md](./fase-5.md) |
+| 6 | [fase-6.md](./fase-6.md) |

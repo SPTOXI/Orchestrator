@@ -176,8 +176,10 @@ Uma pergunta igual não gasta tokens de novo.
   acentos), a atividade, a preferência, os requisitos, a lista curta (ids,
   preços, contexto, ferramentas e etiquetas) e os membros. Mudar o preço ou
   as etiquetas de um candidato, ou os membros, gera outra chave.
-- **Validade:** padrão de 60 minutos, 0 desliga. Guarda até 100 entradas,
-  só em memória até a Fase 6.
+- **Validade:** padrão de 60 minutos, 0 desliga. Guarda até 100 entradas
+  em memória. Desde a Fase 6, cada deliberação que pode ser reaproveitada
+  também vai para o banco (tabela `deliberations`), com a chave e a
+  validade, e o cache vale entre execuções do app (ADR-0012).
 - **Acerto:** vira uma deliberação nova (`cached: true`, `cachedFrom`, uso
   zero e `savedUsage` com o que foi economizado) e também é registrado.
 - **Limpeza:** "Deliberar de novo" ignora o cache, e salvar a configuração o
@@ -224,6 +226,10 @@ Uma pergunta igual não gasta tokens de novo.
   sessão abre.
 - **Origem `council`:** no Full, a sessão, o turno e o `ROUTE_DECIDED`
   registram `{"type": "council", "deliberationId": …}`.
+- **Deliberações guardadas (Fase 6):** o `RouterService` recebe um
+  `DeliberationStore` (`with_store`). O app usa o banco local: cada
+  deliberação é gravada inteira, as 50 últimas são carregadas ao iniciar, e
+  salvar a configuração limpa também o cache guardado.
 
 ## `AIProvider::complete`
 
@@ -247,7 +253,7 @@ membro não tem como agir no sistema.
 | `council_get()` | configuração, perfis das atividades, máximo de membros, aviso de carga |
 | `council_save(settings)` | valida, grava e registra `COUNCIL_CONFIGURED` |
 | `council_run(request)` | delibera; no Full, abre a sessão e envia a tarefa → `{deliberation, started}` |
-| `council_history()` | últimas 50 deliberações (mais recentes primeiro) |
+| `council_history()` | últimas 50 deliberações (mais recentes primeiro), inclusive de execuções anteriores |
 | `route_start_session(request)` | abre a sessão com o modelo aprovado/escolhido (`ROUTE_DECIDED`) e, se pedido, envia a tarefa |
 
 `request` de `council_run` e `router_recommend`:

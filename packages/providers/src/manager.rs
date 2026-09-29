@@ -9,6 +9,7 @@ use crate::error::{ProviderError, ProviderErrorKind};
 use crate::log::SessionLog;
 use crate::provider::{AIProvider, NativeSession, SessionSpec, TurnInput, TurnOutput};
 use crate::registry::ProviderRegistry;
+use crate::store::{PersistedSession, SessionStore};
 use chrono::Utc;
 use orchestrator_core::{
     AuditEvent, CallOrigin, EventKind, EventSink, NoticeLevel, ProviderId, SessionEvent, SessionId,
@@ -87,9 +88,11 @@ enum Mode {
 
 struct Session {
     id: SessionId,
-    /// Instance that served the last turn (to cancel it). Each turn takes the
-    /// provider registered now under `info.provider` (see `Inner::provider`).
-    provider: Mutex<Arc<dyn AIProvider>>,
+    /// Instance that served the last turn (to cancel it); `None` for a
+    /// session restored from the store until it runs again. Each turn takes
+    /// the provider registered now under `info.provider` (see
+    /// `Inner::provider`).
+    provider: Mutex<Option<Arc<dyn AIProvider>>>,
     sink: Arc<dyn EventSink>,
     state: Mutex<SessionState>,
 }
@@ -101,6 +104,8 @@ struct SessionState {
     log: SessionLog,
     running: Option<RunningTurn>,
     children: u32,
+    /// Newest transcript entry already handed to the store.
+    persisted_seq: u64,
 }
 
 struct RunningTurn {
@@ -166,6 +171,8 @@ struct Inner {
     tools: Arc<dyn ToolExecutor>,
     sink: Arc<dyn EventSink>,
     config: ManagerConfig,
+    /// Persistence between runs (ADR-0012); `None` = memory only.
+    store: Option<Arc<dyn SessionStore>>,
     /// Creation order.
     sessions: RwLock<Vec<Arc<Session>>>,
 }
@@ -182,6 +189,29 @@ impl Inner {
                  or disabled); start a new session"
             ))
         })
+    }
+
+    /// Hands the session and its new transcript entries to the store.
+    fn persist(&self, session: &Session) {
+        let Some(store) = &self.store else {
+            return;
+        };
+        let (stored, entries) = {
+            let mut state = session.state.lock();
+            let entries = state.log.since(state.persisted_seq);
+            state.persisted_seq = state.log.last_seq();
+            (
+                PersistedSession {
+                    info: state.info.clone(),
+                    native: state.native.clone(),
+                    instructions: state.spec.instructions.clone(),
+                    requested_model: state.spec.model.clone(),
+                },
+                entries,
+            )
+        };
+        store.save(&stored);
+        store.append(&session.id, &entries);
     }
 }
 
@@ -212,7 +242,73 @@ impl SessionManager {
                 tools,
                 sink,
                 config,
+                store: None,
                 sessions: RwLock::new(Vec::new()),
+            }),
+        }
+    }
+
+    /// A manager that keeps its sessions in `store` and starts with the ones
+    /// stored there (ADR-0012). Restored sessions come back **closed**, with
+    /// their transcript; `resume` reopens them through their provider.
+    pub fn with_store(
+        registry: Arc<ProviderRegistry>,
+        tools: Arc<dyn ToolExecutor>,
+        sink: Arc<dyn EventSink>,
+        config: ManagerConfig,
+        store: Arc<dyn SessionStore>,
+    ) -> Self {
+        let loaded = store.load();
+        let children = |id: &SessionId| {
+            loaded
+                .iter()
+                .filter(|(s, _)| s.info.parent_id.as_ref() == Some(id))
+                .count() as u32
+        };
+        let mut sessions = Vec::new();
+        for (stored, entries) in &loaded {
+            let mut info = stored.info.clone();
+            let log = SessionLog::restore(entries.clone(), config.log_capacity);
+            if info.status != SessionStatus::Closed {
+                // It was open when the app stopped: its provider state has to
+                // be rebuilt before the next turn. The store says so too, so
+                // what reads it (the project memory) does not show it open.
+                info.status = SessionStatus::Closed;
+                store.save(&PersistedSession {
+                    info: info.clone(),
+                    ..stored.clone()
+                });
+            }
+            let persisted_seq = log.last_seq();
+            sessions.push(Arc::new(Session {
+                id: info.id.clone(),
+                provider: Mutex::new(None),
+                sink: sink.clone(),
+                state: Mutex::new(SessionState {
+                    spec: SessionSpec {
+                        session_id: info.id.clone(),
+                        project_path: info.project_path.clone(),
+                        title: info.title.clone(),
+                        model: stored.requested_model.clone(),
+                        instructions: stored.instructions.clone(),
+                    },
+                    children: children(&info.id),
+                    info,
+                    native: stored.native.clone(),
+                    log,
+                    running: None,
+                    persisted_seq,
+                }),
+            }));
+        }
+        Self {
+            inner: Arc::new(Inner {
+                registry,
+                tools,
+                sink,
+                config,
+                store: Some(store),
+                sessions: RwLock::new(sessions),
             }),
         }
     }
@@ -342,7 +438,7 @@ impl SessionManager {
         };
         let session = Arc::new(Session {
             id: id.clone(),
-            provider: Mutex::new(provider),
+            provider: Mutex::new(Some(provider)),
             sink: self.inner.sink.clone(),
             state: Mutex::new(SessionState {
                 info: info.clone(),
@@ -351,9 +447,11 @@ impl SessionManager {
                 log: SessionLog::new(self.inner.config.log_capacity),
                 running: None,
                 children: 0,
+                persisted_seq: 0,
             }),
         });
-        self.inner.sessions.write().push(session);
+        self.inner.sessions.write().push(session.clone());
+        self.inner.persist(&session);
 
         if let Some(parent) = &parent {
             let mut state = parent.state.lock();
@@ -366,6 +464,8 @@ impl SessionManager {
                     title: title.clone(),
                 },
             );
+            drop(state);
+            self.inner.persist(parent);
         }
 
         self.inner.sink.audit(AuditEvent::new(
@@ -496,7 +596,7 @@ impl SessionManager {
             },
         );
         session.set_status(&mut state, SessionStatus::Running);
-        *session.provider.lock() = provider.clone();
+        *session.provider.lock() = Some(provider.clone());
         let turn = TurnStart {
             provider,
             turn_id,
@@ -523,7 +623,11 @@ impl SessionManager {
             }
         };
         let provider = session.provider.lock().clone();
-        if let Err(err) = provider.cancel(&native).await {
+        let cancelled = match provider {
+            Some(provider) => provider.cancel(&native).await,
+            None => Ok(()),
+        };
+        if let Err(err) = cancelled {
             let mut state = session.state.lock();
             session.record(
                 &mut state,
@@ -564,6 +668,7 @@ impl SessionManager {
             session.set_status(&mut state, SessionStatus::Closed);
             state.info.clone()
         };
+        self.inner.persist(&session);
         self.inner.sink.audit(AuditEvent::new(
             EventKind::SessionClosed,
             origin,
@@ -604,10 +709,11 @@ impl SessionManager {
                 state.info.model = native.model.clone();
             }
             state.native = native;
-            *session.provider.lock() = provider;
+            *session.provider.lock() = Some(provider);
             session.set_status(&mut state, SessionStatus::Idle);
             state.info.clone()
         };
+        self.inner.persist(&session);
         self.inner.sink.audit(AuditEvent::new(
             EventKind::SessionResumed,
             origin,
@@ -632,8 +738,8 @@ impl SessionManager {
                     state.native.clone()
                 })
             };
-            if let Some(native) = native {
-                let provider = session.provider.lock().clone();
+            let provider = session.provider.lock().clone();
+            if let (Some(native), Some(provider)) = (native, provider) {
                 let _ =
                     tokio::time::timeout(Duration::from_secs(2), provider.cancel(&native)).await;
             }
@@ -714,9 +820,17 @@ async fn run_turn(
     };
     let duration_ms = clock.elapsed().as_millis() as u64;
     let tool_calls = ctx.tool_call_count();
+    // What the provider needs to resume later (e.g. the API conversation).
+    let snapshot = match inner.store {
+        Some(_) => Some(provider.snapshot(&turn.native).await),
+        None => None,
+    };
 
     let result = {
         let mut state = session.state.lock();
+        if let Some(native) = snapshot.filter(|n| n.reference == state.native.reference) {
+            state.native = native;
+        }
         let (usage, text) = state
             .running
             .take()
@@ -748,6 +862,7 @@ async fn run_turn(
             duration_ms,
         }
     };
+    inner.persist(&session);
     let _ = turn.done.send(true);
 
     let status_label = match status {

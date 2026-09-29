@@ -288,7 +288,11 @@ de cada turno** (também ao retomar e ao criar subagente):
   listada, com aviso na UI. Se a conexão for reativada, a sessão volta a
   funcionar com a conversa.
 
-A conversa fica em memória até a Fase 6 (SQLite).
+A conversa também vai para o banco local ao fim de cada turno
+(`AIProvider::snapshot`, Fase 6), com as partes nativas, como as
+assinaturas de raciocínio. Depois de reiniciar o app, "Retomar" continua a
+mesma conversa: a próxima requisição leva todas as mensagens anteriores.
+A chave da API nunca vai para o banco.
 
 ## Persistência e histórico
 

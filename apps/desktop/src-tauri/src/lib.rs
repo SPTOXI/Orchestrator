@@ -5,16 +5,17 @@
 //! / `RouterService` calls and runtime events into Tauri events. It contains
 //! no domain logic.
 
-mod audit_log;
 mod commands;
+mod memory_commands;
+mod persistence;
 mod provider_commands;
 mod router_commands;
 mod vault;
 
-use audit_log::AuditLog;
 use orchestrator_core::{AuditEvent, EventSink, StreamEvent};
+use orchestrator_memory::{HistoryQuery, MemoryStore};
 use orchestrator_provider_api::ConnectionManager;
-use orchestrator_providers::{EchoProvider, ProviderRegistry, SessionManager};
+use orchestrator_providers::{EchoProvider, ManagerConfig, ProviderRegistry, SessionManager};
 use orchestrator_router::RouterService;
 use orchestrator_runtime::{RuntimeConfig, ToolRuntime};
 use provider_commands::RuntimeTools;
@@ -28,27 +29,36 @@ pub const STREAM_EVENT: &str = "runtime://stream";
 /// Tauri event carrying `AuditEvent`s (history).
 pub const AUDIT_EVENT: &str = "runtime://audit";
 
-/// Publishes runtime events to the webview and records audit events.
+/// Publishes runtime events to the webview and records audit events in
+/// the database (ADR-0012).
 pub struct DesktopSink {
     app: AppHandle,
-    log: AuditLog,
+    store: Arc<MemoryStore>,
 }
 
 impl DesktopSink {
+    /// The most recent `limit` events, oldest first.
     pub fn recent(&self, limit: usize) -> Vec<AuditEvent> {
-        self.log.recent(limit)
-    }
-
-    pub fn audit_log_path(&self) -> String {
-        self.log.path().display().to_string()
+        self.store
+            .history(&HistoryQuery {
+                limit: Some(limit),
+                ..Default::default()
+            })
+            .map(|page| page.events)
+            .unwrap_or_default()
     }
 }
 
 impl EventSink for DesktopSink {
     fn audit(&self, event: AuditEvent) {
-        self.log.append(&event);
+        // Recording may cause follow-ups (PROJECT_CREATED, the detected
+        // stack as memory), published and recorded in turn.
+        let follow = self.store.record(&event);
         if let Err(err) = self.app.emit(AUDIT_EVENT, &event) {
             eprintln!("[orchestrator] cannot emit audit event: {err}");
+        }
+        for next in follow {
+            self.audit(next);
         }
     }
 
@@ -67,6 +77,10 @@ pub struct AppState {
     /// initialized.
     pub connections: Option<Arc<ConnectionManager>>,
     pub connection_warnings: Vec<String>,
+    /// Local database: history, projects, sessions, memory (ADR-0012).
+    pub store: Arc<MemoryStore>,
+    /// Problem opening or migrating the database, if any.
+    pub store_warning: Option<String>,
     /// Model router and Council (ADR-0011).
     pub router: RouterService,
     /// Problem loading `council.json`, if any.
@@ -126,9 +140,20 @@ pub fn run() {
                 .path()
                 .app_data_dir()
                 .unwrap_or_else(|_| std::env::temp_dir().join("orchestrator"));
+            let (store, store_warning) = MemoryStore::open(&data_dir.join("orchestrator.db"));
+            let store = Arc::new(store);
+            if let Some(warning) = &store_warning {
+                eprintln!("[orchestrator] {warning}");
+            }
+            // The Phase 1–5 history (ADR-0005) moves into the database once.
+            match store.import_jsonl(&data_dir.join("audit.jsonl")) {
+                Ok(0) => {}
+                Ok(n) => eprintln!("[orchestrator] imported {n} events from audit.jsonl"),
+                Err(err) => eprintln!("[orchestrator] {err}"),
+            }
             let sink = Arc::new(DesktopSink {
                 app: app.handle().clone(),
-                log: AuditLog::open(&data_dir.join("audit.jsonl")),
+                store: store.clone(),
             });
             let runtime = ToolRuntime::new(RuntimeConfig::default(), sink.clone());
             let registry = provider_registry(sink.clone());
@@ -149,19 +174,25 @@ pub fn run() {
                 registry.clone(),
                 sink.clone(),
             );
+            let router =
+                router.with_store(Arc::new(persistence::StoreDeliberations(store.clone())));
             if let Some(warning) = &router_warning {
                 eprintln!("[orchestrator] {warning}");
             }
-            let sessions = SessionManager::new(
+            let sessions = SessionManager::with_store(
                 registry,
                 Arc::new(RuntimeTools(runtime.clone())),
                 sink.clone(),
+                ManagerConfig::default(),
+                Arc::new(persistence::StoreSessions(store.clone())),
             );
             app.manage(AppState {
                 runtime,
                 sessions,
                 connections,
                 connection_warnings,
+                store,
+                store_warning,
                 router,
                 router_warning,
                 sink,
@@ -201,6 +232,18 @@ pub fn run() {
             router_commands::council_run,
             router_commands::council_history,
             router_commands::route_start_session,
+            memory_commands::history_query,
+            memory_commands::projects_recent,
+            memory_commands::project_current,
+            memory_commands::project_forget,
+            memory_commands::projects_import_recent,
+            memory_commands::memory_overview,
+            memory_commands::memory_list,
+            memory_commands::memory_save,
+            memory_commands::memory_delete,
+            memory_commands::memory_search,
+            memory_commands::decisions_list,
+            memory_commands::decision_save,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build the Orchestrator desktop app");

@@ -14,7 +14,7 @@ use orchestrator_providers::{
 };
 use orchestrator_router::{
     Activity, CouncilMember, CouncilMode, CouncilSettings, DecisionSource, DeliberateRequest,
-    ModelRef, RouteRequest, RouteStart, RouterService,
+    Deliberation, DeliberationStore, ModelRef, RouteRequest, RouteStart, RouterService,
 };
 use parking_lot::Mutex;
 use serde_json::json;
@@ -787,4 +787,112 @@ async fn settings_are_validated_persisted_and_recorded() {
     assert!(warning.is_none());
     assert_eq!(reopened.settings(), h.router.settings());
     assert_eq!(reopened.settings().mode, CouncilMode::Suggest);
+}
+
+/// A stored deliberation and its cache key and validity.
+type Row = (
+    Deliberation,
+    Option<(String, chrono::DateTime<chrono::Utc>)>,
+);
+
+/// Keeps deliberations like the app's database would: through JSON.
+#[derive(Default)]
+struct TestStore {
+    rows: Mutex<Vec<Row>>,
+}
+
+impl DeliberationStore for TestStore {
+    fn save(
+        &self,
+        deliberation: &Deliberation,
+        cache: Option<(&str, chrono::DateTime<chrono::Utc>)>,
+    ) {
+        let json = serde_json::to_value(deliberation).unwrap();
+        let back: Deliberation = serde_json::from_value(json).unwrap();
+        assert_eq!(&back, deliberation, "a deliberation survives JSON");
+        self.rows
+            .lock()
+            .push((back, cache.map(|(key, until)| (key.to_owned(), until))));
+    }
+
+    fn cached(&self, key: &str, now: chrono::DateTime<chrono::Utc>) -> Option<Deliberation> {
+        self.rows
+            .lock()
+            .iter()
+            .rev()
+            .find(|(_, cache)| {
+                cache
+                    .as_ref()
+                    .is_some_and(|(k, until)| k == key && *until > now)
+            })
+            .map(|(d, _)| d.clone())
+    }
+
+    fn recent(&self, limit: usize) -> Vec<Deliberation> {
+        self.rows
+            .lock()
+            .iter()
+            .rev()
+            .take(limit)
+            .map(|(d, _)| d.clone())
+            .collect()
+    }
+
+    fn clear_cache(&self) {
+        for row in self.rows.lock().iter_mut() {
+            row.1 = None;
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn deliberations_and_the_cache_survive_a_restart() {
+    let (cloud, cheap) = catalog();
+    let manager = Arc::new(
+        Scripted::new("manager", vec![model("m", 1.0, 1.0, &[])]).answering(pick("strong", 0.8)),
+    );
+    let h = Harness::new(vec![cloud, cheap, manager.clone()]);
+    h.council(CouncilMode::Suggest, &[("manager", None)]);
+    let store = Arc::new(TestStore::default());
+    let open = || {
+        RouterService::open(
+            &h.dir.path().join("council.json"),
+            h.registry.clone(),
+            h.sink.clone(),
+        )
+        .0
+        .with_store(store.clone())
+    };
+
+    let first = open();
+    let off_topic = first.deliberate(&task("Resuma o README")).await;
+    let decided = first
+        .deliberate(&task("Planeje a arquitetura das filas"))
+        .await;
+    assert_eq!(manager.calls(), 2);
+    drop(first);
+
+    // After a restart: the history is back and the same question costs
+    // nothing.
+    let second = open();
+    let ids: Vec<_> = second.history().into_iter().map(|d| d.id).collect();
+    assert_eq!(ids, [decided.id.clone(), off_topic.id.clone()]);
+    let again = second
+        .deliberate(&task("Planeje a arquitetura das filas"))
+        .await;
+    assert!(again.cached);
+    assert_eq!(again.cached_from.as_ref(), Some(&decided.id));
+    assert_eq!(again.decision, decided.decision);
+    assert_eq!(manager.calls(), 2);
+
+    // New settings drop the stored cache too.
+    second
+        .save_settings(second.settings(), CallOrigin::User)
+        .unwrap();
+    let fresh = second
+        .deliberate(&task("Planeje a arquitetura das filas"))
+        .await;
+    assert!(!fresh.cached);
+    assert_eq!(manager.calls(), 3);
+    assert_eq!(store.rows.lock().len(), 4);
 }

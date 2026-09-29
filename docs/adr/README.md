@@ -9,12 +9,13 @@ adiciona algo fora dela, é registrada aqui **antes** de ser implementada.
 | [0002](./0002-pacote-runtime-para-o-tool-runtime.md) | Pacote `packages/runtime` para o Tool Runtime | Aceita |
 | [0003](./0003-gateway-ipc-unico.md) | Gateway IPC único (`runtime_invoke`) e canal de streaming do terminal | Aceita |
 | [0004](./0004-operacoes-auxiliares-do-tool-runtime.md) | Operações auxiliares do Tool Runtime | Aceita |
-| [0005](./0005-observabilidade-antes-do-sqlite.md) | Observabilidade antes do SQLite (JSONL + eventos) | Aceita |
+| [0005](./0005-observabilidade-antes-do-sqlite.md) | Observabilidade antes do SQLite (JSONL + eventos) | Aceita (JSONL: ver 0012) |
 | [0006](./0006-ci-multiplataforma.md) | CI multiplataforma | Aceita |
 | [0007](./0007-git-via-cli-do-sistema.md) | Git via CLI do sistema | Aceita |
 | [0008](./0008-projeto-deteccao-e-diretorio-base.md) | Projeto: detecção no runtime, diretório base e ferramentas auxiliares | Aceita |
 | [0009](./0009-camada-de-providers-e-sessoes.md) | Camada de providers: `AIProvider`, registro e sessões | Aceita (adapters: ver 0010) |
 | [0010](./0010-providers-por-api-com-cadastro-livre.md) | Providers por API com cadastro livre e nova ordem das Fases 4–5 | Aceita |
 | [0011](./0011-roteador-de-modelos-e-conselho.md) | Roteador de modelos e Conselho de IAs | Aceita |
+| [0012](./0012-sqlite-memoria-e-historico.md) | SQLite, memória do projeto e histórico | Aceita |
 
 Formato: Contexto → Decisão → Consequências.

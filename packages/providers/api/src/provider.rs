@@ -661,14 +661,38 @@ impl AIProvider for ApiProvider {
         conversations
             .entry(native.reference.clone())
             .or_insert_with(|| {
-                // History is in memory until Phase 6; a resumed session that
-                // lost it starts over with the same system prompt.
-                Arc::new(tokio::sync::Mutex::new(Conversation {
-                    system: Some(Self::default_system(spec)),
-                    ..Default::default()
-                }))
+                // After a restart the conversation comes from the snapshot
+                // stored with the session (ADR-0012); without one the
+                // session starts over with the same system prompt.
+                let stored = native
+                    .data
+                    .get("conversation")
+                    .and_then(|value| serde_json::from_value::<Conversation>(value.clone()).ok());
+                Arc::new(tokio::sync::Mutex::new(stored.unwrap_or_else(|| {
+                    Conversation {
+                        system: Some(Self::default_system(spec)),
+                        ..Default::default()
+                    }
+                })))
             });
         Ok(native.clone())
+    }
+
+    /// The session with its whole conversation, native parts included, so
+    /// it can be resumed after a restart (ADR-0012).
+    async fn snapshot(&self, native: &NativeSession) -> NativeSession {
+        let mut native = native.clone();
+        let conversation = self.conversations.lock().get(&native.reference).cloned();
+        if let Some(conversation) = conversation {
+            let value = serde_json::to_value(&*conversation.lock().await);
+            if let Ok(value) = value {
+                if !native.data.is_object() {
+                    native.data = json!({});
+                }
+                native.data["conversation"] = value;
+            }
+        }
+        native
     }
 
     async fn execute(

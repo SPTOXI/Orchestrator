@@ -8,6 +8,8 @@ import { DiscoveryView } from "./components/DiscoveryView";
 import { FileEditor } from "./components/FileEditor";
 import { GitPanel } from "./components/GitPanel";
 import { HistoryPanel } from "./components/HistoryPanel";
+import { MemoryPanel } from "./components/MemoryPanel";
+import { type MemorySection, MemoryView } from "./components/MemoryView";
 import {
   AgentsIcon,
   CloseIcon,
@@ -29,12 +31,14 @@ import { SessionsPanel } from "./components/SessionsPanel";
 import { SessionView } from "./components/SessionView";
 import { StatusBar } from "./components/StatusBar";
 import { TerminalPanel } from "./components/TerminalPanel";
-import { baseName } from "./lib/format";
-import { addRecent, loadRecent, removeRecent, saveRecent, type RecentProject } from "./lib/recent";
+import { baseName, joinPath } from "./lib/format";
+import type { RecentProject } from "./lib/recent";
 import { appApi, errorMessage, isTauri, projectApi, sessionApi, shellApi } from "./lib/runtime";
 import type { AppInfo, ConnectionsView, Deliberation, ProjectProfile, SessionInfo, ShellList } from "./lib/types";
 import { useConnections } from "./lib/useConnections";
 import { useCouncil } from "./lib/useCouncil";
+import { useMemory } from "./lib/useMemory";
+import { useProjects } from "./lib/useProjects";
 import { useGitStatus } from "./lib/useGitStatus";
 import { useProviders } from "./lib/useProviders";
 import { useRuntimeSessions } from "./lib/useRuntimeSessions";
@@ -52,7 +56,9 @@ type Tab =
   | { id: string; kind: "connection"; connectionId: string | null }
   | { id: "council"; kind: "council" }
   /** Pick a model with the router / Council; `deliberation` from the history. */
-  | { id: "route"; kind: "route"; deliberation: Deliberation | null };
+  | { id: "route"; kind: "route"; deliberation: Deliberation | null }
+  /** Project memory; `nonce` changes when the sidebar asks again. */
+  | { id: "memory"; kind: "memory"; section: MemorySection; query: string; nonce: number };
 
 const ACTIVITIES: Array<{ id: PanelId; label: string; icon: () => ReactNode }> = [
   { id: "project", label: "PROJECT", icon: FolderIcon },
@@ -100,6 +106,8 @@ function tabTitle(tab: Tab, sessions: Map<string, SessionInfo>, connections: Con
       return "Conselho de IAs";
     case "route":
       return "Nova sessão · Conselho";
+    case "memory":
+      return "Memória do projeto";
     case "connection":
       if (!tab.connectionId) return "Nova API";
       return `API · ${connections?.connections.find((c) => c.connection.id === tab.connectionId)?.connection.name ?? tab.connectionId}`;
@@ -112,7 +120,6 @@ export function App() {
   const [shells, setShells] = useState<ShellList | null>(null);
   const [profile, setProfile] = useState<ProjectProfile | null>(null);
   const [opening, setOpening] = useState(false);
-  const [recent, setRecent] = useState<RecentProject[]>(() => loadRecent());
   const [panel, setPanel] = useState<PanelId>("project");
   const [bottomTab, setBottomTab] = useState<BottomTab>("terminal");
   const [tabs, setTabs] = useState<Tab[]>([]);
@@ -127,6 +134,10 @@ export function App() {
   const providers = useProviders(ready);
   const connections = useConnections(ready);
   const council = useCouncil(ready);
+  const projects = useProjects(ready);
+  const recent = projects.recent;
+  const projectId = profile && projects.current?.path === profile.path ? projects.current.id : null;
+  const memory = useMemory(ready, projectId);
   const sessionsById = new Map(providers.sessions.map((s) => [s.id, s]));
   const activeProvider = providers.view?.providers.find((p) => p.active) ?? null;
   const runningSessions = providers.sessions.filter((s) => s.status === "running").length;
@@ -147,11 +158,6 @@ export function App() {
         const opened = await projectApi.open(path);
         setProfile(opened);
         storeProject(opened.path);
-        setRecent((list) => {
-          const next = addRecent(list, { path: opened.path, name: opened.name, openedAt: new Date().toISOString() });
-          saveRecent(next);
-          return next;
-        });
         setPanel("project");
         return true;
       } catch (e) {
@@ -200,12 +206,7 @@ export function App() {
     }
   };
 
-  const forgetRecent = (path: string) =>
-    setRecent((list) => {
-      const next = removeRecent(list, path);
-      saveRecent(next);
-      return next;
-    });
+  const forgetRecent = (path: string) => void projects.forget(path);
 
   const openFile = (path: string) => showTab({ id: `file:${path}`, kind: "file", path });
   const openSession = (sessionId: string) => showTab({ id: `session:${sessionId}`, kind: "session", sessionId });
@@ -223,6 +224,12 @@ export function App() {
   };
   const openCouncil = () => showTab({ id: "council", kind: "council" });
   /** The route tab is reused; opening a past deliberation shows it there. */
+  /** The memory tab is reused; the sidebar picks its section. */
+  const openMemory = (section: MemorySection, query = "") => {
+    const tab = { id: "memory" as const, kind: "memory" as const, section, query, nonce: Date.now() };
+    setTabs((all) => (all.some((t) => t.id === "memory") ? all.map((t) => (t.id === "memory" ? tab : t)) : [...all, tab]));
+    setActiveTab("memory");
+  };
   const openRoute = (deliberation: Deliberation | null = null) => {
     setTabs((all) =>
       all.some((t) => t.id === "route")
@@ -377,15 +384,17 @@ export function App() {
         );
       case "memory":
         return (
-          <PhasePlaceholder
-            title="Memory"
-            phase="Fase 6"
-            description="A memória pertence ao projeto, não ao provider."
-            items={["L1 — Working Memory", "L2 — Project Memory", "L3 — Historical Memory", "Decisões"]}
+          <MemoryPanel
+            ready={ready}
+            memory={memory}
+            projectName={profile?.name ?? null}
+            database={info?.database ?? null}
+            onOpen={openMemory}
+            onOpenSession={openSession}
           />
         );
       case "history":
-        return <HistoryPanel ready={ready} auditLog={info?.auditLog ?? null} />;
+        return <HistoryPanel ready={ready} database={info?.database ?? null} projectId={projectId} />;
     }
   })();
 
@@ -562,6 +571,23 @@ export function App() {
                       onOpenDeliberation={openRoute}
                     />
                   );
+                case "memory":
+                  return (
+                    <MemoryView
+                      key={tab.id}
+                      ready={ready}
+                      active={active}
+                      memory={memory}
+                      projectId={projectId}
+                      section={tab.section}
+                      query={tab.query}
+                      nonce={tab.nonce}
+                      onOpenSession={openSession}
+                      onOpenFile={(path) =>
+                        openFile(/^([a-zA-Z]:)?[\\/]/.test(path) || !profile ? path : joinPath(profile.path, path))
+                      }
+                    />
+                  );
                 case "route":
                   return (
                     <RouteView
@@ -700,6 +726,10 @@ function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenPr
                   Conselho (1 a 5 IAs) decide o melhor — você aprova (Sugerir) ou ele aplica sozinho (Full).
                 </li>
                 <li>
+                  <strong>MEMORY</strong>: banco local com memória do projeto (trabalho, projeto, decisões e busca), e
+                  sessões e conversas que continuam depois de reiniciar o app.
+                </li>
+                <li>
                   <strong>HISTORY</strong>: toda chamada de ferramenta é auditada, inclusive as feitas por IAs.
                 </li>
               </ul>
@@ -709,7 +739,7 @@ function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenPr
         <div>
           <h2>Próximas fases</h2>
           <ul>
-            <li>6–7 — SQLite, memória, Context Builder, Handoff</li>
+            <li>7 — Context Builder e Handoff</li>
             <li>8–9 — Tasks, agentes, File Locks, autonomia</li>
             <li>10–11 — GitHub, otimização de tokens</li>
           </ul>

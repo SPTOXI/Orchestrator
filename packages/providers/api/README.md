@@ -13,11 +13,11 @@ perfil.
 | ------ | -------- |
 | `config.rs` | `Connection`, `ModelEntry`, credencial, modo de ferramentas, perfil genérico, validação |
 | `manager.rs` | `ConnectionManager`: `connections.json`, cofre, registro, `CONNECTION_*`, teste e descoberta |
-| `provider.rs` | `ApiProvider` (`AIProvider`): loop modelo → ferramentas → modelo, custo, teste de conexão, `complete` (resposta avulsa para o Conselho) |
+| `provider.rs` | `ApiProvider` (`AIProvider`): loop modelo → ferramentas → modelo, custo, teste de conexão, `complete` (resposta avulsa para o Conselho), `snapshot`/`resume` com a conversa em `native.data` (Fase 6) |
 | `protocol.rs` | trait `Protocol` (requisição, decodificador, descoberta de modelos) |
 | `openai.rs`, `anthropic.rs`, `gemini.rs`, `generic.rs` | um módulo por protocolo |
 | `tools.rs` | nomes de ferramentas, protocolo por prompt (`<tool_call>`), `MarkupFilter`, schema do Gemini |
-| `conversation.rs` | histórico enviado à API (append-only, partes nativas preservadas) |
+| `conversation.rs` | histórico enviado à API (append-only, partes nativas preservadas; serializável para o banco) |
 | `http.rs` | cliente `reqwest`, leitura de SSE/NDJSON, erros HTTP |
 | `jsonpath.rs` | caminhos com pontos e modelo de corpo do perfil genérico |
 | `secrets.rs` | trait `SecretStore` (o app usa o cofre do SO) e cofre em memória para testes |

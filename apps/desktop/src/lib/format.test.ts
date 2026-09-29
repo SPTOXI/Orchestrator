@@ -7,6 +7,7 @@ import {
   isInside,
   joinPath,
   parentPath,
+  relativePath,
   stripAnsi,
   toLf,
   withEol,
@@ -56,6 +57,14 @@ describe("paths", () => {
     expect(isInside("/a/b/c", "/a/b")).toBe(true);
     expect(isInside("/a/bc", "/a/b")).toBe(false);
     expect(isInside("C:\\a\\b", "C:\\a")).toBe(true);
+  });
+
+  it("shows paths relative to the project", () => {
+    expect(relativePath("/p/meu-saas/src/a.ts", "/p/meu-saas")).toBe("src/a.ts");
+    expect(relativePath("/p/meu-saas/src/a.ts", "/p/meu-saas/")).toBe("src/a.ts");
+    expect(relativePath("C:\\Projetos\\App\\notas.txt", "C:\\Projetos\\App")).toBe("notas.txt");
+    expect(relativePath("/outro/a.ts", "/p/meu-saas")).toBe("/outro/a.ts");
+    expect(relativePath("src/a.ts", null)).toBe("src/a.ts");
   });
 });
 

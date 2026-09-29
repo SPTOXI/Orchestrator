@@ -6,7 +6,7 @@ use crate::score::{format_context, Candidate, ModelRef, Recommendation};
 use crate::settings::{CouncilMember, CouncilMode};
 use chrono::{DateTime, Utc};
 use orchestrator_core::{DeliberationId, TokenUsage};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Longest task description sent to the members.
@@ -29,7 +29,7 @@ Answer with ONLY one JSON object and no other text:\n\
 Use only the candidate ids of the list (c1, c2, ...).";
 
 /// One member's answer.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Vote {
     pub member: CouncilMember,
@@ -48,14 +48,14 @@ pub struct Vote {
 }
 
 /// Who made the decision.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum DecisionSource {
     Router,
     Council,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Decision {
     #[serde(flatten)]
@@ -70,7 +70,7 @@ pub struct Decision {
 
 /// A deliberation: the router's ranking, the members' votes and the
 /// decision.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Deliberation {
     pub id: DeliberationId,

@@ -49,6 +49,29 @@ impl SessionLog {
         seq
     }
 
+    /// A log continuing a stored transcript (ADR-0012).
+    pub fn restore(entries: Vec<SessionLogEntry>, capacity: usize) -> Self {
+        let capacity = capacity.max(1);
+        let next_seq = entries.iter().map(|e| e.seq).max().unwrap_or(0) + 1;
+        let truncated = entries.len() > capacity;
+        let skip = entries.len().saturating_sub(capacity);
+        Self {
+            entries: entries.into_iter().skip(skip).collect(),
+            next_seq,
+            capacity,
+            truncated,
+        }
+    }
+
+    /// Entries with a sequence number above `seq`.
+    pub fn since(&self, seq: u64) -> Vec<SessionLogEntry> {
+        self.entries
+            .iter()
+            .filter(|e| e.seq > seq)
+            .cloned()
+            .collect()
+    }
+
     pub fn entries(&self) -> Vec<SessionLogEntry> {
         self.entries.iter().cloned().collect()
     }

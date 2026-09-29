@@ -67,6 +67,13 @@ export function isInside(path: string, dir: string): boolean {
   return a === b || a.startsWith(`${b}/`);
 }
 
+/** `path` relative to `dir` when inside it ("src/a.ts"); otherwise `path` as is. */
+export function relativePath(path: string, dir: string | null | undefined): string {
+  if (!dir || !isInside(path, dir)) return path;
+  const rest = path.slice(dir.replace(/[\\/]+$/, "").length).replace(/^[\\/]+/, "");
+  return rest || baseName(path);
+}
+
 export type Eol = "\n" | "\r\n";
 
 /** Line ending used by a text (CRLF when any line uses it). */

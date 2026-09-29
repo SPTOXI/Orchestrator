@@ -9,6 +9,7 @@ use crate::council::{
 };
 use crate::score::{rank, Candidate, ModelRef, Recommendation, RouteRequest};
 use crate::settings::{self, CouncilMember, CouncilMode, CouncilSettings};
+use crate::store::DeliberationStore;
 use chrono::Utc;
 use orchestrator_core::{
     AuditEvent, CallOrigin, DeliberationId, EventKind, EventSink, ProviderId, SessionInfo,
@@ -93,6 +94,8 @@ pub struct RouterService {
     availability: Availability,
     cache: DeliberationCache,
     history: Mutex<VecDeque<Deliberation>>,
+    /// Deliberations kept between runs (ADR-0012).
+    store: Option<Arc<dyn DeliberationStore>>,
 }
 
 impl RouterService {
@@ -113,9 +116,18 @@ impl RouterService {
                 availability: Availability::default(),
                 cache: DeliberationCache::default(),
                 history: Mutex::new(VecDeque::new()),
+                store: None,
             },
             warning,
         )
+    }
+
+    /// Keeps deliberations in `store`: the history starts with the stored
+    /// ones and the cache survives restarts (ADR-0012).
+    pub fn with_store(mut self, store: Arc<dyn DeliberationStore>) -> Self {
+        *self.history.lock() = store.recent(HISTORY).into();
+        self.store = Some(store);
+        self
     }
 
     pub fn settings(&self) -> CouncilSettings {
@@ -133,6 +145,9 @@ impl RouterService {
         settings::save(&self.path, &settings)?;
         *self.settings.write() = settings.clone();
         self.cache.clear();
+        if let Some(store) = &self.store {
+            store.clear_cache();
+        }
         let members: Vec<String> = settings.members.iter().map(member_label).collect();
         self.sink.audit(AuditEvent::new(
             EventKind::CouncilConfigured,
@@ -217,7 +232,7 @@ impl RouterService {
                 } else {
                     "Nenhum modelo cadastrado atende aos requisitos (veja os excluídos).".into()
                 });
-            return self.finish(deliberation, started, false);
+            return self.finish(deliberation, started, false, None);
         }
         let router_decision = |reason: String| Decision {
             model_ref: shortlist[0].model_ref.clone(),
@@ -232,7 +247,7 @@ impl RouterService {
                 "Maior nota do roteador ({}).",
                 shortlist[0].score
             )));
-            return self.finish(deliberation, started, false);
+            return self.finish(deliberation, started, false, None);
         }
         if shortlist.len() == 1 {
             deliberation.decision = Some(router_decision(
@@ -243,13 +258,17 @@ impl RouterService {
                     .into(),
             );
             deliberation.auto_apply = settings.mode == CouncilMode::Full;
-            return self.finish(deliberation, started, false);
+            return self.finish(deliberation, started, false, None);
         }
 
         let ttl = Duration::from_secs(u64::from(settings.cache_minutes) * 60);
         let key = cache_key(&request.route.task, &recommendation, &shortlist, &settings);
         if settings.cache_minutes > 0 && !request.force {
-            if let Some(hit) = self.cache.get(key, ttl) {
+            let hit = self.cache.get(key, ttl).or_else(|| {
+                let store = self.store.as_ref()?;
+                store.cached(&format!("{key:016x}"), Utc::now())
+            });
+            if let Some(hit) = hit {
                 deliberation.votes = hit.votes;
                 deliberation.decision = hit.decision;
                 deliberation.cached = true;
@@ -261,9 +280,10 @@ impl RouterService {
                     settings.cache_minutes
                 ));
                 deliberation.auto_apply = settings.mode == CouncilMode::Full;
-                return self.finish(deliberation, started, true);
+                return self.finish(deliberation, started, true, None);
             }
         }
+        let mut cache_for = None;
 
         let question = prompt(&request.route.task, &recommendation, &shortlist);
         let (votes, ballots) = self.ask_members(&settings, &question, &shortlist).await;
@@ -308,6 +328,7 @@ impl RouterService {
                 deliberation.auto_apply = settings.mode == CouncilMode::Full;
                 if settings.cache_minutes > 0 {
                     self.cache.put(key, deliberation.clone());
+                    cache_for = Some((key, ttl));
                 }
             }
             None => {
@@ -321,7 +342,7 @@ impl RouterService {
                 );
             }
         }
-        self.finish(deliberation, started, true)
+        self.finish(deliberation, started, true, cache_for)
     }
 
     /// Asks every member in parallel. Returns the votes (member order) and
@@ -427,12 +448,23 @@ impl RouterService {
         mut deliberation: Deliberation,
         started: Instant,
         record: bool,
+        cache: Option<(u64, Duration)>,
     ) -> Deliberation {
         deliberation.duration_ms = started.elapsed().as_millis() as u64;
         {
             let mut history = self.history.lock();
             history.push_front(deliberation.clone());
             history.truncate(HISTORY);
+        }
+        if let Some(store) = &self.store {
+            let key = cache.map(|(key, ttl)| {
+                let valid = chrono::Duration::from_std(ttl).unwrap_or_default();
+                (format!("{key:016x}"), deliberation.created_at + valid)
+            });
+            store.save(
+                &deliberation,
+                key.as_ref().map(|(key, until)| (key.as_str(), *until)),
+            );
         }
         if record {
             self.audit_deliberation(&deliberation);

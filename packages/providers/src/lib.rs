@@ -24,6 +24,7 @@ mod log;
 mod manager;
 mod provider;
 mod registry;
+mod store;
 
 pub use context::{ToolExecutor, TurnContext, TurnObserver};
 pub use echo::EchoProvider;
@@ -34,3 +35,4 @@ pub use provider::{
     ProviderDescriptor, ProviderStatus, SessionSpec, TurnInput, TurnOutput,
 };
 pub use registry::{ProviderInfo, ProviderRegistry};
+pub use store::{MemorySessionStore, PersistedSession, SessionStore};

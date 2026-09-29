@@ -19,7 +19,7 @@ A arquitetura completa está em [`ARCHITECTURE.md`](./ARCHITECTURE.md). As
 decisões arquiteturais estão em [`docs/adr/`](./docs/adr) e o relatório de
 cada fase em [`docs/phases/`](./docs/phases).
 
-![Orchestrator — o Conselho de IAs escolhendo o modelo de uma tarefa (Fase 5)](./docs/assets/fase-5-conselho.png)
+![Orchestrator — memória do projeto: sessões, arquivos, comandos e erros recentes (Fase 6)](./docs/assets/fase-6-memoria.png)
 
 ## Estado atual
 
@@ -31,8 +31,9 @@ cada fase em [`docs/phases/`](./docs/phases).
 | 3 | AIProvider, Provider Registry, Provider Sessions | ✅ concluída |
 | 4 | Providers por API com cadastro livre (OpenAI e compatíveis, Anthropic, Gemini, qualquer API por perfil) | ✅ concluída |
 | 5 | Roteador de modelos e Conselho de IAs (modos Sugerir e Full) | ✅ concluída |
-| 6 | SQLite, memória L1/L2/L3, histórico e decisões | ⏳ próxima |
-| 7–11 | contexto e handoff, tasks/agentes, autonomia, GitHub, otimização | planejadas |
+| 6 | SQLite, memória L1/L2/L3, histórico e decisões | ✅ concluída |
+| 7 | Context Builder e Handoff entre IAs | ⏳ próxima |
+| 8–11 | tasks/agentes, autonomia, GitHub, otimização | planejadas |
 
 A ordem das Fases 4–5 foi redefinida na
 [ADR-0010](./docs/adr/0010-providers-por-api-com-cadastro-livre.md):
@@ -51,7 +52,8 @@ orchestrator/
 │   │                       #        projeto, git, package managers, runtimes
 │   ├── orchestrator/       # (Fases 7–8) Orchestrator Engine, Context Builder, Handoff
 │   ├── agents/             # (Fase 8) Agent Manager, subagentes, File Lock Manager
-│   ├── memory/             # (Fase 6) SQLite, memória L1/L2/L3, histórico, decisões
+│   ├── memory/             # [Rust] banco local (SQLite): histórico, projetos, sessões,
+│   │                       #        memória L1/L2/L3, decisões, deliberações
 │   ├── git/                # [Rust] Git local via `git` do sistema (GitHub na Fase 10)
 │   ├── providers/          # [Rust] AIProvider, Provider Registry, Provider Sessions
 │   │   └── api/            # [Rust] conexões de API: OpenAI e compatíveis, Anthropic,
@@ -98,7 +100,7 @@ pnpm build            # gera o executável/instalador de produção
 ## Como testar
 
 ```bash
-pnpm test             # testes Rust (core, git, runtime, providers, router, desktop) e do frontend
+pnpm test             # testes Rust (core, git, runtime, providers, router, memory, desktop) e do frontend
 pnpm test:rust        # somente cargo test --workspace
 pnpm test:web         # somente vitest
 pnpm typecheck        # checagem de tipos TypeScript
@@ -106,6 +108,33 @@ pnpm check            # typecheck + cargo fmt --check + cargo clippy -D warnings
 ```
 
 ## O que já funciona
+
+### Fase 6 — banco local, memória e histórico
+
+- **Um banco local** (`orchestrator.db`, SQLite embutido) no diretório de
+  dados do app. Nada é gravado dentro do projeto, e as chaves de API
+  continuam só no cofre do sistema.
+- **O app lembra depois de fechar:**
+  - as sessões voltam com o transcript, o uso e o custo;
+  - "Retomar" continua a **mesma conversa** com a API;
+  - as deliberações e o cache do Conselho continuam valendo.
+- **Memória do projeto** (MEMORY), que pertence ao projeto e não à IA:
+  - **Trabalho (L1):** sessões, arquivos alterados, comandos com código de
+    saída e erros recentes, tirados do histórico;
+  - **Projeto (L2):** arquitetura, stack, convenções, regras e notas, com
+    etiquetas e fixação. A stack detectada entra sozinha ao abrir o projeto;
+  - **Decisões:** contexto, decisão, consequências e estado (proposta,
+    aceita, substituída, rejeitada). Nunca são apagadas;
+  - **Busca (L3):** sem acento e por prefixo, na memória, nas decisões, nas
+    mensagens das sessões e nos eventos notáveis.
+- **HISTORY sem limite:**
+  - cada evento é marcado com o projeto, e "Só este projeto" filtra por ele;
+  - "Carregar mais antigos" pagina o histórico inteiro;
+  - o `audit.jsonl` das fases anteriores é importado na primeira execução.
+
+![Busca na memória do projeto](./docs/assets/fase-6-busca.png)
+
+Referência: [`docs/memory.md`](./docs/memory.md).
 
 ### Fase 5 — Roteador de modelos e Conselho de IAs
 
@@ -215,7 +244,8 @@ Referência: [`docs/providers.md`](./docs/providers.md).
   acompanhar a saída, listar e encerrar (árvore de processos inteira).
 - **Observabilidade**: toda chamada de ferramenta gera eventos de auditoria
   (`TOOL_CALLED`, `COMMAND_EXECUTED`, `FILE_CHANGED`, …), exibidos no painel
-  HISTORY e gravados em `audit.jsonl` no diretório de dados do app.
+  HISTORY e gravados no diretório de dados do app (no banco local desde a
+  Fase 6).
 
 ![Git e diff](./docs/assets/fase-2-git.png)
 
@@ -224,5 +254,7 @@ Referência: [`docs/providers.md`](./docs/providers.md).
 A referência completa das ferramentas está em
 [`docs/tool-runtime.md`](./docs/tool-runtime.md), a camada de providers em
 [`docs/providers.md`](./docs/providers.md), as conexões de API em
-[`docs/api-connections.md`](./docs/api-connections.md) e a camada IPC em
+[`docs/api-connections.md`](./docs/api-connections.md), o roteador em
+[`docs/router.md`](./docs/router.md), o banco e a memória em
+[`docs/memory.md`](./docs/memory.md) e a camada IPC em
 [`docs/ipc.md`](./docs/ipc.md).

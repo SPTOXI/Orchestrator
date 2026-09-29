@@ -58,6 +58,12 @@ pub enum EventKind {
     /// A model was applied to a new session, by the user or by the Council
     /// in Full mode (ADR-0011).
     RouteDecided,
+    /// A project memory entry (L2) was created or changed (ADR-0012).
+    MemorySaved,
+    /// A project memory entry (L2) was deleted (ADR-0012).
+    MemoryRemoved,
+    /// A project decision was recorded or changed status (ADR-0012).
+    DecisionSaved,
 }
 
 /// A durable, provider-independent history entry.

@@ -3,10 +3,15 @@
 //! Assistant messages may carry the provider's own content (`native`),
 //! which is sent back unchanged when required (Anthropic thinking blocks
 //! with signatures, Gemini thought signatures). History is append-only.
+//!
+//! It is serializable so a session can be resumed after the app restarts
+//! (`AIProvider::snapshot`, ADR-0012).
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Role {
     User,
     Assistant,
@@ -14,7 +19,8 @@ pub enum Role {
 
 /// A tool the model asked for. `name` is the Orchestrator name
 /// (`filesystem.read`).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolCallPart {
     pub id: String,
     pub name: String,
@@ -25,7 +31,8 @@ pub struct ToolCallPart {
     pub invalid: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolResultPart {
     pub id: String,
     pub name: String,
@@ -34,14 +41,15 @@ pub struct ToolResultPart {
     pub native_id: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value", rename_all = "camelCase")]
 pub enum Part {
     Text(String),
     ToolCall(ToolCallPart),
     ToolResult(ToolResultPart),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Message {
     pub role: Role,
     pub parts: Vec<Part>,
@@ -84,7 +92,8 @@ impl Message {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct Conversation {
     pub system: Option<String>,
     pub messages: Vec<Message>,

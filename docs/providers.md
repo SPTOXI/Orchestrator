@@ -38,10 +38,13 @@ Trait async (`Send + Sync`), mapeada 1:1 na seção 18 do documento mestre.
 | `cancel(native)` | limpeza do lado do fornecedor | nada (cancelamento cooperativo pelo `ctx`) |
 | `spawn_agent(parent, spec)` | sessão filha (subagente) | `start(spec)` |
 | `complete(request, cancel)` | resposta avulsa: instruções + texto + modelo, **sem sessão, histórico nem ferramentas** → `Completion { text, model, usage }`; usada pelo Conselho (Fase 5) | `UNSUPPORTED` |
+| `snapshot(native)` | a sessão nativa com o estado necessário para retomar depois de reiniciar o app (Fase 6) | devolve `native` como está |
 
 - `NativeSession { reference, model, data }` é opaca para o núcleo: o
-  Orchestrator só a guarda para chamar o provider de novo (e, a partir da
-  Fase 6, persiste para retomar após reiniciar o app).
+  Orchestrator só a guarda para chamar o provider de novo e, desde a Fase
+  6, grava a versão de `snapshot` ao fim de cada turno. As conexões de API
+  guardam ali a conversa inteira (`data.conversation`), e o `resume` a
+  reconstrói.
 - `SessionSpec { sessionId, projectPath, title, model, instructions }` —
   `instructions` será preenchido pelo Context Builder (Fase 7).
 - Em `stream`, o texto vai para o contexto; em `execute`, volta em
@@ -118,7 +121,26 @@ start ──▶ idle ──send/execute──▶ running ──(completed | canc
 - **Uso de tokens:** somado por turno (`TURN_COMPLETED`) e por sessão
   (`SessionInfo.usage`). `estimated` indica valores estimados.
 - **Transcript:** log numerado (`seq`) de `SessionEvent`, com trechos de texto
-  consecutivos fundidos e limite de 5.000 entradas. Em memória até a Fase 6.
+  consecutivos fundidos e limite de 5.000 entradas em memória.
+
+### Persistência (`SessionStore`, Fase 6)
+
+`SessionManager::with_store(…, store)` recebe um `SessionStore`
+([ADR-0012](./adr/0012-sqlite-memoria-e-historico.md)). O app usa o banco
+local; os testes usam `MemorySessionStore`.
+
+| Método | Quando o manager chama |
+| ------ | ---------------------- |
+| `save(PersistedSession)` | ao abrir, encerrar e retomar, e ao fim de cada turno: `info`, sessão nativa (de `snapshot`), instruções e modelo pedido |
+| `append(id, entries)` | ao fim de cada turno e quando a sessão muda: só as entradas do transcript ainda não gravadas |
+| `load()` | uma vez, ao criar o manager |
+
+- **Ao reiniciar,** as sessões voltam **encerradas** (e são gravadas
+  assim), com o transcript, o uso e o número de subagentes. "Retomar" chama
+  `provider.resume()` com a sessão nativa guardada.
+- **Falhas de gravação** são registradas pela implementação e nunca fazem
+  um turno falhar.
+- **Um turno interrompido** pela queda do app perde só o próprio andamento.
 
 ### Eventos ao vivo — `StreamEvent::Session { sessionId, seq, event }`
 
@@ -145,8 +167,9 @@ start ──▶ idle ──send/execute──▶ running ──(completed | canc
 | `PROVIDER_SWITCHED` | `from`, `to`; `reason: "removed"` quando o ativo saiu do registro |
 | `TOOL_CALLED` (do runtime) | como na Fase 1, com `origin = agent { agentId, sessionId, provider }` |
 
-O texto das mensagens fica no transcript, não no histórico de auditoria
-(vai para a tabela `messages` na Fase 6).
+O texto das mensagens fica no transcript (tabela `session_entries` do
+banco), não no histórico de auditoria. As mensagens entram na busca L3 da
+memória do projeto.
 
 ## IPC
 

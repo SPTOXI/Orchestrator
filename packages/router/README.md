@@ -19,6 +19,7 @@ Escolhe o modelo de cada tarefa entre todos os providers registrados:
 | `cache.rs` | deliberações reaproveitadas enquanto nada relevante mudou |
 | `settings.rs` | `CouncilSettings` (modo, membros, opções), validação, `council.json` |
 | `service.rs` | `RouterService`: recomendar, deliberar (membros em paralelo, prazo, abstenções), cache, histórico, `COUNCIL_*`/`ROUTE_DECIDED`, abrir a sessão escolhida (modo Full sozinho) |
+| `store.rs` | trait `DeliberationStore`: deliberações e cache guardados entre execuções (Fase 6; o app usa o banco local) |
 
 Depende só de `orchestrator-core` e `orchestrator-providers`: funciona com
 qualquer `AIProvider`, não só com as conexões de API.
@@ -30,4 +31,5 @@ e cobrem:
 - os modos Desligado, Sugerir e Full;
 - votos e abstenções, e o prazo de um membro lento;
 - cache e requisitos;
-- configuração e histórico.
+- configuração e histórico;
+- deliberações e cache que sobrevivem a um reinício (`DeliberationStore`).

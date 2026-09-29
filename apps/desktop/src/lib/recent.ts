@@ -1,5 +1,5 @@
-// Recently opened projects, kept per viewer in localStorage until the
-// project database arrives (Phase 6, ADR-0008).
+// Recently opened projects as the UI shows them. Before Phase 6 the list
+// lived in localStorage; it is now imported into the database (ADR-0012).
 
 export interface RecentProject {
   path: string;
@@ -36,5 +36,14 @@ export function saveRecent(list: RecentProject[]): void {
     localStorage.setItem(KEY, JSON.stringify(list));
   } catch {
     // Storage unavailable: recents are just not remembered.
+  }
+}
+
+/** Forgets the old list once it moved to the database (Phase 6). */
+export function clearRecent(): void {
+  try {
+    localStorage.removeItem(KEY);
+  } catch {
+    // Storage unavailable: nothing to clear.
   }
 }

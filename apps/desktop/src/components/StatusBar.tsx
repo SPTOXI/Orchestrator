@@ -21,13 +21,19 @@ export function StatusBar({ ready, info, workspace, branch }: Props) {
         {workspace || "—"}
       </span>
       <span className="spacer" />
+      {info?.databaseWarning && (
+        <span className="status err" title={info.databaseWarning}>
+          <span className="dot err" />
+          Banco indisponível: nada será guardado ao fechar
+        </span>
+      )}
       {info && (
         <>
           <span title="Shell padrão">shell: {info.defaultShell}</span>
           <span>
             {info.os}/{info.arch}
           </span>
-          <span title={`Auditoria: ${info.auditLog}`}>v{info.version}</span>
+          <span title={`Banco: ${info.database}`}>v{info.version}</span>
         </>
       )}
     </footer>

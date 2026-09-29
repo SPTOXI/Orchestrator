@@ -10,7 +10,7 @@ use orchestrator_core::{
 };
 use orchestrator_provider_api::{Connection, ConnectionManager, MemorySecretStore, SaveRequest};
 use orchestrator_providers::{
-    ManagerConfig, ProviderRegistry, SessionManager, StartRequest, ToolExecutor,
+    ManagerConfig, ProviderRegistry, SessionManager, SessionStore, StartRequest, ToolExecutor,
 };
 use orchestrator_runtime::{RuntimeConfig, ToolRuntime};
 use parking_lot::Mutex;
@@ -240,6 +240,16 @@ pub struct Harness {
 
 impl Harness {
     pub fn new() -> Self {
+        Self::build(None)
+    }
+
+    /// A harness whose sessions are kept in `store` (an app restart is a
+    /// new harness on the same store).
+    pub fn with_store(store: Arc<dyn SessionStore>) -> Self {
+        Self::build(Some(store))
+    }
+
+    fn build(store: Option<Arc<dyn SessionStore>>) -> Self {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("hello.txt"), "olá do projeto").unwrap();
         let sink = Arc::new(MemorySink::new());
@@ -251,15 +261,17 @@ impl Harness {
             },
             sink.clone(),
         );
-        let sessions = SessionManager::with_config(
-            registry.clone(),
-            Arc::new(RuntimeTools(runtime)),
-            sink.clone(),
-            ManagerConfig {
-                cancel_grace: Duration::from_millis(500),
-                log_capacity: 2_000,
-            },
-        );
+        let config = ManagerConfig {
+            cancel_grace: Duration::from_millis(500),
+            log_capacity: 2_000,
+        };
+        let tools = Arc::new(RuntimeTools(runtime));
+        let sessions = match store {
+            Some(store) => {
+                SessionManager::with_store(registry.clone(), tools, sink.clone(), config, store)
+            }
+            None => SessionManager::with_config(registry.clone(), tools, sink.clone(), config),
+        };
         let (connections, warnings) = ConnectionManager::open(
             &dir.path().join("data/connections.json"),
             registry.clone(),
