@@ -138,3 +138,15 @@ export const StopIcon = () => (
     <rect x="6" y="6" width="12" height="12" rx="1" />
   </Icon>
 );
+
+export const SendIcon = () => (
+  <Icon size={14}>
+    <path d="M4 12 20 4l-6 16-3-7z" />
+  </Icon>
+);
+
+export const SubagentIcon = () => (
+  <Icon size={14}>
+    <path d="M6 4v8a4 4 0 0 0 4 4h8M14 12l4 4-4 4" />
+  </Icon>
+);

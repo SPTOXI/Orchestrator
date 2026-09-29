@@ -3,14 +3,17 @@
 O Tool Runtime (`packages/runtime`, crate `orchestrator-runtime`) é o único
 componente que executa operações no sistema operacional. Toda chamada entra por
 `ToolRuntime::invoke(ToolCall) -> ToolResult` — pela UI hoje (via
-`runtime_invoke`) e pelos agentes de IA a partir da Fase 3.
+`runtime_invoke`) e pelas sessões de provider de IA (Fase 3, via
+`TurnContext::call_tool`; ver [`providers.md`](./providers.md)).
 
 ## Contrato
 
 ```jsonc
 // ToolCall
 { "id": "01J…", "tool": "filesystem.read", "args": { "path": "src/main.rs" },
-  "origin": { "type": "user" } }          // | { "type": "agent", "agentId": "…" } | { "type": "system" }
+  "origin": { "type": "user" } }
+  // | { "type": "agent", "agentId": "…", "sessionId": "…", "provider": "echo" }  (sessão de IA)
+  // | { "type": "system" }
 
 // ToolResult
 { "callId": "01J…", "tool": "filesystem.read", "ok": true,
@@ -28,7 +31,8 @@ componente que executa operações no sistema operacional. Toda chamada entra po
 - Erros (`error.kind`): `UNKNOWN_TOOL`, `INVALID_ARGS`, `NOT_FOUND`,
   `ALREADY_EXISTS`, `PERMISSION_DENIED` (negado pelo SO), `IO`, `SPAWN`,
   `NOT_RUNNING`, `COMMAND_FAILED` (um comando externo, ex. `git`, falhou; a
-  mensagem traz a saída dele), `INTERNAL`.
+  mensagem traz a saída dele), `CANCELLED` (pedido por um turno de IA já
+  cancelado; nada foi executado, ADR-0009), `INTERNAL`.
 - Cada ferramenta é uma **consulta** (`readOnly: true`, não altera estado) ou
   uma **ação**. `runtime_tools` devolve a marca e o `TOOL_CALLED` a registra.
 - Não existe lista de comandos proibidos nem confirmação oculta no runtime. O

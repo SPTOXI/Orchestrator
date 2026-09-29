@@ -6,11 +6,14 @@ React (apps/desktop/src)
    ▼                                    │
 Tauri (apps/desktop/src-tauri) ── ponte, sem lógica de domínio
    │  ToolRuntime::invoke(ToolCall)     ▲ EventSink (DesktopSink)
+   │  SessionManager (providers)        │
    ▼                                    │
 Rust Runtime (packages/runtime) ──▶ Orchestrator Core (packages/core)
+Provider Layer (packages/providers) ──tool_call──▶ ToolRuntime::invoke
 ```
 
-Decisão registrada em [ADR-0003](./adr/0003-gateway-ipc-unico.md).
+Decisões registradas em [ADR-0003](./adr/0003-gateway-ipc-unico.md) e
+[ADR-0009](./adr/0009-camada-de-providers-e-sessoes.md).
 
 ## Comandos
 
@@ -28,11 +31,36 @@ Decisão registrada em [ADR-0003](./adr/0003-gateway-ipc-unico.md).
 `ok: false` + `error`); a UI sempre chama com `origin = user`. O cliente
 tipado está em `apps/desktop/src/lib/runtime.ts`.
 
+### Providers e sessões (Fase 3, ADR-0009)
+
+Não são ferramentas do sistema operacional, então não passam por
+`runtime_invoke`: cada comando repassa ao `ProviderRegistry` /
+`SessionManager`, que gravam o histórico. Erros rejeitam a promessa com
+`{ kind, message }` (`ProviderCallError` no cliente). Referência completa:
+[`providers.md`](./providers.md).
+
+| Comando | Argumentos | Retorno | Histórico |
+| ------- | ---------- | ------- | --------- |
+| `providers_list` | — | `{ providers: ProviderInfo[], active }` | — |
+| `provider_inspect` | `id` | `ProviderStatus` | — |
+| `provider_select` | `id` | `{ providers, active }` | `PROVIDER_SWITCHED` |
+| `sessions_list` | — | `SessionInfo[]` (mais nova primeiro) | — |
+| `session_start` | `request?: { provider?, title?, model?, instructions? }` | `SessionInfo` (no projeto aberto) | `SESSION_STARTED` |
+| `session_get` | `id` | `{ info, entries, lastSeq, truncated }` | — |
+| `session_send` | `id`, `input` | `turnId`; o progresso chega por eventos | `TURN_COMPLETED` ao terminar |
+| `session_cancel` | `id` | `SessionInfo` | `TURN_COMPLETED` (`cancelled`) |
+| `session_close` | `id` | `SessionInfo` | `SESSION_CLOSED` |
+| `session_resume` | `id` | `SessionInfo` | `SESSION_RESUMED` |
+| `session_spawn` | `parentId`, `request?` | `SessionInfo` do subagente | `SESSION_STARTED` com `parentSessionId` |
+
+Ferramentas pedidas pelo provider passam pelo mesmo `ToolRuntime::invoke` e
+geram `TOOL_CALLED` com `origin = agent { agentId, sessionId, provider }`.
+
 ## Eventos
 
 | Evento | Payload | Uso |
 | ------ | ------- | --- |
-| `runtime://stream` | `StreamEvent` | saída de terminal/processo ao vivo, término |
+| `runtime://stream` | `StreamEvent` | saída de terminal/processo ao vivo, término; eventos de sessão de provider |
 | `runtime://audit` | `AuditEvent` | painel HISTORY, atualização de listas e do explorer |
 
 `StreamEvent`:
@@ -42,6 +70,7 @@ tipado está em `apps/desktop/src/lib/runtime.ts`.
 | { type: "terminalExited"; terminalId; exitCode }
 | { type: "processOutput"; processId; stream: "stdout" | "stderr"; offset; data }
 | { type: "processExited"; processId; exitCode; stopped }
+| { type: "session"; sessionId; seq; event: SessionEvent }   // Fase 3
 ```
 
 `offset` é a posição (bytes UTF-8) de `data` no fluxo completo — a mesma
@@ -57,6 +86,13 @@ Ao abrir a visualização de um terminal/processo que já está rodando
 3. ler o buffer (`terminal.read`/`process.read`) → `data`, `next`;
 4. escrever `data`; descartar da fila os eventos com `offset < next`;
 5. a partir daí, escrever cada evento com `offset >= next` e avançar.
+
+Sessões de provider usam a mesma ideia com `seq` em vez de offset
+(`apps/desktop/src/lib/transcript.ts`): enfileirar eventos `session` da
+sessão, aguardar o listener, ler `session_get` (`entries`, `lastSeq`), aplicar
+as entradas e depois só eventos com `seq > lastSeq`. Trechos de texto que o
+backend fundiu numa entrada carregam o `seq` do último trecho, então nada se
+repete.
 
 ## Persistência
 

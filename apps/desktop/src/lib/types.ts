@@ -1,11 +1,13 @@
-// TypeScript mirror of the Rust contracts (packages/core, packages/runtime).
+// TypeScript mirror of the Rust contracts (packages/core, packages/runtime,
+// packages/providers).
 // Keep in sync with the serde definitions (camelCase JSON). See ADR-0001.
 
 // ------------------------------------------------------------------ core ---
 
 export type CallOrigin =
   | { type: "user" }
-  | { type: "agent"; agentId: string }
+  /** Until Phase 8 each provider session is its own agent (ADR-0009). */
+  | { type: "agent"; agentId: string; sessionId?: string; provider?: string }
   | { type: "system" };
 
 export type ToolErrorKind =
@@ -18,11 +20,19 @@ export type ToolErrorKind =
   | "SPAWN"
   | "NOT_RUNNING"
   | "COMMAND_FAILED"
+  | "CANCELLED"
   | "INTERNAL";
 
 export interface ToolError {
   kind: ToolErrorKind;
   message: string;
+}
+
+export interface ToolCall {
+  id: string;
+  tool: string;
+  args: unknown;
+  origin: CallOrigin;
 }
 
 export interface ToolResult<T = unknown> {
@@ -60,7 +70,11 @@ export type EventKind =
   | "HANDOFF_CREATED"
   | "HANDOFF_ACCEPTED"
   | "PROCESS_EXITED"
-  | "TERMINAL_EXITED";
+  | "TERMINAL_EXITED"
+  | "SESSION_STARTED"
+  | "SESSION_RESUMED"
+  | "SESSION_CLOSED"
+  | "TURN_COMPLETED";
 
 export interface AuditEvent {
   id: string;
@@ -84,7 +98,8 @@ export type StreamEvent =
       offset: number;
       data: string;
     }
-  | { type: "processExited"; processId: string; exitCode: number | null; stopped: boolean };
+  | { type: "processExited"; processId: string; exitCode: number | null; stopped: boolean }
+  | { type: "session"; sessionId: string; seq: number; event: SessionEvent };
 
 // ------------------------------------------------------------ filesystem ---
 
@@ -426,4 +441,134 @@ export interface AppInfo {
   dataDir: string;
   auditLog: string;
   defaultShell: string;
+}
+
+// ------------------------------------------------------------- providers ---
+
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  reasoningTokens: number;
+  costUsd: number | null;
+  estimated: boolean;
+}
+
+export type SessionStatus = "idle" | "running" | "closed";
+export type TurnStatus = "completed" | "cancelled" | "failed";
+export type NoticeLevel = "info" | "warning" | "error";
+
+export interface SessionInfo {
+  id: string;
+  provider: string;
+  title: string;
+  model: string | null;
+  projectPath: string;
+  parentId: string | null;
+  status: SessionStatus;
+  nativeRef: string | null;
+  createdAt: string;
+  updatedAt: string;
+  turns: number;
+  usage: TokenUsage;
+  lastError: string | null;
+}
+
+export type SessionEvent =
+  | { type: "turnStarted"; turnId: string; input: string }
+  | { type: "textDelta"; turnId: string; text: string }
+  | { type: "reasoningDelta"; turnId: string; text: string }
+  | { type: "toolCallRequested"; turnId: string; call: ToolCall }
+  | { type: "toolCallCompleted"; turnId: string; result: ToolResult }
+  | { type: "usage"; turnId: string; usage: TokenUsage }
+  | { type: "notice"; turnId: string | null; level: NoticeLevel; message: string }
+  | {
+      type: "turnCompleted";
+      turnId: string;
+      status: TurnStatus;
+      error: string | null;
+      usage: TokenUsage;
+      durationMs: number;
+      toolCalls: number;
+    }
+  | { type: "statusChanged"; status: SessionStatus }
+  | { type: "subagentSpawned"; childId: string; provider: string; title: string };
+
+export interface SessionLogEntry {
+  seq: number;
+  at: string;
+  event: SessionEvent;
+}
+
+export interface SessionSnapshot {
+  info: SessionInfo;
+  entries: SessionLogEntry[];
+  lastSeq: number;
+  truncated: boolean;
+}
+
+export interface ModelInfo {
+  id: string;
+  name: string;
+  contextWindow: number | null;
+}
+
+export interface ProviderCapabilities {
+  streaming: boolean;
+  toolCalls: boolean;
+  resume: boolean;
+  cancel: boolean;
+  nativeSubagents: boolean;
+  reasoning: boolean;
+  tokenUsage: boolean;
+  cost: boolean;
+  models: ModelInfo[];
+  defaultModel: string | null;
+}
+
+export interface ProviderInfo {
+  id: string;
+  name: string;
+  vendor: string;
+  description: string;
+  capabilities: ProviderCapabilities;
+  active: boolean;
+}
+
+export interface ProvidersView {
+  providers: ProviderInfo[];
+  active: string | null;
+}
+
+export interface ProviderStatus {
+  available: boolean;
+  version: string | null;
+  authenticated: boolean | null;
+  detail: string | null;
+  checkedAt: string;
+}
+
+export type ProviderErrorKind =
+  | "NOT_FOUND"
+  | "ALREADY_EXISTS"
+  | "UNAVAILABLE"
+  | "UNSUPPORTED"
+  | "INVALID_REQUEST"
+  | "BUSY"
+  | "CLOSED"
+  | "CANCELLED"
+  | "FAILED"
+  | "INTERNAL";
+
+export interface ProviderError {
+  kind: ProviderErrorKind;
+  message: string;
+}
+
+export interface StartRequest {
+  /** Provider id; omitted = the active one (or the parent's). */
+  provider?: string;
+  title?: string;
+  model?: string;
+  instructions?: string;
 }

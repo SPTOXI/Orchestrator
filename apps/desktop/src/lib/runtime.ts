@@ -2,7 +2,8 @@
 //
 // Every operation goes through the single audited gateway `runtime_invoke`
 // (ADR-0003). Only human keystrokes/resizes of an open terminal use the
-// streaming commands `terminal_input` / `terminal_resize`.
+// streaming commands `terminal_input` / `terminal_resize`. AI providers and
+// sessions have their own commands (ADR-0009).
 
 import { invoke, isTauri as detectTauri } from "@tauri-apps/api/core";
 import type {
@@ -22,6 +23,13 @@ import type {
   NodeRuntime,
   PackageOutput,
   ProjectProfile,
+  ProviderError,
+  ProviderErrorKind,
+  ProvidersView,
+  ProviderStatus,
+  SessionInfo,
+  SessionSnapshot,
+  StartRequest,
   PythonRuntime,
   Encoding,
   ExecuteArgs,
@@ -63,9 +71,29 @@ export class ToolCallError extends Error {
   }
 }
 
+/** A provider/session command that failed (ADR-0009). */
+export class ProviderCallError extends Error {
+  readonly kind: ProviderErrorKind;
+
+  constructor(error: ProviderError) {
+    super(error.message);
+    this.name = "ProviderCallError";
+    this.kind = error.kind;
+  }
+}
+
+function isProviderError(value: unknown): value is ProviderError {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as ProviderError).kind === "string" &&
+    typeof (value as ProviderError).message === "string"
+  );
+}
+
 /** Human readable message for any error thrown by this module. */
 export function errorMessage(error: unknown): string {
-  if (error instanceof ToolCallError) return `${error.kind}: ${error.message}`;
+  if (error instanceof ToolCallError || error instanceof ProviderCallError) return `${error.kind}: ${error.message}`;
   if (error instanceof Error) return error.message;
   return String(error);
 }
@@ -182,4 +210,35 @@ export const appApi = {
   tools: () => invoke<ToolSpec[]>("runtime_tools"),
   /** Native folder picker (UI only; open the result with projectApi.open). */
   pickFolder: () => invoke<string | null>("pick_folder"),
+};
+
+/** Calls a provider/session command; structured errors become ProviderCallError. */
+async function callProvider<T>(command: string, args: Args = {}): Promise<T> {
+  try {
+    return await invoke<T>(command, args);
+  } catch (error) {
+    throw isProviderError(error) ? new ProviderCallError(error) : error;
+  }
+}
+
+export const providerApi = {
+  list: () => callProvider<ProvidersView>("providers_list"),
+  inspect: (id: string) => callProvider<ProviderStatus>("provider_inspect", { id }),
+  /** Makes `id` the active provider (PROVIDER_SWITCHED). */
+  select: (id: string) => callProvider<ProvidersView>("provider_select", { id }),
+};
+
+export const sessionApi = {
+  list: () => callProvider<SessionInfo[]>("sessions_list"),
+  /** Opens a session on the open project. */
+  start: (request: StartRequest = {}) => callProvider<SessionInfo>("session_start", { request }),
+  get: (id: string) => callProvider<SessionSnapshot>("session_get", { id }),
+  /** Starts a turn; progress arrives as `session` stream events. Returns the turn id. */
+  send: (id: string, input: string) => callProvider<string>("session_send", { id, input }),
+  cancel: (id: string) => callProvider<SessionInfo>("session_cancel", { id }),
+  close: (id: string) => callProvider<SessionInfo>("session_close", { id }),
+  resume: (id: string) => callProvider<SessionInfo>("session_resume", { id }),
+  /** Subagent session (spawnAgent). */
+  spawn: (parentId: string, request: StartRequest = {}) =>
+    callProvider<SessionInfo>("session_spawn", { parentId, request }),
 };

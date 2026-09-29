@@ -1,6 +1,6 @@
 [package]
 name = "orchestrator-core"
-description = "Orchestrator domain contracts: tool calls, results, audit and stream events."
+description = "Orchestrator domain contracts: tool calls, results, audit and stream events, provider sessions."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

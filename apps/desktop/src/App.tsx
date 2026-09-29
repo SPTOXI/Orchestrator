@@ -21,14 +21,17 @@ import { PhasePlaceholder } from "./components/PhasePlaceholder";
 import { ProcessesPanel } from "./components/ProcessesPanel";
 import { ProfileView } from "./components/ProfileView";
 import { ProjectPanel, RecentList } from "./components/ProjectPanel";
+import { ProvidersPanel } from "./components/ProvidersPanel";
 import { SessionsPanel } from "./components/SessionsPanel";
+import { SessionView } from "./components/SessionView";
 import { StatusBar } from "./components/StatusBar";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { baseName } from "./lib/format";
 import { addRecent, loadRecent, removeRecent, saveRecent, type RecentProject } from "./lib/recent";
-import { appApi, errorMessage, isTauri, projectApi, shellApi } from "./lib/runtime";
-import type { AppInfo, ProjectProfile, ShellList } from "./lib/types";
+import { appApi, errorMessage, isTauri, projectApi, sessionApi, shellApi } from "./lib/runtime";
+import type { AppInfo, ProjectProfile, SessionInfo, ShellList } from "./lib/types";
 import { useGitStatus } from "./lib/useGitStatus";
+import { useProviders } from "./lib/useProviders";
 import { useRuntimeSessions } from "./lib/useRuntimeSessions";
 
 type PanelId = "project" | "providers" | "tasks" | "agents" | "terminal" | "git" | "memory" | "history";
@@ -39,7 +42,8 @@ type Tab =
   | { id: string; kind: "file"; path: string }
   | { id: string; kind: "diff"; repo: string; file: string; staged: boolean }
   | { id: "profile"; kind: "profile" }
-  | { id: "discovery"; kind: "discovery" };
+  | { id: "discovery"; kind: "discovery" }
+  | { id: string; kind: "session"; sessionId: string };
 
 const ACTIVITIES: Array<{ id: PanelId; label: string; icon: () => ReactNode }> = [
   { id: "project", label: "PROJECT", icon: FolderIcon },
@@ -71,7 +75,7 @@ function storeProject(path: string | null) {
   }
 }
 
-function tabTitle(tab: Tab): string {
+function tabTitle(tab: Tab, sessions: Map<string, SessionInfo>): string {
   switch (tab.kind) {
     case "file":
       return baseName(tab.path);
@@ -81,6 +85,8 @@ function tabTitle(tab: Tab): string {
       return "Perfil do projeto";
     case "discovery":
       return "Procurar projetos";
+    case "session":
+      return sessions.get(tab.sessionId)?.title ?? "Sessão";
   }
 }
 
@@ -99,8 +105,13 @@ export function App() {
   const [confirmClose, setConfirmClose] = useState<string | null>(null);
   const [bottomHeight, setBottomHeight] = useState(300);
   const [startupError, setStartupError] = useState<string | null>(null);
+  const [startingSession, setStartingSession] = useState(false);
   const sessions = useRuntimeSessions(ready);
   const git = useGitStatus(profile?.path ?? null, ready && profile !== null);
+  const providers = useProviders(ready);
+  const sessionsById = new Map(providers.sessions.map((s) => [s.id, s]));
+  const activeProvider = providers.view?.providers.find((p) => p.active) ?? null;
+  const runningSessions = providers.sessions.filter((s) => s.status === "running").length;
 
   /** Working directory for terminals, processes and commands. */
   const workspace = profile?.path ?? info?.baseDir ?? "";
@@ -179,6 +190,19 @@ export function App() {
     });
 
   const openFile = (path: string) => showTab({ id: `file:${path}`, kind: "file", path });
+  const openSession = (sessionId: string) => showTab({ id: `session:${sessionId}`, kind: "session", sessionId });
+
+  const newSession = async () => {
+    setStartingSession(true);
+    try {
+      const session = await sessionApi.start();
+      openSession(session.id);
+    } catch (e) {
+      setStartupError(`Não foi possível iniciar a sessão: ${errorMessage(e)}`);
+    } finally {
+      setStartingSession(false);
+    }
+  };
   const openDiff = (file: string, staged: boolean) => {
     const repo = git.status?.root ?? profile?.path;
     if (repo) showTab({ id: `diff:${staged ? "s" : "u"}:${file}`, kind: "diff", repo, file, staged });
@@ -256,16 +280,14 @@ export function App() {
         );
       case "providers":
         return (
-          <PhasePlaceholder
-            title="AI Providers"
-            phase="Fases 3–5"
-            description="Providers são intercambiáveis e nunca acessam o sistema diretamente: pedem tool_call e o Orchestrator executa pelo Tool Runtime."
-            items={[
-              "Fase 3 — interface AIProvider, Provider Registry, Provider Sessions",
-              "Fase 4 — OpenAI / Codex",
-              "Fase 5 — Claude Code",
-              "Futuro — Gemini, modelos locais",
-            ]}
+          <ProvidersPanel
+            ready={ready}
+            providers={providers}
+            projectPath={profile?.path ?? null}
+            activeSessionId={activeTab?.startsWith("session:") ? activeTab.slice("session:".length) : null}
+            starting={startingSession}
+            onNewSession={() => void newSession()}
+            onOpenSession={openSession}
           />
         );
       case "tasks":
@@ -333,6 +355,9 @@ export function App() {
         gitStatus={git.status}
         terminals={sessions.terminals}
         processes={sessions.processes}
+        providerName={activeProvider?.name ?? null}
+        providerCount={providers.view?.providers.length ?? null}
+        runningSessions={runningSessions}
       />
       <div className="workbench">
         <nav className="activity-bar">
@@ -348,6 +373,7 @@ export function App() {
               {id === "git" && git.status && git.status.files.length > 0 && (
                 <span className="activity-badge">{git.status.files.length}</span>
               )}
+              {id === "providers" && runningSessions > 0 && <span className="activity-badge">{runningSessions}</span>}
             </button>
           ))}
         </nav>
@@ -372,7 +398,7 @@ export function App() {
                       onClick={() => setActiveTab(tab.id)}
                       title={tab.kind === "file" ? tab.path : tab.kind === "diff" ? `${tab.repo} — ${tab.file}` : undefined}
                     >
-                      <span>{tabTitle(tab)}</span>
+                      <span>{tabTitle(tab, sessionsById)}</span>
                       {confirmClose === tab.id ? (
                         <span className="confirm">
                           descartar?
@@ -450,6 +476,21 @@ export function App() {
                       onProcessStarted={() => setBottomTab("processes")}
                     />
                   );
+                case "session": {
+                  const session = sessionsById.get(tab.sessionId) ?? null;
+                  return (
+                    <SessionView
+                      key={tab.id}
+                      ready={ready}
+                      active={active}
+                      sessionId={tab.sessionId}
+                      session={session}
+                      parent={session?.parentId ? (sessionsById.get(session.parentId) ?? null) : null}
+                      providers={providers.view?.providers ?? []}
+                      onOpenSession={openSession}
+                    />
+                  );
+                }
                 case "discovery":
                   return (
                     <DiscoveryView
@@ -566,7 +607,11 @@ function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenPr
                   árvore.
                 </li>
                 <li>
-                  <strong>HISTORY</strong>: toda chamada de ferramenta é auditada.
+                  <strong>AI PROVIDERS</strong>: interface comum <code>AIProvider</code>, registro de providers e
+                  sessões com streaming, tool calls pelo Orchestrator, cancelamento, subagentes e uso de tokens.
+                </li>
+                <li>
+                  <strong>HISTORY</strong>: toda chamada de ferramenta é auditada, inclusive as feitas por IAs.
                 </li>
               </ul>
             </>
@@ -575,7 +620,7 @@ function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenPr
         <div>
           <h2>Próximas fases</h2>
           <ul>
-            <li>3–5 — AIProvider, OpenAI/Codex, Claude Code</li>
+            <li>4–5 — OpenAI/Codex, Claude Code</li>
             <li>6–7 — SQLite, memória, Context Builder, Handoff</li>
             <li>8–9 — Tasks, agentes, File Locks, autonomia</li>
             <li>10–11 — GitHub, otimização de tokens</li>

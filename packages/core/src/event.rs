@@ -5,7 +5,8 @@
 //! - [`StreamEvent`]: high-frequency live output; not durable by itself (the
 //!   runtime keeps bounded buffers that can be read back).
 
-use crate::ids::{EventId, ProcessId, TerminalId, ToolCallId};
+use crate::ids::{EventId, ProcessId, SessionId, TerminalId, ToolCallId};
+use crate::session::SessionEvent;
 use crate::tool::CallOrigin;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -35,6 +36,15 @@ pub enum EventKind {
     ProcessExited,
     /// The shell of a terminal ended (ADR-0005).
     TerminalExited,
+    /// A provider session was opened (ADR-0009).
+    SessionStarted,
+    /// A closed provider session was reopened (ADR-0009).
+    SessionResumed,
+    /// A provider session was closed (ADR-0009).
+    SessionClosed,
+    /// A session turn ended: status, duration, tool calls and token usage
+    /// (ADR-0009).
+    TurnCompleted,
 }
 
 /// A durable, provider-independent history entry.
@@ -85,7 +95,8 @@ pub enum OutputStream {
     Stderr,
 }
 
-/// Live output and lifecycle notifications of terminals and processes.
+/// Live output and lifecycle notifications of terminals, processes and
+/// provider sessions.
 ///
 /// `offset` is the byte offset of `data` in the whole output stream, the same
 /// coordinate used by `terminal.read` / `process.read` (`since`/`next`).
@@ -116,6 +127,13 @@ pub enum StreamEvent {
         exit_code: Option<i32>,
         /// True when the process ended because `process.stop` was called.
         stopped: bool,
+    },
+    /// Something happened in a provider session (ADR-0009). `seq` numbers
+    /// the session transcript (`session_get`).
+    Session {
+        session_id: SessionId,
+        seq: u64,
+        event: SessionEvent,
     },
 }
 
@@ -209,6 +227,30 @@ mod tests {
                 "offset": 7,
                 "data": "boom"
             })
+        );
+    }
+
+    #[test]
+    fn session_stream_event_nests_the_session_event() {
+        let event = StreamEvent::Session {
+            session_id: SessionId::from("s1"),
+            seq: 3,
+            event: SessionEvent::StatusChanged {
+                status: crate::session::SessionStatus::Idle,
+            },
+        };
+        assert_eq!(
+            serde_json::to_value(&event).unwrap(),
+            json!({
+                "type": "session",
+                "sessionId": "s1",
+                "seq": 3,
+                "event": {"type": "statusChanged", "status": "idle"}
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(EventKind::TurnCompleted).unwrap(),
+            json!("TURN_COMPLETED")
         );
     }
 

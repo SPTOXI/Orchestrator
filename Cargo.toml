@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "packages/core",
     "packages/git",
+    "packages/providers",
     "packages/runtime",
     "apps/desktop/src-tauri",
 ]
@@ -16,8 +17,10 @@ publish = false
 [workspace.dependencies]
 orchestrator-core = { path = "packages/core" }
 orchestrator-git = { path = "packages/git" }
+orchestrator-providers = { path = "packages/providers" }
 orchestrator-runtime = { path = "packages/runtime" }
 
+async-trait = "0.1"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
 libc = "0.2"
@@ -28,6 +31,7 @@ serde_json = "1"
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
+tokio-util = "0.7"
 uuid = { version = "1", features = ["serde", "v7"] }
 which = "8"
 

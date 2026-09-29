@@ -14,7 +14,9 @@ crate-type = ["rlib"]
 tauri-build.workspace = true
 
 [dependencies]
+async-trait.workspace = true
 orchestrator-core.workspace = true
+orchestrator-providers.workspace = true
 orchestrator-runtime.workspace = true
 parking_lot.workspace = true
 serde.workspace = true

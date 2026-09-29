@@ -13,5 +13,6 @@ adiciona algo fora dela, é registrada aqui **antes** de ser implementada.
 | [0006](./0006-ci-multiplataforma.md) | CI multiplataforma | Aceita |
 | [0007](./0007-git-via-cli-do-sistema.md) | Git via CLI do sistema | Aceita |
 | [0008](./0008-projeto-deteccao-e-diretorio-base.md) | Projeto: detecção no runtime, diretório base e ferramentas auxiliares | Aceita |
+| [0009](./0009-camada-de-providers-e-sessoes.md) | Camada de providers: `AIProvider`, registro e sessões | Aceita |
 
 Formato: Contexto → Decisão → Consequências.

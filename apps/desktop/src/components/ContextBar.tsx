@@ -16,13 +16,36 @@ interface Props {
   gitStatus: GitStatusWithRemotes | null;
   terminals: TerminalInfo[];
   processes: ProcessInfo[];
+  /** Active AI provider (null when none is registered). */
+  providerName: string | null;
+  /** Registered providers (null before loading). */
+  providerCount: number | null;
+  runningSessions: number;
 }
 
-export function ContextBar({ projectName, branch, gitStatus, terminals, processes }: Props) {
+export function ContextBar({
+  projectName,
+  branch,
+  gitStatus,
+  terminals,
+  processes,
+  providerName,
+  providerCount,
+  runningSessions,
+}: Props) {
   const openTerminals = terminals.filter((t) => t.alive).length;
   const running = processes.filter((p) => p.status === "running").length;
   const chips: Chip[] = [
-    { label: "Provider", value: "—", hint: "Providers de IA: Fases 3–5", pending: true },
+    {
+      label: "Provider",
+      value: providerName
+        ? `${providerName}${runningSessions > 0 ? ` · ${runningSessions} ${runningSessions === 1 ? "sessão ativa" : "sessões ativas"}` : ""}`
+        : "—",
+      hint: providerName
+        ? `Provider ativo de ${providerCount} registrado${providerCount === 1 ? "" : "s"} (painel AI PROVIDERS)`
+        : "Nenhum provider registrado: OpenAI/Codex (Fase 4) e Claude Code (Fase 5)",
+      pending: !providerName,
+    },
     { label: "Task", value: "—", hint: "Task Manager: Fase 8", pending: true },
     { label: "Agent", value: "—", hint: "Agent Manager: Fase 8", pending: true },
     { label: "Autonomia", value: "—", hint: "Assistido / Autônomo / Acesso Irrestrito: Fase 9", pending: true },

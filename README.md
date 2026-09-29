@@ -18,7 +18,7 @@ A arquitetura completa está em [`ARCHITECTURE.md`](./ARCHITECTURE.md). As
 decisões arquiteturais estão em [`docs/adr/`](./docs/adr) e o relatório de
 cada fase em [`docs/phases/`](./docs/phases).
 
-![Orchestrator — Git e diff (Fase 2)](./docs/assets/fase-2-git.png)
+![Orchestrator — sessão de provider com tool call (Fase 3)](./docs/assets/fase-3-sessao.png)
 
 ## Estado atual
 
@@ -27,8 +27,9 @@ cada fase em [`docs/phases/`](./docs/phases).
 | 0 | README, ARCHITECTURE, estrutura do monorepo | ✅ concluída |
 | 1 | Tauri + React + TypeScript + Rust; filesystem, shell, terminal, process manager | ✅ concluída |
 | 2 | Project Discovery, Project Profile, Git | ✅ concluída |
-| 3 | AIProvider, Provider Registry, Provider Sessions | ⏳ próxima |
-| 4–11 | Providers, memória, contexto, tasks/agentes, autonomia, GitHub, otimização | planejadas |
+| 3 | AIProvider, Provider Registry, Provider Sessions | ✅ concluída |
+| 4 | OpenAI / Codex provider | ⏳ próxima |
+| 5–11 | Claude Code, memória, contexto, tasks/agentes, autonomia, GitHub, otimização | planejadas |
 
 ## Estrutura do repositório
 
@@ -37,14 +38,15 @@ orchestrator/
 ├── apps/
 │   └── desktop/            # Tauri 2 + React + TypeScript (UI) e src-tauri (ponte IPC)
 ├── packages/
-│   ├── core/               # [Rust] contratos: ToolCall, ToolResult, eventos, ProjectProfile
+│   ├── core/               # [Rust] contratos: ToolCall, ToolResult, eventos, ProjectProfile,
+│   │                       #        sessões de provider
 │   ├── runtime/            # [Rust] Tool Runtime: filesystem, shell, terminal, processos,
 │   │                       #        projeto, git, package managers, runtimes
 │   ├── orchestrator/       # (Fases 7–8) Orchestrator Engine, Context Builder, Handoff
 │   ├── agents/             # (Fase 8) Agent Manager, subagentes, File Lock Manager
 │   ├── memory/             # (Fase 6) SQLite, memória L1/L2/L3, histórico, decisões
 │   ├── git/                # [Rust] Git local via `git` do sistema (GitHub na Fase 10)
-│   └── providers/
+│   └── providers/          # [Rust] AIProvider, Provider Registry, Provider Sessions
 │       ├── openai/         # (Fase 4) OpenAI / Codex
 │       └── claude/         # (Fase 5) Claude Code
 ├── docs/                   # ADRs, relatórios de fase, referência de IPC e ferramentas
@@ -88,7 +90,7 @@ pnpm build            # gera o executável/instalador de produção
 ## Como testar
 
 ```bash
-pnpm test             # testes Rust (core + runtime + desktop) e testes do frontend
+pnpm test             # testes Rust (core, git, runtime, providers, desktop) e do frontend
 pnpm test:rust        # somente cargo test --workspace
 pnpm test:web         # somente vitest
 pnpm typecheck        # checagem de tipos TypeScript
@@ -96,6 +98,27 @@ pnpm check            # typecheck + cargo fmt --check + cargo clippy -D warnings
 ```
 
 ## O que já funciona
+
+### Fase 3 — camada de providers
+
+- **Interface `AIProvider`** comum a qualquer IA: `start`, `resume`,
+  `execute`, `stream`, `cancel`, `spawnAgent`, `inspect`, `capabilities`. O
+  núcleo não conhece nenhum fornecedor.
+- **Provider Registry**: providers registrados, disponibilidade (versão,
+  autenticação), capacidades e provider ativo — trocar de provider fica
+  registrado (`PROVIDER_SWITCHED`).
+- **Provider Sessions**: a sessão pertence ao Orchestrator. Resposta em
+  streaming, um turno por vez, cancelamento, encerrar/retomar, subagentes
+  (com o mesmo provider ou delegando a outro) e uso de tokens/custo por turno
+  e por sessão.
+- **Tool calls pelo Orchestrator**: o provider nunca toca no sistema; pede a
+  ferramenta e o Tool Runtime executa, com a sessão e o provider registrados
+  como origem no HISTORY.
+- **Provider `echo`** (builds de desenvolvimento): sem IA, exercita tudo isso
+  no app — `/help`, `/tool filesystem.list {"path": "."}`, `/wait 10`,
+  `/fail`. OpenAI/Codex (Fase 4) e Claude Code (Fase 5) entram como adapters.
+
+Referência: [`docs/providers.md`](./docs/providers.md).
 
 ### Fase 2 — projeto e Git
 
@@ -132,8 +155,11 @@ pnpm check            # typecheck + cargo fmt --check + cargo clippy -D warnings
   (`TOOL_CALLED`, `COMMAND_EXECUTED`, `FILE_CHANGED`, …), exibidos no painel
   HISTORY e gravados em `audit.jsonl` no diretório de dados do app.
 
+![Git e diff](./docs/assets/fase-2-git.png)
+
 ![PROJECT PROFILE](./docs/assets/fase-2-perfil.png)
 
 A referência completa das ferramentas está em
-[`docs/tool-runtime.md`](./docs/tool-runtime.md) e a camada IPC em
+[`docs/tool-runtime.md`](./docs/tool-runtime.md), a camada de providers em
+[`docs/providers.md`](./docs/providers.md) e a camada IPC em
 [`docs/ipc.md`](./docs/ipc.md).

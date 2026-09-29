@@ -14,7 +14,9 @@ function originLabel(event: AuditEvent): string {
     case "user":
       return "usuário";
     case "agent":
-      return `agente ${event.origin.agentId}`;
+      return event.origin.provider
+        ? `IA ${event.origin.provider} · sessão …${(event.origin.sessionId ?? event.origin.agentId).slice(-6)}`
+        : `agente ${event.origin.agentId}`;
     case "system":
       return "sistema";
   }
@@ -38,6 +40,11 @@ const KIND_FILTERS: Array<{ value: EventKind | ""; label: string }> = [
   { value: "PROJECT_OPENED", label: "PROJECT_OPENED" },
   { value: "GIT_COMMIT", label: "GIT_COMMIT" },
   { value: "GIT_PUSH", label: "GIT_PUSH" },
+  { value: "PROVIDER_SWITCHED", label: "PROVIDER_SWITCHED" },
+  { value: "SESSION_STARTED", label: "SESSION_STARTED" },
+  { value: "SESSION_RESUMED", label: "SESSION_RESUMED" },
+  { value: "SESSION_CLOSED", label: "SESSION_CLOSED" },
+  { value: "TURN_COMPLETED", label: "TURN_COMPLETED" },
 ];
 
 interface Props {

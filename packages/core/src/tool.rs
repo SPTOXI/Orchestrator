@@ -4,7 +4,7 @@
 //! [`ToolCall`]; the Orchestrator executes it through the Tool Runtime and
 //! answers with a [`ToolResult`].
 
-use crate::ids::ToolCallId;
+use crate::ids::{ProviderId, SessionId, ToolCallId};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -20,10 +20,31 @@ use std::fmt;
 pub enum CallOrigin {
     /// The human user, through the desktop UI.
     User,
-    /// An AI agent (Phase 8+).
-    Agent { agent_id: String },
+    /// An AI agent. Until the Agent Manager (Phase 8) each provider session
+    /// acts as its own agent: `agent_id` is the session id (ADR-0009).
+    Agent {
+        agent_id: String,
+        /// Provider session that produced the call.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_id: Option<SessionId>,
+        /// Provider behind the session.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider: Option<ProviderId>,
+    },
     /// The Orchestrator itself (e.g. shutdown cleanup).
     System,
+}
+
+impl CallOrigin {
+    /// Origin of a call made by a provider session (Phase 3: the session is
+    /// the agent).
+    pub fn session(session_id: &SessionId, provider: &ProviderId) -> Self {
+        Self::Agent {
+            agent_id: session_id.to_string(),
+            session_id: Some(session_id.clone()),
+            provider: Some(provider.clone()),
+        }
+    }
 }
 
 /// A request to execute one tool of the runtime catalog, e.g. `filesystem.read`.
@@ -73,6 +94,9 @@ pub enum ToolErrorKind {
     /// An external command (e.g. `git`) ran and reported failure; the
     /// message carries its output.
     CommandFailed,
+    /// Not executed: the agent turn that asked for it was cancelled
+    /// (ADR-0009).
+    Cancelled,
     /// Unexpected internal failure.
     Internal,
 }
@@ -171,10 +195,34 @@ mod tests {
         );
         assert_eq!(
             serde_json::to_value(CallOrigin::Agent {
-                agent_id: "a1".into()
+                agent_id: "a1".into(),
+                session_id: None,
+                provider: None,
             })
             .unwrap(),
             json!({"type": "agent", "agentId": "a1"})
+        );
+        assert_eq!(
+            serde_json::to_value(CallOrigin::session(
+                &SessionId::from("s1"),
+                &ProviderId::from("echo")
+            ))
+            .unwrap(),
+            json!({"type": "agent", "agentId": "s1", "sessionId": "s1", "provider": "echo"})
+        );
+    }
+
+    #[test]
+    fn agent_origin_without_session_still_parses() {
+        let origin: CallOrigin =
+            serde_json::from_value(json!({"type": "agent", "agentId": "a1"})).unwrap();
+        assert_eq!(
+            origin,
+            CallOrigin::Agent {
+                agent_id: "a1".into(),
+                session_id: None,
+                provider: None
+            }
         );
     }
 

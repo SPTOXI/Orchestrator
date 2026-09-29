@@ -25,11 +25,12 @@ estrutural é registrada antes como ADR em [`docs/adr/`](./docs/adr).
 │            MEMORY · HISTORY                                           │
 └───────────────▲──────────────────────────────┬───────────────────────┘
                 │ eventos (runtime://stream,    │ invoke (runtime_invoke,
-                │          runtime://audit)     │  terminal_input, …)
+                │          runtime://audit)     │  terminal_input, session_*, …)
 ┌───────────────┴──────────────────────────────▼───────────────────────┐
 │ Tauri (ponte IPC, sem lógica de domínio)   apps/desktop/src-tauri    │
 └───────────────▲──────────────────────────────┬───────────────────────┘
-                │ EventSink                     │ ToolRuntime::invoke(ToolCall)
+                │ EventSink                     │ ToolRuntime::invoke(ToolCall),
+                │                               │ SessionManager (providers)
 ┌───────────────┴──────────────────────────────▼───────────────────────┐
 │ Rust Runtime                                                          │
 │   Tool Runtime (packages/runtime)                                     │
@@ -37,8 +38,9 @@ estrutural é registrada antes como ADR em [`docs/adr/`](./docs/adr).
 │     git (Fase 2) · github (Fase 10) · package managers · runtimes     │
 ├───────────────────────────────────────────────────────────────────────┤
 │ Orchestrator Core                                                     │
-│   core (contratos)  · orchestrator engine · agent manager ·           │
-│   task manager · context builder · memory/history · provider layer    │
+│   core (contratos)  · provider layer (Fase 3: AIProvider, registro,   │
+│   sessões) · orchestrator engine · agent manager · task manager ·     │
+│   context builder · memory/history                                    │
 ├───────────────────────────────────────────────────────────────────────┤
 │ Local Database (SQLite, Fase 6)                                       │
 └───────────────────────────────────────────────────────────────────────┘
@@ -68,13 +70,13 @@ apenas apresentação.
 
 | Módulo | Local | Linguagem | Fase | Estado |
 | ------ | ----- | --------- | ---- | ------ |
-| Desktop UI | `apps/desktop/src` | React/TS | 1–2 | ✅ shell, PROJECT, GIT, terminal, processos, HISTORY |
-| Ponte IPC | `apps/desktop/src-tauri` | Rust | 1 | ✅ |
-| Core (contratos) | `packages/core` | Rust | 1–2 | ✅ `ToolCall`, `ToolResult`, `AuditEvent`, `StreamEvent`, `EventSink`, `ProjectProfile` |
+| Desktop UI | `apps/desktop/src` | React/TS | 1–3 | ✅ shell, PROJECT, AI PROVIDERS + sessões, GIT, terminal, processos, HISTORY |
+| Ponte IPC | `apps/desktop/src-tauri` | Rust | 1–3 | ✅ |
+| Core (contratos) | `packages/core` | Rust | 1–3 | ✅ `ToolCall`, `ToolResult`, `AuditEvent`, `StreamEvent`, `EventSink`, `ProjectProfile`, `SessionInfo`, `SessionEvent`, `TokenUsage` |
 | Tool Runtime | `packages/runtime` | Rust | 1–2 | ✅ filesystem, shell, terminal, process, project, git, package, runtime |
 | Git local | `packages/git` | Rust | 2 | ✅ `git` do sistema (ADR-0007) |
 | Project Discovery / Profile | `packages/core` (tipos) + `packages/runtime` (detecção) | Rust | 2 | ✅ (ADR-0008) |
-| AIProvider / Registry / Sessions | `packages/providers` | Rust | 3 | planejado |
+| AIProvider / Registry / Sessions | `packages/providers` | Rust | 3 | ✅ trait, registro, sessões, provider `echo` de desenvolvimento (ADR-0009) |
 | OpenAI / Codex | `packages/providers/openai` | Rust | 4 | planejado |
 | Claude Code | `packages/providers/claude` | Rust | 5 | planejado |
 | SQLite, Memory, History, Decisions | `packages/memory` | Rust | 6 | planejado |
@@ -170,8 +172,11 @@ Falhas do Git viram `COMMAND_FAILED` com a saída do comando.
 
 ### 4.5 Autonomia e o runtime
 
-Na Fase 1 não há provider conectado: o único chamador é o usuário, pela UI.
-O `ToolRuntime::invoke` é o ponto onde, na Fase 9, entra o gate de autonomia:
+Desde a Fase 3 há dois chamadores: o usuário, pela UI, e as sessões de
+provider, por `TurnContext::call_tool` → `ToolRuntime::invoke` (origem
+`agent`). Até a Fase 9 as chamadas de IA são executadas sem gate, com
+auditoria completa. O caminho `call_tool` → `invoke` é o ponto onde, na
+Fase 9, entra o gate de autonomia:
 
 | Modo | Comportamento no gate |
 | ---- | --------------------- |
@@ -186,15 +191,20 @@ a conter fora do gate explícito da Fase 9.
 ## 5. Contratos e eventos (packages/core)
 
 - `ToolCall`, `ToolResult`, `ToolError`, `ToolErrorKind`, `CallOrigin`
-  (`user` | `agent` | `system`), `ToolSpec`.
+  (`user` | `agent { agentId, sessionId?, provider? }` | `system`), `ToolSpec`.
+- `SessionInfo`, `SessionEvent`, `SessionLogEntry`, `TokenUsage`,
+  `SessionStatus`, `TurnStatus`, ids `SessionId`/`TurnId`/`ProviderId` —
+  contratos das sessões de provider (Fase 3, ADR-0009).
 - `ProjectProfile`, `ProjectCandidate`, `GitSummary` — contratos do projeto
   (Fase 2).
 - `AuditEvent { id, at, kind, origin, summary, data }` — histórico durável,
   independente de provider. `EventKind` contém todos os eventos da seção 22 do
   documento mestre, mais `PROCESS_EXITED` e `TERMINAL_EXITED`
-  ([ADR-0005](./docs/adr/0005-observabilidade-antes-do-sqlite.md)).
+  ([ADR-0005](./docs/adr/0005-observabilidade-antes-do-sqlite.md)) e
+  `SESSION_STARTED`, `SESSION_RESUMED`, `SESSION_CLOSED`, `TURN_COMPLETED`
+  ([ADR-0009](./docs/adr/0009-camada-de-providers-e-sessoes.md)).
 - `StreamEvent` — eventos de alta frequência e não duráveis (saída de
-  terminal/processo, término).
+  terminal/processo, término, eventos de sessão de provider).
 - `EventSink` — trait que desacopla o runtime de quem consome eventos (Tauri
   hoje; SQLite na Fase 6).
 
@@ -214,10 +224,12 @@ Detalhada em [`docs/ipc.md`](./docs/ipc.md) e
 | `history_recent(limit)` | eventos de auditoria recentes |
 | `app_info()` | versão, SO, diretórios, projeto aberto |
 | `pick_folder()` | seletor nativo de pasta (só UI; a pasta escolhida é aberta via `project.open`) |
+| `providers_list`, `provider_inspect`, `provider_select` | registro de providers e provider ativo (Fase 3) |
+| `sessions_list`, `session_start`, `session_get`, `session_send`, `session_cancel`, `session_close`, `session_resume`, `session_spawn` | sessões de provider (Fase 3) |
 
 | Evento Tauri | Payload |
 | ------------ | ------- |
-| `runtime://stream` | `StreamEvent` (saída/término de terminal e processo) |
+| `runtime://stream` | `StreamEvent` (saída/término de terminal e processo, eventos de sessão) |
 | `runtime://audit` | `AuditEvent` |
 
 ## 7. Modelo de dados planejado (Fase 6)
@@ -252,10 +264,27 @@ interface AIProvider {
 }
 ```
 
-Implementado como trait Rust em `packages/providers`, com adapters
-independentes (`openai`, `claude`). Nenhuma chamada específica de fornecedor
-fora do adapter. Novos providers (Gemini, modelos locais) entram como novos
-crates sem alterar o núcleo.
+Implementado na Fase 3 como trait Rust em `packages/providers`
+([ADR-0009](./docs/adr/0009-camada-de-providers-e-sessoes.md), referência em
+[`docs/providers.md`](./docs/providers.md)):
+
+- **`AIProvider`** — os oito métodos acima (+ `descriptor`), com padrões
+  sensatos para `stream`, `resume`, `cancel` e `spawn_agent`.
+- **`ProviderRegistry`** — providers registrados, provider ativo,
+  `PROVIDER_SWITCHED`.
+- **`SessionManager`** — a sessão pertence ao Orchestrator: um turno por vez,
+  transcript numerado, uso de tokens/custo, cancelamento com prazo,
+  encerrar/retomar, subagentes (mesmo provider ou outro), eventos ao vivo e
+  histórico.
+- **`TurnContext::call_tool`** — única saída do provider para o sistema; o
+  Orchestrator executa pelo Tool Runtime com a sessão como origem.
+- **`echo`** — provider de desenvolvimento sem IA, para testes e builds de
+  desenvolvimento.
+
+Adapters independentes (`openai` na Fase 4, `claude` na Fase 5) entram como
+crates em `packages/providers/*`. Nenhuma chamada específica de fornecedor
+fora do adapter. Novos providers (Gemini, modelos locais) entram da mesma
+forma, sem alterar o núcleo.
 
 ## 10. Plataformas
 
