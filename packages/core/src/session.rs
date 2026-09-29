@@ -5,7 +5,8 @@
 //! only holds a native session (e.g. an API conversation) referenced by
 //! [`SessionInfo::native_ref`].
 
-use crate::ids::{ProviderId, SessionId, TurnId};
+use crate::context::ContextSummary;
+use crate::ids::{HandoffId, ProviderId, SessionId, TurnId};
 use crate::tool::{ToolCall, ToolResult};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -170,6 +171,21 @@ pub enum SessionEvent {
         provider: ProviderId,
         title: String,
     },
+    /// Project context was attached to this turn (ADR-0013); the text went
+    /// to the provider, the transcript keeps the summary.
+    ContextAttached {
+        turn_id: TurnId,
+        summary: ContextSummary,
+    },
+    /// The work passed from one session to another through a handoff
+    /// (ADR-0013). Recorded in both sessions.
+    HandedOff {
+        handoff_id: HandoffId,
+        from_session: SessionId,
+        to_session: SessionId,
+        /// Provider of the session that took over.
+        provider: ProviderId,
+    },
 }
 
 impl SessionEvent {
@@ -182,9 +198,12 @@ impl SessionEvent {
             | Self::ToolCallRequested { turn_id, .. }
             | Self::ToolCallCompleted { turn_id, .. }
             | Self::Usage { turn_id, .. }
-            | Self::TurnCompleted { turn_id, .. } => Some(turn_id),
+            | Self::TurnCompleted { turn_id, .. }
+            | Self::ContextAttached { turn_id, .. } => Some(turn_id),
             Self::Notice { turn_id, .. } => turn_id.as_ref(),
-            Self::StatusChanged { .. } | Self::SubagentSpawned { .. } => None,
+            Self::StatusChanged { .. } | Self::SubagentSpawned { .. } | Self::HandedOff { .. } => {
+                None
+            }
         }
     }
 }

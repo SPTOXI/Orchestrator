@@ -3,8 +3,9 @@
 
 use chrono::{Duration, Utc};
 use orchestrator_core::{
-    AuditEvent, CallOrigin, EventKind, SessionEvent, SessionId, SessionInfo, SessionLogEntry,
-    SessionStatus, TokenUsage, ToolCallId, TurnId,
+    AuditEvent, CallOrigin, EventKind, Handoff, HandoffEnd, HandoffId, HandoffPacket,
+    HandoffStatus, SessionEvent, SessionId, SessionInfo, SessionLogEntry, SessionStatus,
+    TokenUsage, ToolCallId, TurnId,
 };
 use orchestrator_memory::{
     DecisionInput, DecisionStatus, HistoryQuery, MemoryInput, MemoryKind, MemoryStore,
@@ -688,4 +689,239 @@ fn an_unusable_file_falls_back_to_memory() {
     assert!(store.path().is_none());
     record(&store, &opened("/p/a", "a", &[]));
     assert_eq!(store.projects_recent(5).len(), 1);
+}
+
+fn entry(seq: u64, event: SessionEvent) -> SessionLogEntry {
+    SessionLogEntry {
+        seq,
+        at: Utc::now(),
+        event,
+    }
+}
+
+#[test]
+fn handoffs_and_the_facts_of_a_session() {
+    let store = MemoryStore::in_memory();
+    record(&store, &opened("/p/saas", "saas", &["TypeScript"]));
+    let project = store.current_project().unwrap().id;
+
+    // Before the session: not part of its facts.
+    record(
+        &store,
+        &event(
+            EventKind::CommandExecuted,
+            CallOrigin::User,
+            "antes",
+            json!({"command": "ls", "exitCode": 0}),
+        ),
+    );
+    std::thread::sleep(std::time::Duration::from_millis(5));
+
+    let session = SessionId::new();
+    let mut info = session_info(&session, "/p/saas", "Pagamentos");
+    info.created_at = Utc::now();
+    store
+        .session_save(&StoredSession {
+            info,
+            native: json!({}),
+            spec: json!({}),
+        })
+        .unwrap();
+    store
+        .session_append(
+            &session,
+            &[
+                entry(
+                    1,
+                    SessionEvent::TurnStarted {
+                        turn_id: TurnId::new(),
+                        input: "Implementar pagamentos Stripe".into(),
+                    },
+                ),
+                entry(
+                    2,
+                    SessionEvent::TurnStarted {
+                        turn_id: TurnId::new(),
+                        input: "agora o webhook".into(),
+                    },
+                ),
+            ],
+        )
+        .unwrap();
+    let agent = CallOrigin::session(&session, &"nuvem".into());
+    for (kind, origin, data) in [
+        (
+            EventKind::FileChanged,
+            agent.clone(),
+            json!({"path": "/p/saas/src/pay.ts", "change": "modified"}),
+        ),
+        (
+            EventKind::FileChanged,
+            agent.clone(),
+            json!({"path": "/p/saas/src/pay.ts", "change": "modified"}),
+        ),
+        (
+            EventKind::ToolCalled,
+            agent.clone(),
+            json!({"tool": "filesystem.read", "ok": false, "error": {"message": "not found"}}),
+        ),
+        // The user, in the terminal, while the session was open.
+        (
+            EventKind::CommandExecuted,
+            CallOrigin::User,
+            json!({"command": "pnpm test", "exitCode": 1, "stderrTail": "1 falha"}),
+        ),
+    ] {
+        record(&store, &event(kind, origin, "x", data));
+    }
+    // Another session's work is not part of it.
+    record(
+        &store,
+        &event(
+            EventKind::FileChanged,
+            CallOrigin::session(&SessionId::new(), &"nuvem".into()),
+            "x",
+            json!({"path": "/p/saas/outro.ts", "change": "created"}),
+        ),
+    );
+
+    let facts = store.session_facts(session.as_str()).unwrap();
+    assert_eq!(facts.project_id.as_deref(), Some(project.as_str()));
+    assert_eq!(
+        facts.inputs,
+        ["Implementar pagamentos Stripe", "agora o webhook"]
+    );
+    let files: Vec<_> = facts.files.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(files, ["/p/saas/src/pay.ts"]);
+    let commands: Vec<_> = facts
+        .commands
+        .iter()
+        .map(|c| (c.command.as_str(), c.exit_code, c.by.as_str()))
+        .collect();
+    assert_eq!(commands, [("pnpm test", Some(1), "user")]);
+    let errors: Vec<_> = facts
+        .errors
+        .iter()
+        .map(|e| (e.kind, e.detail.as_deref()))
+        .collect();
+    assert_eq!(
+        errors,
+        [
+            (EventKind::CommandExecuted, Some("1 falha")),
+            (EventKind::ToolCalled, Some("not found"))
+        ]
+    );
+    assert!(store.session_facts("nope").is_err());
+    assert_eq!(
+        store.session_project_id(session.as_str()).as_deref(),
+        Some(project.as_str())
+    );
+
+    // Handoffs: saved, listed, found by L3 and accepted once.
+    let from = HandoffEnd {
+        session_id: session.clone(),
+        provider: "nuvem".into(),
+        model: Some("gpt-medio".into()),
+        title: "Pagamentos".into(),
+    };
+    let handoff = Handoff {
+        id: HandoffId::new(),
+        project_id: Some(project.clone()),
+        project_path: "/p/saas".into(),
+        from,
+        to: None,
+        packet: HandoffPacket {
+            goal: "Implementar pagamentos Stripe".into(),
+            status: "50% concluído".into(),
+            remaining: vec!["webhook".into(), "cancelamento".into()],
+            next_action: "Validar a assinatura do webhook".into(),
+            ..Default::default()
+        },
+        status: HandoffStatus::Created,
+        by_agent: true,
+        created_at: Utc::now(),
+        accepted_at: None,
+    };
+    store.handoff_save(&handoff).unwrap();
+    assert_eq!(store.handoff(handoff.id.as_str()).unwrap(), handoff);
+    assert_eq!(
+        store.handoffs_list(Some(&project), 10),
+        std::slice::from_ref(&handoff)
+    );
+    assert!(store.handoffs_list(Some("outro"), 10).is_empty());
+    let hits = store
+        .search_related(&project, "assinatura do webhook", &["handoff"], 5)
+        .unwrap();
+    assert_eq!(
+        (hits[0].kind.as_str(), hits[0].ref_id.as_str()),
+        ("handoff", handoff.id.as_str())
+    );
+
+    let to = HandoffEnd {
+        session_id: SessionId::new(),
+        provider: "local".into(),
+        model: None,
+        title: "Handoff: pagamentos".into(),
+    };
+    let accepted = store
+        .handoff_accept(handoff.id.as_str(), to.clone(), Utc::now())
+        .unwrap();
+    assert_eq!(accepted.status, HandoffStatus::Accepted);
+    assert_eq!(accepted.to.as_ref(), Some(&to));
+    assert_eq!(store.handoff(handoff.id.as_str()).unwrap(), accepted);
+    let again = store
+        .handoff_accept(handoff.id.as_str(), to, Utc::now())
+        .unwrap_err();
+    assert!(
+        again.contains("já foi assumido por Handoff: pagamentos"),
+        "{again}"
+    );
+    assert!(store
+        .handoff_accept("nope", accepted.from.clone(), Utc::now())
+        .is_err());
+}
+
+#[test]
+fn related_search_matches_any_significant_word() {
+    let store = MemoryStore::in_memory();
+    record(&store, &opened("/p/saas", "saas", &[]));
+    let project = store.current_project().unwrap().id;
+    for (title, content) in [
+        (
+            "Webhooks",
+            "Toda chamada do Stripe é validada pela assinatura.",
+        ),
+        ("Filas", "Usamos Redis Streams para e-mails."),
+    ] {
+        store
+            .memory_save(
+                MemoryInput {
+                    id: None,
+                    project_id: project.clone(),
+                    kind: MemoryKind::Rule,
+                    title: title.into(),
+                    content: content.into(),
+                    tags: vec![],
+                    pinned: false,
+                },
+                &CallOrigin::User,
+            )
+            .unwrap();
+    }
+    // All words must match in `search`; any does in `search_related`.
+    let task = "Corrija a validação do webhook de pagamentos";
+    assert!(store.search(&project, task, 10).unwrap().is_empty());
+    let hits = store
+        .search_related(&project, task, &["memory"], 10)
+        .unwrap();
+    let titles: Vec<_> = hits.iter().map(|h| h.title.as_str()).collect();
+    assert_eq!(titles, ["Webhooks"]);
+    assert!(store
+        .search_related(&project, task, &["decision"], 10)
+        .unwrap()
+        .is_empty());
+    assert!(store
+        .search_related(&project, "e o", &[], 10)
+        .unwrap()
+        .is_empty());
 }

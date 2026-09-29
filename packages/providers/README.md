@@ -8,6 +8,7 @@
 AIProvider: start · resume · execute · stream · cancel · spawnAgent · inspect · capabilities
             complete (Fase 5: resposta avulsa, sem sessão nem ferramentas; usada pelo Conselho)
             snapshot (Fase 6: estado da sessão nativa para retomar após reiniciar)
+TurnInput.context (Fase 7: contexto do projeto no primeiro turno, via ContextSource)
 ```
 
 | Módulo | Conteúdo |
@@ -15,7 +16,8 @@ AIProvider: start · resume · execute · stream · cancel · spawnAgent · insp
 | `provider.rs` | trait `AIProvider`, `ProviderDescriptor`, `ProviderCapabilities`, `ProviderStatus`, `NativeSession`, `SessionSpec`, `CompletionRequest`/`Completion` |
 | `context.rs` | `TurnContext` (saída, uso, cancelamento, `call_tool`) e `ToolExecutor` |
 | `registry.rs` | `ProviderRegistry` (registro, `replace`/`unregister`, provider ativo, `PROVIDER_SWITCHED`) |
-| `manager.rs` | `SessionManager` (sessões, turnos, transcript, uso, cancelar, encerrar/retomar, subagentes; provider resolvido pelo registro a cada turno) |
+| `manager.rs` | `SessionManager` (sessões, turnos, transcript, uso, cancelar, encerrar/retomar, subagentes; provider resolvido pelo registro a cada turno; contexto do projeto no primeiro turno e `annotate`) |
+| `project_context.rs` | trait `ContextSource`, `ContextOptions`, `ContextRequest`, `AttachedContext` (Fase 7: quem monta o contexto é o `orchestrator-engine`) |
 | `log.rs` | transcript numerado com fusão de trechos e limite; restauração a partir do banco |
 | `store.rs` | trait `SessionStore` e `PersistedSession` (Fase 6: sessões e transcripts entre execuções; o app usa o banco local) e `MemorySessionStore` para testes |
 | `echo.rs` | provider de desenvolvimento sem IA |

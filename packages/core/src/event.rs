@@ -64,6 +64,9 @@ pub enum EventKind {
     MemoryRemoved,
     /// A project decision was recorded or changed status (ADR-0012).
     DecisionSaved,
+    /// Project context was attached to a session: sections, estimated
+    /// tokens and what was left out, never the text (ADR-0013).
+    ContextBuilt,
 }
 
 /// A durable, provider-independent history entry.

@@ -2,11 +2,13 @@ import { type MouseEvent as ReactMouseEvent, type ReactNode, useCallback, useEff
 import { CommandPanel } from "./components/CommandPanel";
 import { ConnectionEditor } from "./components/ConnectionEditor";
 import { ContextBar } from "./components/ContextBar";
+import { type ContextTabRequest, ContextView } from "./components/ContextView";
 import { CouncilEditor } from "./components/CouncilEditor";
 import { DiffView } from "./components/DiffView";
 import { DiscoveryView } from "./components/DiscoveryView";
 import { FileEditor } from "./components/FileEditor";
 import { GitPanel } from "./components/GitPanel";
+import { HandoffView } from "./components/HandoffView";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { MemoryPanel } from "./components/MemoryPanel";
 import { type MemorySection, MemoryView } from "./components/MemoryView";
@@ -58,7 +60,9 @@ type Tab =
   /** Pick a model with the router / Council; `deliberation` from the history. */
   | { id: "route"; kind: "route"; deliberation: Deliberation | null }
   /** Project memory; `nonce` changes when the sidebar asks again. */
-  | { id: "memory"; kind: "memory"; section: MemorySection; query: string; nonce: number };
+  | { id: "memory"; kind: "memory"; section: MemorySection; query: string; nonce: number }
+  | { id: "context"; kind: "context"; request: ContextTabRequest; nonce: number }
+  | { id: string; kind: "handoff"; sessionId: string | null; handoffId: string | null };
 
 const ACTIVITIES: Array<{ id: PanelId; label: string; icon: () => ReactNode }> = [
   { id: "project", label: "PROJECT", icon: FolderIcon },
@@ -108,6 +112,10 @@ function tabTitle(tab: Tab, sessions: Map<string, SessionInfo>, connections: Con
       return "Nova sessão · Conselho";
     case "memory":
       return "Memória do projeto";
+    case "context":
+      return "Contexto do projeto";
+    case "handoff":
+      return "Handoff";
     case "connection":
       if (!tab.connectionId) return "Nova API";
       return `API · ${connections?.connections.find((c) => c.connection.id === tab.connectionId)?.connection.name ?? tab.connectionId}`;
@@ -223,6 +231,17 @@ export function App() {
     }
   };
   const openCouncil = () => showTab({ id: "council", kind: "council" });
+  /** The context tab is reused; each request refreshes it. */
+  const openContext = (request: ContextTabRequest) => {
+    const tab = { id: "context" as const, kind: "context" as const, request, nonce: Date.now() };
+    setTabs((all) => (all.some((t) => t.id === "context") ? all.map((t) => (t.id === "context" ? tab : t)) : [...all, tab]));
+    setActiveTab("context");
+  };
+  /** One handoff tab per source session (new) or saved handoff. */
+  const openHandoff = (target: { sessionId?: string; handoffId?: string }) => {
+    const id = target.handoffId ? `handoff:${target.handoffId}` : `handoff:new:${target.sessionId}`;
+    showTab({ id, kind: "handoff", sessionId: target.sessionId ?? null, handoffId: target.handoffId ?? null });
+  };
   /** The route tab is reused; opening a past deliberation shows it there. */
   /** The memory tab is reused; the sidebar picks its section. */
   const openMemory = (section: MemorySection, query = "") => {
@@ -360,7 +379,7 @@ export function App() {
             title="Agents"
             phase="Fase 8"
             description="Agentes são temporários; o conhecimento fica no projeto."
-            items={["Agent Manager e subagentes", "File Lock Manager", "Handoff entre IAs (Fase 7)"]}
+            items={["Agent Manager e subagentes", "File Lock Manager", "Handoff automático ao fim de um agente"]}
           />
         );
       case "terminal":
@@ -544,7 +563,10 @@ export function App() {
                       session={session}
                       parent={session?.parentId ? (sessionsById.get(session.parentId) ?? null) : null}
                       providers={providers.view?.providers ?? []}
+                      sessionTitle={(id) => sessionsById.get(id)?.title ?? null}
                       onOpenSession={openSession}
+                      onOpenContext={openContext}
+                      onOpenHandoff={(sessionId) => openHandoff({ sessionId })}
                     />
                   );
                 }
@@ -586,6 +608,29 @@ export function App() {
                       onOpenFile={(path) =>
                         openFile(/^([a-zA-Z]:)?[\\/]/.test(path) || !profile ? path : joinPath(profile.path, path))
                       }
+                      onOpenHandoff={(handoffId) => openHandoff({ handoffId })}
+                    />
+                  );
+                case "context":
+                  return (
+                    <ContextView key={tab.id} ready={ready} active={active} request={tab.request} nonce={tab.nonce} />
+                  );
+                case "handoff":
+                  return (
+                    <HandoffView
+                      key={tab.id}
+                      ready={ready}
+                      active={active}
+                      sessionId={tab.sessionId}
+                      handoffId={tab.handoffId}
+                      sessions={sessionsById}
+                      providers={providers.view?.providers ?? []}
+                      onSaved={() => void memory.refresh()}
+                      onOpenSession={(id) => {
+                        void providers.refresh();
+                        openSession(id);
+                      }}
+                      onOpenContext={openContext}
                     />
                   );
                 case "route":
@@ -730,6 +775,10 @@ function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenPr
                   sessões e conversas que continuam depois de reiniciar o app.
                 </li>
                 <li>
+                  <strong>Contexto e handoff</strong>: cada sessão recebe o essencial do projeto num orçamento de
+                  tokens, as IAs consultam e registram memória, e uma IA passa o trabalho para outra sem a conversa.
+                </li>
+                <li>
                   <strong>HISTORY</strong>: toda chamada de ferramenta é auditada, inclusive as feitas por IAs.
                 </li>
               </ul>
@@ -739,8 +788,8 @@ function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenPr
         <div>
           <h2>Próximas fases</h2>
           <ul>
-            <li>7 — Context Builder e Handoff</li>
-            <li>8–9 — Tasks, agentes, File Locks, autonomia</li>
+            <li>8 — Tasks, agentes, subagentes e File Locks</li>
+            <li>9 — Autonomia (Assistido, Autônomo, Irrestrito)</li>
             <li>10–11 — GitHub, otimização de tokens</li>
           </ul>
         </div>

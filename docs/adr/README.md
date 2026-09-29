@@ -17,5 +17,6 @@ adiciona algo fora dela, é registrada aqui **antes** de ser implementada.
 | [0010](./0010-providers-por-api-com-cadastro-livre.md) | Providers por API com cadastro livre e nova ordem das Fases 4–5 | Aceita |
 | [0011](./0011-roteador-de-modelos-e-conselho.md) | Roteador de modelos e Conselho de IAs | Aceita |
 | [0012](./0012-sqlite-memoria-e-historico.md) | SQLite, memória do projeto e histórico | Aceita |
+| [0013](./0013-context-builder-e-handoff.md) | Context Builder e Handoff entre IAs | Aceita |
 
 Formato: Contexto → Decisão → Consequências.

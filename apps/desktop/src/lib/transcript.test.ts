@@ -104,6 +104,18 @@ describe("transcript", () => {
     expect(t.items.map((i) => i.kind)).toEqual(["subagent", "notice"]);
   });
 
+  it("records the attached context and handoffs", () => {
+    const summary = { tokens: 420, budget: 1500, sections: [], omitted: [], handoffId: "h1" };
+    const t = apply([
+      { type: "handedOff", handoffId: "h1", fromSession: "s1", toSession: "s2", provider: "echo" },
+      { type: "turnStarted", turnId: "t1", input: "continue" },
+      { type: "contextAttached", turnId: "t1", summary },
+    ]);
+    expect(t.items.map((i) => i.kind)).toEqual(["handoff", "user", "context"]);
+    expect(t.items[0]).toMatchObject({ fromSession: "s1", toSession: "s2" });
+    expect(t.items[2]).toMatchObject({ kind: "context", summary: { tokens: 420 } });
+  });
+
   it("formats usage", () => {
     expect(formatUsage(usage)).toBe("7 tokens (3 in / 4 out) · estimado");
     expect(formatUsage({ ...usage, inputTokens: 1, outputTokens: 0, estimated: false, costUsd: 0.0123 })).toBe(

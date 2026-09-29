@@ -19,7 +19,7 @@ A arquitetura completa está em [`ARCHITECTURE.md`](./ARCHITECTURE.md). As
 decisões arquiteturais estão em [`docs/adr/`](./docs/adr) e o relatório de
 cada fase em [`docs/phases/`](./docs/phases).
 
-![Orchestrator — memória do projeto: sessões, arquivos, comandos e erros recentes (Fase 6)](./docs/assets/fase-6-memoria.png)
+![Orchestrator — handoff: o pacote da sessão revisado antes de passar o trabalho para outra IA (Fase 7)](./docs/assets/fase-7-handoff.png)
 
 ## Estado atual
 
@@ -32,8 +32,9 @@ cada fase em [`docs/phases/`](./docs/phases).
 | 4 | Providers por API com cadastro livre (OpenAI e compatíveis, Anthropic, Gemini, qualquer API por perfil) | ✅ concluída |
 | 5 | Roteador de modelos e Conselho de IAs (modos Sugerir e Full) | ✅ concluída |
 | 6 | SQLite, memória L1/L2/L3, histórico e decisões | ✅ concluída |
-| 7 | Context Builder e Handoff entre IAs | ⏳ próxima |
-| 8–11 | tasks/agentes, autonomia, GitHub, otimização | planejadas |
+| 7 | Context Builder e Handoff entre IAs | ✅ concluída |
+| 8 | Task Manager, agentes e subagentes, File Locks | ⏳ próxima |
+| 9–11 | autonomia, GitHub, otimização | planejadas |
 
 A ordem das Fases 4–5 foi redefinida na
 [ADR-0010](./docs/adr/0010-providers-por-api-com-cadastro-livre.md):
@@ -50,7 +51,8 @@ orchestrator/
 │   │                       #        sessões de provider
 │   ├── runtime/            # [Rust] Tool Runtime: filesystem, shell, terminal, processos,
 │   │                       #        projeto, git, package managers, runtimes
-│   ├── orchestrator/       # (Fases 7–8) Orchestrator Engine, Context Builder, Handoff
+│   ├── orchestrator/       # [Rust] Orchestrator Engine: Context Builder, Handoff,
+│   │                       #        ferramentas de memória das IAs (tasks na Fase 8)
 │   ├── agents/             # (Fase 8) Agent Manager, subagentes, File Lock Manager
 │   ├── memory/             # [Rust] banco local (SQLite): histórico, projetos, sessões,
 │   │                       #        memória L1/L2/L3, decisões, deliberações
@@ -100,7 +102,7 @@ pnpm build            # gera o executável/instalador de produção
 ## Como testar
 
 ```bash
-pnpm test             # testes Rust (core, git, runtime, providers, router, memory, desktop) e do frontend
+pnpm test             # testes Rust (core, git, runtime, providers, router, memory, engine, desktop) e do frontend
 pnpm test:rust        # somente cargo test --workspace
 pnpm test:web         # somente vitest
 pnpm typecheck        # checagem de tipos TypeScript
@@ -108,6 +110,39 @@ pnpm check            # typecheck + cargo fmt --check + cargo clippy -D warnings
 ```
 
 ## O que já funciona
+
+### Fase 7 — contexto do projeto e handoff entre IAs
+
+- **Toda sessão começa sabendo o essencial do projeto.** Na primeira
+  mensagem, o Orchestrator anexa só o que é relevante para a tarefa, dentro
+  de um orçamento de tokens (padrão 1.500):
+  - memória de trabalho (outras sessões e últimos comandos);
+  - regras fixadas, entradas e decisões que casam com a tarefa;
+  - caminhos de arquivos citados ou alterados (nunca o conteúdo);
+  - erros recentes, trechos do histórico e o estado do Git.
+
+  A escolha é por regras e busca, sem chamar IA. Nunca vão o histórico
+  inteiro nem o repositório.
+- **Tudo visível:** antes de enviar, a sessão mostra a estimativa e a
+  opção de não anexar. A aba "Contexto do projeto" mostra as seções, os
+  tokens, o que o orçamento cortou e o texto exato.
+- **As IAs consultam e registram a memória** por ferramentas
+  (`memory.search`, `memory.save`, `decision.save`…). O que elas gravam fica
+  marcado como da IA; elas não alteram o que você escreveu nem apagam nada.
+- **Handoff:** passe o trabalho de uma sessão para outra IA sem colar a
+  conversa:
+  - o rascunho junta os fatos do histórico (arquivos, comandos, testes,
+    erros), que não custam nada, e o resumo da própria IA (objetivo,
+    estado, feito, falta, próxima ação);
+  - você revisa, escolhe quem assume (com a sugestão do roteador) e passa;
+  - a nova sessão recebe o pacote no contexto e começa pela próxima ação;
+    a conversa anterior não vai junto;
+  - `HANDOFF_CREATED` e `HANDOFF_ACCEPTED` no HISTORY, e os handoffs na
+    MEMORY.
+
+![Sessão que assumiu um handoff, com o contexto anexado](./docs/assets/fase-7-sessao.png)
+
+Referência: [`docs/context.md`](./docs/context.md).
 
 ### Fase 6 — banco local, memória e histórico
 
@@ -256,5 +291,6 @@ A referência completa das ferramentas está em
 [`docs/providers.md`](./docs/providers.md), as conexões de API em
 [`docs/api-connections.md`](./docs/api-connections.md), o roteador em
 [`docs/router.md`](./docs/router.md), o banco e a memória em
-[`docs/memory.md`](./docs/memory.md) e a camada IPC em
+[`docs/memory.md`](./docs/memory.md), o contexto e o handoff em
+[`docs/context.md`](./docs/context.md) e a camada IPC em
 [`docs/ipc.md`](./docs/ipc.md).

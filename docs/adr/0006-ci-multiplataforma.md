@@ -21,8 +21,9 @@ requests e manualmente:
   `cargo test` de `orchestrator-core`, `orchestrator-git` (Fase 2),
   `orchestrator-runtime`, `orchestrator-providers` (Fase 3),
   `orchestrator-provider-api` (Fase 4, com servidor HTTP falso local),
-  `orchestrator-router` (Fase 5) e `orchestrator-memory` (Fase 6, SQLite
-  embutido compilado em cada SO).
+  `orchestrator-router` (Fase 5), `orchestrator-memory` (Fase 6, SQLite
+  embutido compilado em cada SO) e `orchestrator-engine` (Fase 7, com um
+  repositório Git temporário nos testes).
 - **desktop** (Linux): dependências de sistema do Tauri, `pnpm install`,
   typecheck, testes do frontend, build do frontend e `cargo clippy`/`cargo
   test` do crate Tauri.

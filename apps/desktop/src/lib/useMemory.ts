@@ -3,13 +3,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { auditEvents } from "./events";
-import { errorMessage, memoryApi } from "./runtime";
-import type { MemoryEntry, MemoryOverview, ProjectDecision } from "./types";
+import { errorMessage, handoffApi, memoryApi } from "./runtime";
+import type { Handoff, MemoryEntry, MemoryOverview, ProjectDecision } from "./types";
 
 export interface Memory {
   overview: MemoryOverview | null;
   entries: MemoryEntry[];
   decisions: ProjectDecision[];
+  /** Handoffs between AIs (ADR-0013), newest first. */
+  handoffs: Handoff[];
   error: string | null;
   refresh: () => Promise<void>;
 }
@@ -28,12 +30,15 @@ const RELEVANT = new Set([
   "SESSION_CLOSED",
   "SESSION_RESUMED",
   "PROCESS_EXITED",
+  "HANDOFF_CREATED",
+  "HANDOFF_ACCEPTED",
 ]);
 
 export function useMemory(enabled: boolean, projectId: string | null): Memory {
   const [overview, setOverview] = useState<MemoryOverview | null>(null);
   const [entries, setEntries] = useState<MemoryEntry[]>([]);
   const [decisions, setDecisions] = useState<ProjectDecision[]>([]);
+  const [handoffs, setHandoffs] = useState<Handoff[]>([]);
   const [error, setError] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -42,17 +47,20 @@ export function useMemory(enabled: boolean, projectId: string | null): Memory {
       setOverview(null);
       setEntries([]);
       setDecisions([]);
+      setHandoffs([]);
       return;
     }
     try {
-      const [o, e, d] = await Promise.all([
+      const [o, e, d, h] = await Promise.all([
         memoryApi.overview(projectId),
         memoryApi.list(projectId),
         memoryApi.decisions(projectId),
+        handoffApi.list(projectId),
       ]);
       setOverview(o);
       setEntries(e);
       setDecisions(d);
+      setHandoffs(h);
       setError(null);
     } catch (err) {
       setError(errorMessage(err));
@@ -74,5 +82,5 @@ export function useMemory(enabled: boolean, projectId: string | null): Memory {
     };
   }, [enabled, refresh]);
 
-  return { overview, entries, decisions, error, refresh };
+  return { overview, entries, decisions, handoffs, error, refresh };
 }

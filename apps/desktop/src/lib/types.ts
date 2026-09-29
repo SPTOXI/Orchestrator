@@ -89,7 +89,8 @@ export type EventKind =
   | "ROUTE_DECIDED"
   | "MEMORY_SAVED"
   | "MEMORY_REMOVED"
-  | "DECISION_SAVED";
+  | "DECISION_SAVED"
+  | "CONTEXT_BUILT";
 
 export interface AuditEvent {
   id: string;
@@ -509,7 +510,9 @@ export type SessionEvent =
       toolCalls: number;
     }
   | { type: "statusChanged"; status: SessionStatus }
-  | { type: "subagentSpawned"; childId: string; provider: string; title: string };
+  | { type: "subagentSpawned"; childId: string; provider: string; title: string }
+  | { type: "contextAttached"; turnId: string; summary: ContextSummary }
+  | { type: "handedOff"; handoffId: string; fromSession: string; toSession: string; provider: string };
 
 export interface SessionLogEntry {
   seq: number;
@@ -595,6 +598,8 @@ export interface StartRequest {
   title?: string;
   model?: string;
   instructions?: string;
+  /** Project context of the session (ADR-0013). */
+  context?: ContextOptions;
 }
 
 // ------------------------------------------------------- API connections ---
@@ -999,10 +1004,136 @@ export interface MemoryOverview {
 }
 
 export interface SearchHit {
-  kind: "memory" | "decision" | "message" | "event";
+  kind: "memory" | "decision" | "message" | "event" | "handoff";
   refId: string;
   title: string;
   /** Matching terms between `[` and `]`. */
   snippet: string;
   at: string;
+}
+
+// ------------------------------------------ context and handoff (ADR-0013) ---
+
+export interface ContextOptions {
+  /** false: no project context; null/omitted: the app setting. */
+  enabled?: boolean | null;
+  budget?: number | null;
+  handoffId?: string | null;
+}
+
+export interface ContextSectionSummary {
+  kind: SectionKind;
+  title: string;
+  items: number;
+  tokens: number;
+}
+
+/** What was attached to a session (the text stays with the session). */
+export interface ContextSummary {
+  tokens: number;
+  budget: number;
+  sections: ContextSectionSummary[];
+  omitted: string[];
+  handoffId: string | null;
+}
+
+export type SectionKind = "task" | "working" | "project" | "files" | "errors" | "history" | "git" | "handoff";
+
+export interface ContextSection {
+  kind: SectionKind;
+  title: string;
+  items: string[];
+  /** Items found before the budget. */
+  found: number;
+  tokens: number;
+}
+
+export interface ContextPack {
+  project: Project | null;
+  sections: ContextSection[];
+  tokens: number;
+  budget: number;
+  omitted: string[];
+  notes: string[];
+  text: string;
+}
+
+export interface PreviewRequest {
+  projectPath?: string;
+  task?: string;
+  handoffId?: string;
+  budget?: number;
+  sessionId?: string;
+}
+
+export interface ContextSettings {
+  autoAttach: boolean;
+  budgetTokens: number;
+}
+
+export interface ContextSettingsView {
+  settings: ContextSettings;
+  minBudget: number;
+  maxBudget: number;
+  defaultBudget: number;
+  warning: string | null;
+}
+
+export interface HandoffPacket {
+  goal: string;
+  status: string;
+  completed: string[];
+  remaining: string[];
+  files: string[];
+  commands: string[];
+  errors: string[];
+  decisions: string[];
+  tests: string[];
+  nextAction: string;
+}
+
+export interface HandoffEnd {
+  sessionId: string;
+  provider: string;
+  model: string | null;
+  title: string;
+}
+
+export type HandoffStatus = "created" | "accepted";
+
+export interface Handoff {
+  id: string;
+  projectId: string | null;
+  projectPath: string;
+  from: HandoffEnd;
+  to: HandoffEnd | null;
+  packet: HandoffPacket;
+  status: HandoffStatus;
+  byAgent: boolean;
+  createdAt: string;
+  acceptedAt: string | null;
+}
+
+export interface HandoffDraft {
+  from: HandoffEnd;
+  projectPath: string;
+  packet: HandoffPacket;
+  byAgent: boolean;
+  notes: string[];
+  usage: TokenUsage | null;
+}
+
+export interface StartHandoff {
+  handoffId: string;
+  provider: string;
+  model?: string | null;
+  title?: string | null;
+  budget?: number | null;
+}
+
+export interface StartedHandoff {
+  handoff: Handoff;
+  session: SessionInfo;
+  turnId: string | null;
+  sendError: string | null;
 }

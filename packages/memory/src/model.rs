@@ -306,3 +306,24 @@ pub struct SearchHit {
     pub snippet: String,
     pub at: DateTime<Utc>,
 }
+
+/// What the history says a session did (ADR-0013): the facts of a handoff
+/// packet, which do not depend on what the AI remembers.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionFacts {
+    pub session_id: String,
+    pub project_id: Option<String>,
+    pub title: String,
+    pub created_at: DateTime<Utc>,
+    /// Messages sent to the session, oldest first (the first is the goal).
+    pub inputs: Vec<String>,
+    /// Files changed by the session, or by the user while it was open;
+    /// newest first, one per path.
+    pub files: Vec<WorkingFile>,
+    /// Commands run in the same way, newest first.
+    pub commands: Vec<WorkingCommand>,
+    /// Failures of the session (and failed commands of the user meanwhile),
+    /// newest first.
+    pub errors: Vec<WorkingError>,
+}

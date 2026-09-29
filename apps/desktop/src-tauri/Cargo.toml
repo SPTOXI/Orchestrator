@@ -18,6 +18,7 @@ async-trait.workspace = true
 chrono.workspace = true
 keyring.workspace = true
 orchestrator-core.workspace = true
+orchestrator-engine.workspace = true
 orchestrator-memory.workspace = true
 orchestrator-provider-api.workspace = true
 orchestrator-providers.workspace = true

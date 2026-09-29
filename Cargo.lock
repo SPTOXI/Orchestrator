@@ -2721,6 +2721,7 @@ dependencies = [
  "chrono",
  "keyring",
  "orchestrator-core",
+ "orchestrator-engine",
  "orchestrator-memory",
  "orchestrator-provider-api",
  "orchestrator-providers",
@@ -2732,6 +2733,25 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "orchestrator-engine"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "orchestrator-core",
+ "orchestrator-git",
+ "orchestrator-memory",
+ "orchestrator-providers",
+ "orchestrator-runtime",
+ "parking_lot",
+ "schemars 1.2.2",
+ "serde",
+ "serde_json",
  "tempfile",
  "tokio",
 ]

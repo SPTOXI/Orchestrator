@@ -569,6 +569,9 @@ impl RouterService {
                     title,
                     model: request.model.clone(),
                     instructions: None,
+                    // The task is the first message: it gets the project
+                    // context like any session (ADR-0013).
+                    context: Default::default(),
                 },
                 project_path,
                 origin.clone(),

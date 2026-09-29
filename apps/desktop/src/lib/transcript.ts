@@ -6,6 +6,7 @@
 // without gaps or duplicates (same idea as OutputSync, ADR-0009).
 
 import type {
+  ContextSummary,
   NoticeLevel,
   SessionEvent,
   SessionSnapshot,
@@ -31,7 +32,16 @@ export type TranscriptItem =
       durationMs: number;
       toolCalls: number;
     }
-  | { kind: "subagent"; key: string; childId: string; provider: string; title: string };
+  | { kind: "subagent"; key: string; childId: string; provider: string; title: string }
+  | { kind: "context"; key: string; turnId: string; summary: ContextSummary }
+  | {
+      kind: "handoff";
+      key: string;
+      handoffId: string;
+      fromSession: string;
+      toSession: string;
+      provider: string;
+    };
 
 type ToolItem = Extract<TranscriptItem, { kind: "tool" }>;
 
@@ -154,6 +164,22 @@ export function applyEvent(transcript: Transcript, seq: number, at: string, even
       break;
     case "subagentSpawned":
       items = [...items, { kind: "subagent", key, childId: event.childId, provider: event.provider, title: event.title }];
+      break;
+    case "contextAttached":
+      items = [...items, { kind: "context", key, turnId: event.turnId, summary: event.summary }];
+      break;
+    case "handedOff":
+      items = [
+        ...items,
+        {
+          kind: "handoff",
+          key,
+          handoffId: event.handoffId,
+          fromSession: event.fromSession,
+          toSession: event.toSession,
+          provider: event.provider,
+        },
+      ];
       break;
   }
   return { items, lastSeq: seq, status, runningTurn };

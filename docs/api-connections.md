@@ -148,6 +148,11 @@ com o JSON Schema dos argumentos de cada ferramenta
 - Os blocos `<tool_call>` não aparecem no texto mostrado ao usuário.
 - **Loop do turno:** modelo → ferramentas pedidas (em ordem, pelo
   Orchestrator) → resultados → modelo… até uma resposta sem pedidos.
+- **Contexto do projeto** (Fase 7): no primeiro turno, o texto do Context
+  Builder é acrescentado às instruções de sistema da conversa e fica nelas
+  nas requisições seguintes (e na persistência da sessão). O catálogo
+  inclui as ferramentas de memória (`memory.*`, `decision.*`); ver
+  [context.md](./context.md).
   - Ao atingir `maxToolRounds`, o turno termina com um aviso no
     transcript. O limite existe contra laços infinitos e gasto de tokens.
     Não é uma restrição de operações: nenhuma ferramenta é bloqueada.

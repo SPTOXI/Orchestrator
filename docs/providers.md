@@ -1,11 +1,13 @@
-# AI Provider Layer (Fases 3–5)
+# AI Provider Layer (Fases 3–7)
 
 Referência de `packages/providers` (crate `orchestrator-providers`). Decisão
 registrada em [ADR-0009](./adr/0009-camada-de-providers-e-sessoes.md).
 Os providers reais são as **conexões de API** cadastradas pelo usuário
 (Fase 4, [ADR-0010](./adr/0010-providers-por-api-com-cadastro-livre.md)):
 ver [api-connections.md](./api-connections.md). O roteador e o Conselho
-(Fase 5) escolhem entre eles: ver [router.md](./router.md).
+(Fase 5) escolhem entre eles: ver [router.md](./router.md). O contexto do
+projeto no primeiro turno e o handoff entre IAs (Fase 7) estão em
+[context.md](./context.md).
 
 ```text
 UI ──session_send──▶ SessionManager ──stream()──▶ AIProvider (adapter)
@@ -45,8 +47,15 @@ Trait async (`Send + Sync`), mapeada 1:1 na seção 18 do documento mestre.
   6, grava a versão de `snapshot` ao fim de cada turno. As conexões de API
   guardam ali a conversa inteira (`data.conversation`), e o `resume` a
   reconstrói.
-- `SessionSpec { sessionId, projectPath, title, model, instructions }` —
-  `instructions` será preenchido pelo Context Builder (Fase 7).
+- `SessionSpec { sessionId, projectPath, title, model, instructions }`:
+  `instructions` são as instruções pedidas ao abrir a sessão. O contexto
+  do projeto não vai aqui: ele chega no primeiro turno
+  (`TurnInput.context`, abaixo).
+- `TurnInput { text, context }` (Fase 7): `context` vem só no primeiro
+  turno da sessão, com o texto montado pelo Context Builder. As conexões de
+  API o anexam às instruções de sistema da conversa, que ficam iguais nos
+  turnos seguintes e vão junto na persistência; o `echo` o guarda e mostra
+  com `/context`.
 - Em `stream`, o texto vai para o contexto; em `execute`, volta em
   `TurnOutput` e o Orchestrator o registra.
 - `complete` não recebe `TurnContext`: sem ferramentas, o modelo não tem
@@ -122,6 +131,36 @@ start ──▶ idle ──send/execute──▶ running ──(completed | canc
   (`SessionInfo.usage`). `estimated` indica valores estimados.
 - **Transcript:** log numerado (`seq`) de `SessionEvent`, com trechos de texto
   consecutivos fundidos e limite de 5.000 entradas em memória.
+  `annotate(id, event)` acrescenta um evento de fora de um turno (ex.: o
+  handoff) e grava a sessão.
+
+### Contexto do projeto (`ContextSource`, Fase 7)
+
+`set_context_source(source)` instala quem monta o contexto
+([ADR-0013](./adr/0013-context-builder-e-handoff.md)); no app, o
+`ContextBuilder` do `orchestrator-engine`.
+
+- **Quando:** no primeiro turno de cada sessão, qualquer que seja o
+  caminho (nova sessão, Conselho no modo Full, subagente, handoff). O
+  manager chama `build(ContextRequest { session, task, options, tools })`,
+  com a mensagem como tarefa e `tools` = o provider pede ferramentas
+  (`capabilities().toolCalls`), e passa o texto em `TurnInput.context`.
+- **Uma vez:** os turnos seguintes não repetem o contexto; a IA consulta o
+  resto pelas ferramentas de memória.
+- **Opções por sessão** (`StartRequest.context: ContextOptions`):
+  - `enabled` (`None` = a configuração global `autoAttach`);
+  - `budget` (tokens estimados; `None` = o padrão);
+  - `handoffId` (a sessão assume esse handoff; o contexto vai sempre).
+
+  `context_options(id)` lê e `set_context_options(id, options)` muda, só
+  antes do primeiro turno (depois: `INVALID_REQUEST`, "the project context
+  was already sent with the first turn"). As opções são gravadas com a
+  sessão.
+- **Registro:** `SessionEvent::ContextAttached { turnId, summary }` no
+  transcript e `CONTEXT_BUILT` no histórico, os dois com o resumo (tokens,
+  seções, o que ficou de fora), nunca o texto.
+- **Falha:** se o contexto não puder ser montado, o turno segue sem ele e
+  o transcript recebe o aviso "contexto do projeto indisponível: …".
 
 ### Persistência (`SessionStore`, Fase 6)
 
@@ -155,6 +194,8 @@ local; os testes usam `MemorySessionStore`.
 | `turnCompleted` | `turnId`, `status`, `error`, `usage`, `durationMs`, `toolCalls` |
 | `statusChanged` | `status: idle \| running \| closed` |
 | `subagentSpawned` | `childId`, `provider`, `title` |
+| `contextAttached` | `turnId`, `summary: { tokens, budget, sections[], omitted[], handoffId }` (Fase 7) |
+| `handedOff` | `handoffId`, `fromSession`, `toSession`, `provider` — gravado nas duas sessões (Fase 7) |
 
 ### Histórico (`AuditEvent`)
 
@@ -165,6 +206,7 @@ local; os testes usam `MemorySessionStore`.
 | `SESSION_CLOSED` | `sessionId`, `provider`, `turns`, `usage` |
 | `SESSION_RESUMED` | `sessionId`, `provider`, `nativeRef` |
 | `PROVIDER_SWITCHED` | `from`, `to`; `reason: "removed"` quando o ativo saiu do registro |
+| `CONTEXT_BUILT` (Fase 7, origem `system`) | `sessionId`, `provider`, `turnId`, `projectPath`, `tokens`, `budget`, `sections`, `omitted`, `handoffId` |
 | `TOOL_CALLED` (do runtime) | como na Fase 1, com `origin = agent { agentId, sessionId, provider }` |
 
 O texto das mensagens fica no transcript (tabela `session_entries` do
@@ -175,7 +217,8 @@ memória do projeto.
 
 Comandos Tauri `providers_list`, `provider_inspect`, `provider_select`,
 `sessions_list`, `session_start`, `session_get`, `session_send`,
-`session_cancel`, `session_close`, `session_resume`, `session_spawn` — ver
+`session_cancel`, `session_close`, `session_resume`, `session_spawn`,
+`session_context_get`, `session_context_set` — ver
 [`ipc.md`](./ipc.md). Erros chegam como `{ kind, message }` com `kind` em
 `NOT_FOUND`, `ALREADY_EXISTS`, `UNAVAILABLE`, `UNSUPPORTED`,
 `INVALID_REQUEST`, `BUSY`, `CLOSED`, `CANCELLED`, `FAILED`, `INTERNAL`.
@@ -192,6 +235,7 @@ Sem IA e sem rede. Existe para exercitar o contrato em testes e no app
 | `/tool <ferramenta> [args JSON]` | pede a ferramenta ao Orchestrator e mostra o resultado, ex.: `/tool filesystem.list {"path": "."}` |
 | `/wait <segundos>` | espera (cancelável) |
 | `/fail [mensagem]` | faz o turno falhar |
+| `/context` | mostra o contexto do projeto recebido no primeiro turno (Fase 7) |
 
 `complete` devolve `Eco: <prompt>`: como membro do Conselho, o `echo` se
 abstém (a resposta não é JSON), o que exercita as abstenções.

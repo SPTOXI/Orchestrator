@@ -11,18 +11,25 @@
 //! - [`EventSink`]: where the runtime publishes both kinds of events.
 //! - [`ProjectProfile`]: what the Orchestrator knows about a project.
 //! - [`SessionInfo`] / [`SessionEvent`]: provider sessions (ADR-0009).
+//! - [`HandoffPacket`] / [`ContextSummary`]: handoff between AIs and the
+//!   project context sent to them (ADR-0013).
 
+pub mod context;
 pub mod event;
+pub mod handoff;
 pub mod ids;
 pub mod project;
 pub mod session;
 pub mod tool;
 
+pub use context::{ContextSectionSummary, ContextSummary};
 pub use event::{
     AuditEvent, EventKind, EventSink, MemorySink, NullSink, OutputStream, StreamEvent,
 };
+pub use handoff::{Handoff, HandoffEnd, HandoffPacket, HandoffStatus};
 pub use ids::{
-    DeliberationId, EventId, ProcessId, ProviderId, SessionId, TerminalId, ToolCallId, TurnId,
+    DeliberationId, EventId, HandoffId, ProcessId, ProviderId, SessionId, TerminalId, ToolCallId,
+    TurnId,
 };
 pub use project::{
     DockerInfo, GitRemote, GitSummary, ProjectCandidate, ProjectProfile, RuntimeRequirement,

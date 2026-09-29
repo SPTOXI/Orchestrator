@@ -8,6 +8,16 @@
 import { invoke, isTauri as detectTauri } from "@tauri-apps/api/core";
 import type {
   AppInfo,
+  ContextOptions,
+  ContextPack,
+  ContextSettings,
+  ContextSettingsView,
+  Handoff,
+  HandoffDraft,
+  HandoffPacket,
+  PreviewRequest,
+  StartHandoff,
+  StartedHandoff,
   AuditEvent,
   DeleteOutput,
   DiscoverOutput,
@@ -265,6 +275,10 @@ export const sessionApi = {
   /** Subagent session (spawnAgent). */
   spawn: (parentId: string, request: StartRequest = {}) =>
     callProvider<SessionInfo>("session_spawn", { parentId, request }),
+  /** Project context options; changeable before the first turn (ADR-0013). */
+  context: (id: string) => callProvider<ContextOptions>("session_context_get", { id }),
+  setContext: (id: string, options: ContextOptions) =>
+    callProvider<ContextOptions>("session_context_set", { id, options }),
 };
 
 /** User-registered AI APIs (ADR-0010). Keys go to the OS vault, never back. */
@@ -287,6 +301,26 @@ export const councilApi = {
   history: () => callProvider<Deliberation[]>("council_history"),
   /** Opens a session with the approved or picked model (ROUTE_DECIDED). */
   startSession: (request: RouteStart) => callProvider<RouteStarted>("route_start_session", { request }),
+};
+
+/** Context Builder and handoff between AIs (ADR-0013). */
+export const contextApi = {
+  /** What a session would receive for a task or handoff (nothing is sent). */
+  preview: (request: PreviewRequest = {}) => callProvider<ContextPack>("context_preview", { request }),
+  settings: () => callProvider<ContextSettingsView>("context_settings_get"),
+  saveSettings: (settings: ContextSettings) =>
+    callProvider<ContextSettings>("context_settings_save", { settings }),
+};
+
+export const handoffApi = {
+  /** Draft from a session; `askAgent` asks its AI for the narrative (one turn). */
+  prepare: (sessionId: string, askAgent: boolean) =>
+    callProvider<HandoffDraft>("handoff_prepare", { request: { sessionId, askAgent } }),
+  create: (sessionId: string, packet: HandoffPacket, byAgent: boolean) =>
+    callProvider<Handoff>("handoff_create", { request: { sessionId, packet, byAgent } }),
+  start: (request: StartHandoff) => callProvider<StartedHandoff>("handoff_start", { request }),
+  list: (projectId?: string) => callProvider<Handoff[]>("handoffs_list", { projectId }),
+  get: (id: string) => callProvider<Handoff | null>("handoff_get", { id }),
 };
 
 /** History, projects and project memory in the local database (ADR-0012). */

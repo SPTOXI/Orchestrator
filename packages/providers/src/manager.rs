@@ -7,6 +7,7 @@
 use crate::context::{ToolExecutor, TurnContext, TurnObserver};
 use crate::error::{ProviderError, ProviderErrorKind};
 use crate::log::SessionLog;
+use crate::project_context::{ContextOptions, ContextRequest, ContextSource};
 use crate::provider::{AIProvider, NativeSession, SessionSpec, TurnInput, TurnOutput};
 use crate::registry::ProviderRegistry;
 use crate::store::{PersistedSession, SessionStore};
@@ -52,6 +53,9 @@ pub struct StartRequest {
     pub title: Option<String>,
     pub model: Option<String>,
     pub instructions: Option<String>,
+    /// Project context of the session (ADR-0013).
+    #[serde(default)]
+    pub context: ContextOptions,
 }
 
 /// A session with its transcript.
@@ -106,6 +110,8 @@ struct SessionState {
     children: u32,
     /// Newest transcript entry already handed to the store.
     persisted_seq: u64,
+    /// Project context options (ADR-0013).
+    context: ContextOptions,
 }
 
 struct RunningTurn {
@@ -124,6 +130,8 @@ struct TurnStart {
     done: watch::Sender<bool>,
     native: NativeSession,
     project_path: PathBuf,
+    /// Set on the first turn: the project context is built for it.
+    context: Option<ContextRequest>,
 }
 
 impl Session {
@@ -173,6 +181,8 @@ struct Inner {
     config: ManagerConfig,
     /// Persistence between runs (ADR-0012); `None` = memory only.
     store: Option<Arc<dyn SessionStore>>,
+    /// Builds the project context of first turns (ADR-0013).
+    context: RwLock<Option<Arc<dyn ContextSource>>>,
     /// Creation order.
     sessions: RwLock<Vec<Arc<Session>>>,
 }
@@ -206,6 +216,7 @@ impl Inner {
                     native: state.native.clone(),
                     instructions: state.spec.instructions.clone(),
                     requested_model: state.spec.model.clone(),
+                    context: state.context.clone(),
                 },
                 entries,
             )
@@ -243,6 +254,7 @@ impl SessionManager {
                 sink,
                 config,
                 store: None,
+                context: RwLock::new(None),
                 sessions: RwLock::new(Vec::new()),
             }),
         }
@@ -298,6 +310,7 @@ impl SessionManager {
                     log,
                     running: None,
                     persisted_seq,
+                    context: stored.context.clone(),
                 }),
             }));
         }
@@ -308,6 +321,7 @@ impl SessionManager {
                 sink,
                 config,
                 store: Some(store),
+                context: RwLock::new(None),
                 sessions: RwLock::new(sessions),
             }),
         }
@@ -315,6 +329,50 @@ impl SessionManager {
 
     pub fn registry(&self) -> &Arc<ProviderRegistry> {
         &self.inner.registry
+    }
+
+    /// Installs what builds the project context of first turns (ADR-0013).
+    /// Sessions opened before keep working; their next first turn uses it.
+    pub fn set_context_source(&self, source: Arc<dyn ContextSource>) {
+        *self.inner.context.write() = Some(source);
+    }
+
+    /// Adds an event to a session transcript (e.g. a handoff between
+    /// sessions) and stores it.
+    pub fn annotate(&self, id: &SessionId, event: SessionEvent) -> Result<(), ProviderError> {
+        let session = self.session(id)?;
+        {
+            let mut state = session.state.lock();
+            session.record(&mut state, event);
+        }
+        self.inner.persist(&session);
+        Ok(())
+    }
+
+    /// Context options of a session.
+    pub fn context_options(&self, id: &SessionId) -> Result<ContextOptions, ProviderError> {
+        Ok(self.session(id)?.state.lock().context.clone())
+    }
+
+    /// Changes the context options before the first turn (the context goes
+    /// with it and is not rebuilt later).
+    pub fn set_context_options(
+        &self,
+        id: &SessionId,
+        options: ContextOptions,
+    ) -> Result<ContextOptions, ProviderError> {
+        let session = self.session(id)?;
+        {
+            let mut state = session.state.lock();
+            if state.info.turns > 0 || state.running.is_some() {
+                return Err(ProviderError::invalid(
+                    "the project context was already sent with the first turn",
+                ));
+            }
+            state.context = options.clone();
+        }
+        self.inner.persist(&session);
+        Ok(options)
     }
 
     fn session(&self, id: &SessionId) -> Result<Arc<Session>, ProviderError> {
@@ -411,6 +469,7 @@ impl SessionManager {
             model: request.model.filter(|m| !m.trim().is_empty()),
             instructions: request.instructions,
         };
+        let context = request.context;
 
         let native = match &parent {
             Some(parent) if parent.state.lock().info.provider == descriptor.id => {
@@ -448,6 +507,7 @@ impl SessionManager {
                 running: None,
                 children: 0,
                 persisted_seq: 0,
+                context,
             }),
         });
         self.inner.sessions.write().push(session.clone());
@@ -597,6 +657,13 @@ impl SessionManager {
         );
         session.set_status(&mut state, SessionStatus::Running);
         *session.provider.lock() = Some(provider.clone());
+        // The project context goes once, with the first turn (ADR-0013).
+        let context = (state.info.turns == 0).then(|| ContextRequest {
+            session: state.info.clone(),
+            task: input.to_owned(),
+            options: state.context.clone(),
+            tools: provider.capabilities().tool_calls,
+        });
         let turn = TurnStart {
             provider,
             turn_id,
@@ -604,6 +671,7 @@ impl SessionManager {
             done,
             native: state.native.clone(),
             project_path: state.spec.project_path.clone(),
+            context,
         };
         drop(state);
         Ok((session, turn))
@@ -767,8 +835,13 @@ async fn run_turn(
         Arc::new(Recorder(session.clone())),
         turn.cancel.clone(),
     );
+    let context = match turn.context.clone() {
+        Some(request) => attach_context(&inner, &session, &turn.turn_id, request).await,
+        None => None,
+    };
     let turn_input = TurnInput {
         text: input.clone(),
+        context,
     };
     // The provider runs in its own task: a panicking adapter fails the turn
     // instead of leaving the session running forever, and an abandoned turn
@@ -892,4 +965,66 @@ async fn run_turn(
         }),
     ));
     result
+}
+
+/// Builds the project context of a first turn and records it: the summary
+/// in the transcript and in the history (`CONTEXT_BUILT`), never the text.
+/// A failure only costs the context, not the turn.
+async fn attach_context(
+    inner: &Inner,
+    session: &Arc<Session>,
+    turn_id: &TurnId,
+    request: ContextRequest,
+) -> Option<String> {
+    let source = inner.context.read().clone()?;
+    let info = request.session.clone();
+    let built = match source.build(request).await {
+        Ok(built) => built?,
+        Err(err) => {
+            let mut state = session.state.lock();
+            session.record(
+                &mut state,
+                SessionEvent::Notice {
+                    turn_id: Some(turn_id.clone()),
+                    level: NoticeLevel::Warning,
+                    message: format!("contexto do projeto indisponível: {err}"),
+                },
+            );
+            return None;
+        }
+    };
+    {
+        let mut state = session.state.lock();
+        session.record(
+            &mut state,
+            SessionEvent::ContextAttached {
+                turn_id: turn_id.clone(),
+                summary: built.summary.clone(),
+            },
+        );
+    }
+    let summary = &built.summary;
+    inner.sink.audit(AuditEvent::new(
+        EventKind::ContextBuilt,
+        CallOrigin::System,
+        format!(
+            "context attached · {} tokens · {} section{} · {}",
+            summary.tokens,
+            summary.sections.len(),
+            if summary.sections.len() == 1 { "" } else { "s" },
+            info.title
+        ),
+        json!({
+            "sessionId": info.id,
+            "provider": info.provider,
+            "turnId": turn_id,
+            "projectPath": info.project_path,
+            "tokens": summary.tokens,
+            "budget": summary.budget,
+            "sections": summary.sections,
+            "omitted": summary.omitted,
+            "handoffId": summary.handoff_id,
+        }),
+    ));
+    Some(built.text)
 }

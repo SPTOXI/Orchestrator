@@ -4,10 +4,13 @@
 
 mod support;
 
-use orchestrator_core::{CallOrigin, EventKind, SessionEvent, SessionStatus, TurnStatus};
+use orchestrator_core::{
+    CallOrigin, ContextSummary, EventKind, SessionEvent, SessionStatus, TurnStatus,
+};
 use orchestrator_provider_api::{ConnectionManager, ProbeRequest, SaveRequest, SecretStore};
 use orchestrator_providers::{
-    CompletionRequest, MemorySessionStore, ProviderErrorKind, SessionStore,
+    AttachedContext, CompletionRequest, ContextRequest, ContextSource, MemorySessionStore,
+    ProviderErrorKind, SessionStore,
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -1056,4 +1059,103 @@ async fn a_conversation_continues_after_a_restart() {
         &said[1..],
         ["user: primeiro", "assistant: resposta 0", "user: segundo"]
     );
+}
+
+/// Answers every session with the same short context (ADR-0013).
+struct FixedContext;
+
+#[async_trait::async_trait]
+impl ContextSource for FixedContext {
+    async fn build(&self, request: ContextRequest) -> Result<Option<AttachedContext>, String> {
+        Ok(Some(AttachedContext {
+            text: format!(
+                "## TASK\n{}\n\n## GIT STATE\nbranch main\ntools: {}",
+                request.task, request.tools
+            ),
+            summary: ContextSummary::default(),
+        }))
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_project_context_joins_the_system_instructions_once() {
+    let api = FakeApi::start(|_, index| {
+        Reply::sse(vec![
+            openai_chunk(json!({"content": format!("resposta {index}")}), None),
+            openai_chunk(json!({}), Some("stop")),
+            openai_usage(5, 2),
+        ])
+        .sse_done()
+    })
+    .await;
+    let conn = json!({
+        "id": "local", "name": "Local", "kind": "openai", "baseUrl": api.url("/v1"),
+        "credential": {"source": "vault"}, "models": [{"id": "gpt-test"}]
+    });
+    let store: Arc<dyn SessionStore> = Arc::new(MemorySessionStore::new());
+    let first = Harness::with_store(store.clone());
+    first.sessions.set_context_source(Arc::new(FixedContext));
+    first.add(connection(conn.clone()), Some("sk-test")).await;
+    let session = first.start("local").await;
+    first.turn(&session.id, "corrigir o checkout").await;
+    first.turn(&session.id, "e os testes?").await;
+    drop(first);
+
+    // After a restart the conversation keeps the same instructions.
+    let second = Harness::with_store(store.clone());
+    second.sessions.set_context_source(Arc::new(FixedContext));
+    second.add(connection(conn), Some("sk-test")).await;
+    second
+        .sessions
+        .resume(&session.id, CallOrigin::User)
+        .await
+        .unwrap();
+    second.turn(&session.id, "terminou?").await;
+
+    let calls = api.calls("/v1/chat/completions");
+    assert_eq!(calls.len(), 3);
+    let system = |i: usize| {
+        calls[i].body["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert!(system(0).starts_with("You are an AI agent"));
+    assert!(system(0)
+        .ends_with("## TASK\ncorrigir o checkout\n\n## GIT STATE\nbranch main\ntools: true"));
+    assert_eq!(
+        system(1),
+        system(0),
+        "later turns do not rebuild the context"
+    );
+    assert_eq!(system(2), system(0), "the context survives a restart");
+    // The context is not repeated as a user message.
+    let users: Vec<_> = calls[2].body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["role"] == "user")
+        .map(|m| m["content"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(users, ["corrigir o checkout", "e os testes?", "terminou?"]);
+
+    // A connection without tools is built a context that does not point to
+    // them.
+    let offline = Harness::new();
+    offline.sessions.set_context_source(Arc::new(FixedContext));
+    offline
+        .add(
+            connection(json!({
+                "id": "sem-ferramentas", "name": "Sem ferramentas", "kind": "openai",
+                "baseUrl": api.url("/v1"), "credential": {"source": "vault"},
+                "models": [{"id": "gpt-test"}], "toolMode": "none"
+            })),
+            Some("sk-test"),
+        )
+        .await;
+    let session = offline.start("sem-ferramentas").await;
+    offline.turn(&session.id, "oi").await;
+    let calls = api.calls("/v1/chat/completions");
+    let system = calls[3].body["messages"][0]["content"].as_str().unwrap();
+    assert!(system.ends_with("tools: false"), "{system}");
 }

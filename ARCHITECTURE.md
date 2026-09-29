@@ -40,8 +40,9 @@ estrutural é registrada antes como ADR em [`docs/adr/`](./docs/adr).
 │ Orchestrator Core                                                     │
 │   core (contratos)  · provider layer (Fase 3: AIProvider, registro,   │
 │   sessões; Fase 4: conexões de API) · router/Conselho (Fase 5) ·      │
-│   memory/history (Fase 6) · orchestrator engine · agent manager ·     │
-│   task manager · context builder                                      │
+│   memory/history (Fase 6) · orchestrator engine (Fase 7: context      │
+│   builder, handoff, ferramentas de memória) · agent manager ·         │
+│   task manager                                                        │
 ├───────────────────────────────────────────────────────────────────────┤
 │ Local Database (SQLite, Fase 6)        <app-data>/orchestrator.db     │
 └───────────────────────────────────────────────────────────────────────┘
@@ -71,17 +72,17 @@ apenas apresentação.
 
 | Módulo | Local | Linguagem | Fase | Estado |
 | ------ | ----- | --------- | ---- | ------ |
-| Desktop UI | `apps/desktop/src` | React/TS | 1–6 | ✅ shell, PROJECT, AI PROVIDERS (cadastro de APIs, Conselho) + sessões, GIT, terminal, processos, MEMORY, HISTORY |
-| Ponte IPC | `apps/desktop/src-tauri` | Rust | 1–6 | ✅ (inclui o cofre do SO, `vault.rs`, e a ligação dos stores com o banco, `persistence.rs`) |
-| Core (contratos) | `packages/core` | Rust | 1–6 | ✅ `ToolCall`, `ToolResult`, `ToolDefinition`, `AuditEvent`, `StreamEvent`, `EventSink`, `ProjectProfile`, `SessionInfo`, `SessionEvent`, `TokenUsage` |
+| Desktop UI | `apps/desktop/src` | React/TS | 1–7 | ✅ shell, PROJECT, AI PROVIDERS (cadastro de APIs, Conselho) + sessões, GIT, terminal, processos, MEMORY, HISTORY, abas Contexto e Handoff |
+| Ponte IPC | `apps/desktop/src-tauri` | Rust | 1–7 | ✅ (inclui o cofre do SO, `vault.rs`, a ligação dos stores com o banco, `persistence.rs`, e os comandos de contexto e handoff) |
+| Core (contratos) | `packages/core` | Rust | 1–7 | ✅ `ToolCall`, `ToolResult`, `ToolDefinition`, `AuditEvent`, `StreamEvent`, `EventSink`, `ProjectProfile`, `SessionInfo`, `SessionEvent`, `TokenUsage`, `HandoffPacket`, `Handoff`, `ContextSummary` |
 | Tool Runtime | `packages/runtime` | Rust | 1–4 | ✅ filesystem, shell, terminal, process, project, git, package, runtime; JSON Schema dos argumentos (Fase 4) |
 | Git local | `packages/git` | Rust | 2 | ✅ `git` do sistema (ADR-0007) |
 | Project Discovery / Profile | `packages/core` (tipos) + `packages/runtime` (detecção) | Rust | 2 | ✅ (ADR-0008) |
-| AIProvider / Registry / Sessions | `packages/providers` | Rust | 3, 5, 6 | ✅ trait, registro, sessões, provider `echo` de desenvolvimento (ADR-0009); respostas avulsas `complete` (ADR-0011); `snapshot` e `SessionStore` (ADR-0012) |
-| Conexões de API (OpenAI e compatíveis, Anthropic, Gemini, perfil genérico) | `packages/providers/api` | Rust | 4, 6 | ✅ cadastro livre, cofre do SO, ferramentas nativas ou por prompt, custo, teste de conexão (ADR-0010); conversa retomável após reiniciar (ADR-0012) |
+| AIProvider / Registry / Sessions | `packages/providers` | Rust | 3, 5–7 | ✅ trait, registro, sessões, provider `echo` de desenvolvimento (ADR-0009); respostas avulsas `complete` (ADR-0011); `snapshot` e `SessionStore` (ADR-0012); `ContextSource` e contexto no primeiro turno (ADR-0013) |
+| Conexões de API (OpenAI e compatíveis, Anthropic, Gemini, perfil genérico) | `packages/providers/api` | Rust | 4, 6, 7 | ✅ cadastro livre, cofre do SO, ferramentas nativas ou por prompt, custo, teste de conexão (ADR-0010); conversa retomável após reiniciar (ADR-0012); contexto do projeto nas instruções de sistema (ADR-0013) |
 | Roteador de modelos e Conselho | `packages/router` | Rust | 5, 6 | ✅ ranking sem tokens, Conselho de 1 a 5 IAs com votos e cache, modos Desligado/Sugerir/Full (ADR-0011); deliberações e cache guardados (ADR-0012) |
-| SQLite, Memory, History, Decisions | `packages/memory` | Rust | 6 | ✅ banco local, histórico por projeto, projetos, sessões, memória L1/L2/L3, decisões, deliberações (ADR-0012) |
-| Context Builder, Handoff | `packages/orchestrator` | Rust | 7 | planejado |
+| SQLite, Memory, History, Decisions | `packages/memory` | Rust | 6, 7 | ✅ banco local, histórico por projeto, projetos, sessões, memória L1/L2/L3, decisões, deliberações (ADR-0012); handoffs, fatos da sessão e busca por relevância (ADR-0013) |
+| Context Builder, Handoff, ferramentas de memória das IAs | `packages/orchestrator` (`orchestrator-engine`) | Rust | 7 | ✅ contexto por seções com orçamento de tokens, `HandoffPacket` com rascunho por fatos e pela IA, `memory.*`/`decision.*` para as IAs (ADR-0013) |
 | Task Manager, Agent Manager, Subagents, File Locks | `packages/orchestrator` + `packages/agents` | Rust | 8 | planejado |
 | Autonomia (Assistido/Autônomo/Irrestrito) | `packages/orchestrator` | Rust | 9 | planejado |
 | GitHub | `packages/git` | Rust | 10 | planejado |
@@ -99,7 +100,12 @@ Alterações à estrutura original:
 - `packages/memory` como crate `orchestrator-memory`, que depende só de
   `core`; providers e roteador expõem traits (`SessionStore`,
   `DeliberationStore`) que o app liga ao banco
-  ([ADR-0012](./docs/adr/0012-sqlite-memoria-e-historico.md)).
+  ([ADR-0012](./docs/adr/0012-sqlite-memoria-e-historico.md));
+- `packages/orchestrator` como crate `orchestrator-engine`, que depende de
+  `core`, `providers`, `memory` e `git`; recebe o executor de ferramentas do
+  app (`ToolExecutor`) em vez de depender do runtime, e o `SessionManager`
+  recebe o contexto por um trait (`ContextSource`)
+  ([ADR-0013](./docs/adr/0013-context-builder-e-handoff.md)).
 
 ## 4. Tool Runtime (Fases 1–2)
 
@@ -222,7 +228,12 @@ a conter fora do gate explícito da Fase 9.
   `COUNCIL_CONFIGURED`, `COUNCIL_DELIBERATED`, `ROUTE_DECIDED`
   ([ADR-0011](./docs/adr/0011-roteador-de-modelos-e-conselho.md)),
   `MEMORY_SAVED`, `MEMORY_REMOVED`, `DECISION_SAVED`
-  ([ADR-0012](./docs/adr/0012-sqlite-memoria-e-historico.md)).
+  ([ADR-0012](./docs/adr/0012-sqlite-memoria-e-historico.md)),
+  `CONTEXT_BUILT` ([ADR-0013](./docs/adr/0013-context-builder-e-handoff.md);
+  `HANDOFF_CREATED` e `HANDOFF_ACCEPTED` já eram da seção 22).
+- `HandoffPacket`, `Handoff`, `HandoffEnd`, `HandoffStatus`, `HandoffId`,
+  `ContextSummary` e os eventos de sessão `contextAttached` e `handedOff`
+  (Fase 7).
 - `StreamEvent` — eventos de alta frequência e não duráveis (saída de
   terminal/processo, término, eventos de sessão de provider).
 - `EventSink` — trait que desacopla o runtime de quem consome eventos. O
@@ -245,11 +256,13 @@ Detalhada em [`docs/ipc.md`](./docs/ipc.md) e
 | `app_info()` | versão, SO, diretórios, projeto aberto |
 | `pick_folder()` | seletor nativo de pasta (só UI; a pasta escolhida é aberta via `project.open`) |
 | `providers_list`, `provider_inspect`, `provider_select` | registro de providers e provider ativo (Fase 3) |
-| `sessions_list`, `session_start`, `session_get`, `session_send`, `session_cancel`, `session_close`, `session_resume`, `session_spawn` | sessões de provider (Fase 3) |
+| `sessions_list`, `session_start`, `session_get`, `session_send`, `session_cancel`, `session_close`, `session_resume`, `session_spawn`, `session_context_get`, `session_context_set` | sessões de provider (Fase 3); opções de contexto antes do primeiro turno (Fase 7) |
 | `connections_list`, `connection_save`, `connection_delete`, `connection_test`, `connection_models` | cadastro de APIs (Fase 4); a chave nunca volta para a webview |
 | `router_recommend`, `council_*`, `route_start_session` | roteador e Conselho (Fase 5) |
 | `projects_recent`, `project_current`, `project_forget`, `projects_import_recent` | projetos registrados no banco (Fase 6) |
 | `memory_overview`, `memory_list`, `memory_save`, `memory_delete`, `memory_search`, `decisions_list`, `decision_save` | memória do projeto e decisões (Fase 6) |
+| `context_preview`, `context_settings_get`, `context_settings_save` | prévia e configuração do contexto (Fase 7) |
+| `handoff_prepare`, `handoff_create`, `handoff_start`, `handoffs_list`, `handoff_get` | handoff entre IAs (Fase 7) |
 
 | Evento Tauri | Payload |
 | ------------ | ------- |
@@ -273,11 +286,12 @@ projeto.
 | `decisions` | decisões do projeto |
 | `deliberations` | deliberações e cache do Conselho |
 | `search_index` | índice FTS5 da busca L3 |
+| `handoffs` | handoffs entre IAs, com o pacote (Fase 7, migração 2) |
 
 As tabelas `tasks`, `task_dependencies`, `agents`, `artifacts`, `file_locks`
 e `git_operations` entram com as migrações das Fases 8–10. Configuração
-(`connections.json`, `council.json`) continua em arquivos, e segredos só no
-cofre do SO.
+(`connections.json`, `council.json`, `context.json`) continua em arquivos, e
+segredos só no cofre do SO.
 
 ## 8. Memória, contexto e handoff (Fases 6–7)
 
@@ -292,21 +306,38 @@ Implementado na Fase 6 (`packages/memory`):
 - **Decisões**: contexto, decisão, consequências e estado. Nunca são
   apagadas.
 - **L3 Historical Memory**: busca FTS5 na memória, decisões, mensagens das
-  sessões e eventos notáveis (commits, comandos, falhas).
+  sessões, handoffs e eventos notáveis (commits, comandos, falhas).
 
-Fase 7:
+Implementado na Fase 7 (`packages/orchestrator`,
+[ADR-0013](./docs/adr/0013-context-builder-e-handoff.md), referência em
+[`docs/context.md`](./docs/context.md)):
 
-- **Context Builder**: monta `TASK + L1 + L2 relevante + arquivos relevantes +
-  erros recentes + histórico relevante + estado do Git + handoff`. Nunca envia
-  L3 inteiro, o repositório inteiro ou todas as mensagens.
+- **Context Builder**: monta `TASK + WORKING MEMORY + PROJECT MEMORY +
+  RELEVANT FILES + RECENT ERRORS + RELEVANT HISTORY + GIT STATE + HANDOFF`
+  por regras e busca FTS, sem chamar IA, dentro de um orçamento de tokens
+  (padrão 1.500). Arquivos entram só pelo caminho. Nunca envia L3 inteiro,
+  o repositório ou todas as mensagens; o que o orçamento cortou é
+  informado.
+- **Quando:** uma vez, no primeiro turno de cada sessão (nova, Conselho
+  Full, subagente, handoff), nas instruções de sistema. Registrado no
+  transcript (`contextAttached`) e no histórico (`CONTEXT_BUILT`), sem o
+  texto.
+- **Ferramentas de memória das IAs**: `memory.working`, `memory.search`,
+  `memory.list`, `memory.save`, `decision.list`, `decision.save`, pelo
+  mesmo caminho auditado das outras ferramentas. A IA grava com origem
+  `agent`, não altera o que o usuário escreveu e não apaga nada.
 - **HandoffPacket**: `goal, status, completed, remaining, files, commands,
-  errors, decisions, tests, nextAction` — permite a outra IA continuar sem
-  receber a conversa anterior.
+  errors, decisions, tests, nextAction`. O rascunho junta os fatos do
+  histórico (sem custo) e a narrativa da IA atual (um turno, opcional); o
+  usuário revisa e escolhe quem assume. A nova sessão recebe o pacote no
+  contexto, nunca a conversa anterior (`HANDOFF_CREATED`,
+  `HANDOFF_ACCEPTED`).
 
 Os buffers com offset do runtime (`terminal.read`/`process.read { since }`)
-já existem para que o Context Builder envie apenas saída nova.
+permitem que uma IA leia só a saída nova; tasks e agentes (Fase 8) usam o
+mesmo Context Builder, com a task no lugar da primeira mensagem.
 
-## 9. Providers (Fases 3–6)
+## 9. Providers (Fases 3–7)
 
 ```typescript
 interface AIProvider {
@@ -330,7 +361,9 @@ Implementado na Fase 3 como trait Rust em `packages/providers`
   transcript numerado, uso de tokens/custo, cancelamento com prazo,
   encerrar/retomar, subagentes (mesmo provider ou outro), eventos ao vivo e
   histórico. Desde a Fase 6, com um `SessionStore`, sessões e transcripts
-  sobrevivem ao reinício e voltam encerradas, prontas para retomar.
+  sobrevivem ao reinício e voltam encerradas, prontas para retomar. Desde a
+  Fase 7, com um `ContextSource`, o primeiro turno leva o contexto do
+  projeto (`TurnInput.context`).
 - **`TurnContext::call_tool`** — única saída do provider para o sistema; o
   Orchestrator executa pelo Tool Runtime com a sessão como origem.
 - **`echo`** — provider de desenvolvimento sem IA, para testes e builds de

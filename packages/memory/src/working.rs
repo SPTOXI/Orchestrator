@@ -30,6 +30,86 @@ fn count(conn: &Connection, table: &str, project_id: &str) -> usize {
     .unwrap_or(0)
 }
 
+/// A `FILE_CHANGED` event as an L1 file (the path, or the destination of a
+/// move).
+pub(crate) fn file_of(event: &AuditEvent) -> Option<WorkingFile> {
+    if event.kind != EventKind::FileChanged {
+        return None;
+    }
+    let data = &event.data;
+    let path = data
+        .get("path")
+        .or_else(|| data.get("to"))
+        .and_then(Value::as_str)
+        .filter(|p| !p.is_empty())?;
+    Some(WorkingFile {
+        path: path.to_owned(),
+        change: data
+            .get("change")
+            .and_then(Value::as_str)
+            .unwrap_or("changed")
+            .to_owned(),
+        at: event.at,
+        by: origin_type(&event.origin).to_owned(),
+    })
+}
+
+/// A `COMMAND_EXECUTED` event as an L1 command.
+pub(crate) fn command_of(event: &AuditEvent) -> WorkingCommand {
+    WorkingCommand {
+        command: event
+            .data
+            .get("command")
+            .and_then(Value::as_str)
+            .unwrap_or(&event.summary)
+            .to_owned(),
+        exit_code: event.data.get("exitCode").and_then(Value::as_i64),
+        background: event.data.get("background").and_then(Value::as_bool) == Some(true),
+        at: event.at,
+        by: origin_type(&event.origin).to_owned(),
+    }
+}
+
+/// The event as an L1 error, when it is one: a failed tool call or turn, a
+/// command or process that ended with a non-zero code (a process stopped by
+/// the user is not an error).
+pub(crate) fn error_of(event: AuditEvent) -> Option<WorkingError> {
+    let data = &event.data;
+    let exit = || data.get("exitCode").and_then(Value::as_i64);
+    let failed = match event.kind {
+        EventKind::ToolCalled => data.get("ok") == Some(&Value::Bool(false)),
+        EventKind::TurnCompleted => data.get("status").and_then(Value::as_str) == Some("failed"),
+        EventKind::CommandExecuted => exit().is_some_and(|code| code != 0),
+        EventKind::ProcessExited => {
+            exit().is_some_and(|code| code != 0)
+                && data.get("stopped").and_then(Value::as_bool) != Some(true)
+        }
+        _ => false,
+    };
+    if !failed {
+        return None;
+    }
+    let detail = match event.kind {
+        EventKind::ToolCalled => data
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        EventKind::TurnCompleted => data.get("error").and_then(Value::as_str).map(str::to_owned),
+        EventKind::CommandExecuted => data
+            .get("stderrTail")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_owned),
+        _ => None,
+    };
+    Some(WorkingError {
+        detail,
+        kind: event.kind,
+        summary: event.summary,
+        at: event.at,
+    })
+}
+
 fn working(conn: &Connection, project_id: &str) -> Sql<WorkingMemory> {
     let mut stmt = conn.prepare(
         "SELECT info FROM sessions WHERE project_id = ?1 ORDER BY updated_at DESC LIMIT ?2",
@@ -58,25 +138,13 @@ fn working(conn: &Connection, project_id: &str) -> Sql<WorkingMemory> {
         project_id,
         FILES * 4,
     )? {
-        let data = &event.data;
-        let path = data
-            .get("path")
-            .or_else(|| data.get("to"))
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if path.is_empty() || files.iter().any(|f| f.path == path) {
+        let Some(file) = file_of(&event) else {
+            continue;
+        };
+        if files.iter().any(|f| f.path == file.path) {
             continue;
         }
-        files.push(WorkingFile {
-            path: path.to_owned(),
-            change: data
-                .get("change")
-                .and_then(Value::as_str)
-                .unwrap_or("changed")
-                .to_owned(),
-            at: event.at,
-            by: origin_type(&event.origin).to_owned(),
-        });
+        files.push(file);
         if files.len() == FILES {
             break;
         }
@@ -89,19 +157,8 @@ fn working(conn: &Connection, project_id: &str) -> Sql<WorkingMemory> {
         project_id,
         COMMANDS,
     )?
-    .into_iter()
-    .map(|event| WorkingCommand {
-        command: event
-            .data
-            .get("command")
-            .and_then(Value::as_str)
-            .unwrap_or(&event.summary)
-            .to_owned(),
-        exit_code: event.data.get("exitCode").and_then(Value::as_i64),
-        background: event.data.get("background").and_then(Value::as_bool) == Some(true),
-        at: event.at,
-        by: origin_type(&event.origin).to_owned(),
-    })
+    .iter()
+    .map(command_of)
     .collect();
 
     let errors = events(
@@ -119,30 +176,7 @@ fn working(conn: &Connection, project_id: &str) -> Sql<WorkingMemory> {
         ERRORS,
     )?
     .into_iter()
-    .map(|event| WorkingError {
-        detail: match event.kind {
-            EventKind::ToolCalled => event
-                .data
-                .pointer("/error/message")
-                .and_then(Value::as_str)
-                .map(str::to_owned),
-            EventKind::TurnCompleted => event
-                .data
-                .get("error")
-                .and_then(Value::as_str)
-                .map(str::to_owned),
-            EventKind::CommandExecuted => event
-                .data
-                .get("stderrTail")
-                .and_then(Value::as_str)
-                .filter(|s| !s.trim().is_empty())
-                .map(str::to_owned),
-            _ => None,
-        },
-        kind: event.kind,
-        summary: event.summary,
-        at: event.at,
-    })
+    .filter_map(error_of)
     .collect();
 
     Ok(WorkingMemory {

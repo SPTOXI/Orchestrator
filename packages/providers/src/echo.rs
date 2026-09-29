@@ -9,6 +9,8 @@
 //! - `/tool <name> [json args]` — asks the Orchestrator to run a tool;
 //! - `/wait <seconds>` — waits (cancellable);
 //! - `/fail [message]` — fails the turn;
+//! - `/context` — shows the project context the session received
+//!   (ADR-0013);
 //! - anything else is echoed back.
 
 use crate::context::TurnContext;
@@ -20,7 +22,9 @@ use crate::provider::{
 use async_trait::async_trait;
 use chrono::Utc;
 use orchestrator_core::{ProviderId, TokenUsage};
+use parking_lot::Mutex;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
@@ -37,6 +41,7 @@ const HELP: &str = concat!(
     "ex.: /tool filesystem.list {\"path\": \".\"}\n",
     "• /wait <segundos> — espera (use Cancelar para interromper)\n",
     "• /fail [mensagem] — faz o turno falhar\n",
+    "• /context — mostra o contexto do projeto que a sessão recebeu\n",
     "• /help — mostra esta ajuda\n",
     "Qualquer outro texto volta como eco.",
 );
@@ -45,6 +50,8 @@ pub struct EchoProvider {
     id: ProviderId,
     name: String,
     chunk_delay: Duration,
+    /// Project context received by each session (native reference).
+    contexts: Mutex<HashMap<String, String>>,
 }
 
 impl EchoProvider {
@@ -60,6 +67,7 @@ impl EchoProvider {
             id: ProviderId::from(id),
             name: name.to_owned(),
             chunk_delay: Duration::from_millis(25),
+            contexts: Mutex::new(HashMap::new()),
         }
     }
 
@@ -71,13 +79,21 @@ impl EchoProvider {
 
     async fn run(
         &self,
+        native: &NativeSession,
         input: &TurnInput,
         ctx: &TurnContext,
         streaming: bool,
     ) -> Result<TurnOutput, ProviderError> {
+        if let Some(context) = &input.context {
+            self.contexts
+                .lock()
+                .insert(native.reference.clone(), context.clone());
+        }
         let command = Command::parse(&input.text)?;
         ctx.report_usage(TokenUsage {
-            input_tokens: estimate_tokens(&input.text),
+            // A real model reads the context too.
+            input_tokens: estimate_tokens(&input.text)
+                + input.context.as_deref().map_or(0, estimate_tokens),
             estimated: true,
             ..Default::default()
         });
@@ -91,6 +107,16 @@ impl EchoProvider {
             Command::Help => out.write(HELP).await?,
             Command::Echo(text) => out.write(&format!("Eco: {text}")).await?,
             Command::Fail(message) => return Err(ProviderError::failed(message)),
+            Command::Context => {
+                let context = self.contexts.lock().get(&native.reference).cloned();
+                match context {
+                    Some(context) => out.write_block(&context).await?,
+                    None => {
+                        out.write("Nenhum contexto do projeto foi anexado a esta sessão.")
+                            .await?
+                    }
+                }
+            }
             Command::Wait(duration) => {
                 out.write(&format!("Aguardando {} s… ", duration.as_secs_f64()))
                     .await?;
@@ -200,6 +226,11 @@ impl AIProvider for EchoProvider {
         _spec: &SessionSpec,
     ) -> Result<NativeSession, ProviderError> {
         if native.reference.starts_with(REFERENCE_PREFIX) {
+            if let Some(context) = native.data.get("context").and_then(Value::as_str) {
+                self.contexts
+                    .lock()
+                    .insert(native.reference.clone(), context.to_owned());
+            }
             Ok(native.clone())
         } else {
             Err(ProviderError::invalid(format!(
@@ -211,11 +242,23 @@ impl AIProvider for EchoProvider {
 
     async fn execute(
         &self,
-        _native: &NativeSession,
+        native: &NativeSession,
         input: &TurnInput,
         ctx: &TurnContext,
     ) -> Result<TurnOutput, ProviderError> {
-        self.run(input, ctx, false).await
+        self.run(native, input, ctx, false).await
+    }
+
+    /// Keeps the received context with the session (for `/context` after a
+    /// restart).
+    async fn snapshot(&self, native: &NativeSession) -> NativeSession {
+        let mut native = native.clone();
+        if let Some(context) = self.contexts.lock().get(&native.reference) {
+            if let Some(data) = native.data.as_object_mut() {
+                data.insert("context".into(), Value::String(context.clone()));
+            }
+        }
+        native
     }
 
     /// Echoes the prompt (no AI): exercises the Council plumbing.
@@ -245,11 +288,11 @@ impl AIProvider for EchoProvider {
 
     async fn stream(
         &self,
-        _native: &NativeSession,
+        native: &NativeSession,
         input: &TurnInput,
         ctx: &TurnContext,
     ) -> Result<TurnOutput, ProviderError> {
-        self.run(input, ctx, true).await
+        self.run(native, input, ctx, true).await
     }
 }
 
@@ -260,6 +303,7 @@ enum Command {
     Tool { name: String, args: Value },
     Wait(Duration),
     Fail(String),
+    Context,
 }
 
 impl Command {
@@ -274,6 +318,7 @@ impl Command {
         };
         match word {
             "help" => Ok(Self::Help),
+            "context" => Ok(Self::Context),
             "fail" => Ok(Self::Fail(if arg.is_empty() {
                 "falha simulada".into()
             } else {
@@ -388,6 +433,7 @@ mod tests {
     fn parses_commands() {
         assert_eq!(Command::parse(" oi ").unwrap(), Command::Echo("oi".into()));
         assert_eq!(Command::parse("/help").unwrap(), Command::Help);
+        assert_eq!(Command::parse("/context").unwrap(), Command::Context);
         assert_eq!(
             Command::parse("/wait 1.5").unwrap(),
             Command::Wait(Duration::from_millis(1500))

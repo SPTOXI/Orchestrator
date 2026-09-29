@@ -1,11 +1,12 @@
 //! Orchestrator desktop shell.
 //!
 //! This crate is only an IPC bridge (ADR-0001, ADR-0003, ADR-0009,
-//! ADR-0011): it turns Tauri commands into `ToolRuntime` / `SessionManager`
-//! / `RouterService` calls and runtime events into Tauri events. It contains
-//! no domain logic.
+//! ADR-0011, ADR-0013): it turns Tauri commands into `ToolRuntime` /
+//! `SessionManager` / `RouterService` / engine calls and runtime events into
+//! Tauri events. It contains no domain logic.
 
 mod commands;
+mod context_commands;
 mod memory_commands;
 mod persistence;
 mod provider_commands;
@@ -13,6 +14,7 @@ mod router_commands;
 mod vault;
 
 use orchestrator_core::{AuditEvent, EventSink, StreamEvent};
+use orchestrator_engine::{ContextBuilder, EngineTools, HandoffService, StoreSessions};
 use orchestrator_memory::{HistoryQuery, MemoryStore};
 use orchestrator_provider_api::ConnectionManager;
 use orchestrator_providers::{EchoProvider, ManagerConfig, ProviderRegistry, SessionManager};
@@ -85,6 +87,12 @@ pub struct AppState {
     pub router: RouterService,
     /// Problem loading `council.json`, if any.
     pub router_warning: Option<String>,
+    /// Context Builder (ADR-0013).
+    pub builder: Arc<ContextBuilder>,
+    /// Problem loading `context.json`, if any.
+    pub context_warning: Option<String>,
+    /// Handoffs between AIs (ADR-0013).
+    pub handoffs: HandoffService,
     pub sink: Arc<DesktopSink>,
     pub data_dir: PathBuf,
 }
@@ -179,12 +187,32 @@ pub fn run() {
             if let Some(warning) = &router_warning {
                 eprintln!("[orchestrator] {warning}");
             }
+            // AI agents get the runtime's tools plus the memory tools; every
+            // session gets the project context on its first turn (ADR-0013).
+            let tools = EngineTools::new(
+                Arc::new(RuntimeTools(runtime.clone())),
+                store.clone(),
+                sink.clone(),
+            );
             let sessions = SessionManager::with_store(
                 registry,
-                Arc::new(RuntimeTools(runtime.clone())),
+                Arc::new(tools),
                 sink.clone(),
                 ManagerConfig::default(),
-                Arc::new(persistence::StoreSessions(store.clone())),
+                Arc::new(StoreSessions(store.clone())),
+            );
+            let (builder, context_warning) =
+                ContextBuilder::new(store.clone(), Some(data_dir.join("context.json")));
+            let builder = Arc::new(builder);
+            if let Some(warning) = &context_warning {
+                eprintln!("[orchestrator] {warning}");
+            }
+            sessions.set_context_source(builder.clone());
+            let handoffs = HandoffService::new(
+                sessions.clone(),
+                store.clone(),
+                builder.clone(),
+                sink.clone(),
             );
             app.manage(AppState {
                 runtime,
@@ -195,6 +223,9 @@ pub fn run() {
                 store_warning,
                 router,
                 router_warning,
+                builder,
+                context_warning,
+                handoffs,
                 sink,
                 data_dir,
             });
@@ -221,6 +252,8 @@ pub fn run() {
             provider_commands::session_close,
             provider_commands::session_resume,
             provider_commands::session_spawn,
+            provider_commands::session_context_get,
+            provider_commands::session_context_set,
             provider_commands::connections_list,
             provider_commands::connection_save,
             provider_commands::connection_delete,
@@ -244,6 +277,14 @@ pub fn run() {
             memory_commands::memory_search,
             memory_commands::decisions_list,
             memory_commands::decision_save,
+            context_commands::context_preview,
+            context_commands::context_settings_get,
+            context_commands::context_settings_save,
+            context_commands::handoff_prepare,
+            context_commands::handoff_create,
+            context_commands::handoff_start,
+            context_commands::handoffs_list,
+            context_commands::handoff_get,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build the Orchestrator desktop app");

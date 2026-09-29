@@ -4,7 +4,7 @@
 use crate::model::{Decision, MemoryEntry, SearchHit};
 use crate::store::{parse_ts, ts, MemoryStore, Sql};
 use chrono::{DateTime, Utc};
-use orchestrator_core::{AuditEvent, EventKind};
+use orchestrator_core::{AuditEvent, EventKind, Handoff};
 use rusqlite::{params, Connection};
 use serde_json::Value;
 
@@ -129,6 +129,78 @@ pub(crate) fn index_event(
     }
 }
 
+/// A handoff between AIs (ADR-0013): goal, status and what remains.
+pub(crate) fn index_handoff(conn: &Connection, handoff: &Handoff) -> Sql<()> {
+    let packet = &handoff.packet;
+    let body = format!(
+        "{}\n{}\n{}\n{}",
+        packet.status,
+        packet.next_action,
+        packet.remaining.join("\n"),
+        packet.completed.join("\n")
+    );
+    put(
+        conn,
+        "handoff",
+        handoff.id.as_str(),
+        handoff.project_id.as_deref(),
+        &handoff.created_at,
+        &packet.goal,
+        &body,
+    )
+}
+
+/// Words that say nothing about a task, in Portuguese and English.
+const STOPWORDS: &[&str] = &[
+    "a", "ao", "aos", "as", "com", "como", "da", "das", "de", "do", "dos", "e", "ela", "ele", "em",
+    "entre", "era", "essa", "esse", "esta", "este", "eu", "foi", "isso", "isto", "ja", "mais",
+    "mas", "me", "meu", "minha", "na", "nas", "nao", "no", "nos", "num", "numa", "o", "os", "ou",
+    "para", "pela", "pelo", "por", "pra", "qual", "quando", "que", "se", "sem", "ser", "seu",
+    "sua", "tem", "um", "uma", "voce", "the", "and", "for", "with", "from", "that", "this", "into",
+    "then", "than", "are", "was", "were", "you", "your", "our", "can", "please", "fix", "faca",
+    "faz", "fazer", "vamos", "agora", "aqui",
+];
+
+/// Folds accents so stop words match ("não" → "nao").
+fn fold(word: &str) -> String {
+    word.chars()
+        .map(|c| match c {
+            'á' | 'à' | 'â' | 'ã' | 'ä' => 'a',
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'í' | 'ì' | 'î' | 'ï' => 'i',
+            'ó' | 'ò' | 'ô' | 'õ' | 'ö' => 'o',
+            'ú' | 'ù' | 'û' | 'ü' => 'u',
+            'ç' => 'c',
+            other => other,
+        })
+        .collect()
+}
+
+/// `"webhook"* OR "stripe"*`-style query for relevance (ADR-0013): any
+/// significant word counts, ranking does the rest. Short words and stop
+/// words are dropped; at most `MAX_TERMS` words.
+pub(crate) fn fts_any_query(text: &str) -> Option<String> {
+    const MAX_TERMS: usize = 12;
+    let mut terms: Vec<String> = Vec::new();
+    for word in text.split(|c: char| !c.is_alphanumeric()) {
+        let word = word.to_lowercase();
+        if word.chars().count() < 3 || STOPWORDS.contains(&fold(&word).as_str()) {
+            continue;
+        }
+        if word.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        let term = format!("\"{word}\"*");
+        if !terms.contains(&term) {
+            terms.push(term);
+        }
+        if terms.len() == MAX_TERMS {
+            break;
+        }
+    }
+    (!terms.is_empty()).then(|| terms.join(" OR "))
+}
+
 /// `"filas" "distrib"*`-style query: every word must appear, the last
 /// one may be a prefix. `None` when nothing searchable is left.
 pub(crate) fn fts_query(text: &str) -> Option<String> {
@@ -140,7 +212,69 @@ pub(crate) fn fts_query(text: &str) -> Option<String> {
     (!words.is_empty()).then(|| words.join(" "))
 }
 
+fn hit_from_row(row: &rusqlite::Row<'_>) -> Sql<SearchHit> {
+    let kind: String = row.get(0)?;
+    let ref_id: String = row.get(1)?;
+    let snippet: String = row.get(3)?;
+    let title: String = row.get(2)?;
+    Ok(SearchHit {
+        ref_id: match kind.as_str() {
+            "message" => ref_id.split(':').next().unwrap_or_default().to_owned(),
+            _ => ref_id,
+        },
+        snippet: if snippet.trim().is_empty() {
+            title.clone()
+        } else {
+            snippet
+        },
+        title,
+        kind,
+        at: parse_ts(&row.get::<_, String>(4)?),
+    })
+}
+
 impl MemoryStore {
+    /// Entries related to a task (ADR-0013): any significant word of `text`
+    /// matches, best first, only the given kinds (`memory`, `decision`,
+    /// `message`, `event`, `handoff`; empty = all).
+    pub fn search_related(
+        &self,
+        project_id: &str,
+        text: &str,
+        kinds: &[&str],
+        limit: usize,
+    ) -> Result<Vec<SearchHit>, String> {
+        let Some(query) = fts_any_query(text) else {
+            return Ok(Vec::new());
+        };
+        let kinds_sql = if kinds.is_empty() {
+            String::new()
+        } else {
+            let list: Vec<String> = kinds
+                .iter()
+                .filter(|k| k.chars().all(|c| c.is_ascii_lowercase()))
+                .map(|k| format!("'{k}'"))
+                .collect();
+            format!(" AND kind IN ({})", list.join(", "))
+        };
+        let conn = self.db.conn.lock();
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT kind, ref_id, title, snippet(search_index, 5, '[', ']', '…', 16) AS snip, at
+                 FROM search_index
+                 WHERE search_index MATCH ?1 AND project_id = ?2{kinds_sql}
+                 ORDER BY rank LIMIT ?3"
+            ))
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(
+                params![query, project_id, limit.clamp(1, 200) as i64],
+                hit_from_row,
+            )
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Sql<Vec<_>>>().map_err(|e| e.to_string())
+    }
+
     /// Searches a project's memory, decisions, session messages and notable
     /// events (L3), best matches first.
     pub fn search(
@@ -164,26 +298,7 @@ impl MemoryStore {
         let rows = stmt
             .query_map(
                 params![query, project_id, limit.clamp(1, 200) as i64],
-                |row| {
-                    let kind: String = row.get(0)?;
-                    let ref_id: String = row.get(1)?;
-                    let snippet: String = row.get(3)?;
-                    let title: String = row.get(2)?;
-                    Ok(SearchHit {
-                        ref_id: match kind.as_str() {
-                            "message" => ref_id.split(':').next().unwrap_or_default().to_owned(),
-                            _ => ref_id,
-                        },
-                        snippet: if snippet.trim().is_empty() {
-                            title.clone()
-                        } else {
-                            snippet
-                        },
-                        title,
-                        kind,
-                        at: parse_ts(&row.get::<_, String>(4)?),
-                    })
-                },
+                hit_from_row,
             )
             .map_err(|e| e.to_string())?;
         rows.collect::<Sql<Vec<_>>>().map_err(|e| e.to_string())
@@ -192,7 +307,20 @@ impl MemoryStore {
 
 #[cfg(test)]
 mod tests {
-    use super::fts_query;
+    use super::{fts_any_query, fts_query};
+
+    #[test]
+    fn related_queries_keep_significant_words() {
+        assert_eq!(
+            fts_any_query("Corrija a validação da assinatura do webhook do Stripe").unwrap(),
+            "\"corrija\"* OR \"validação\"* OR \"assinatura\"* OR \"webhook\"* OR \"stripe\"*"
+        );
+        assert_eq!(
+            fts_any_query("não para the webhook webhook 2024").unwrap(),
+            "\"webhook\"*"
+        );
+        assert!(fts_any_query("ok, e aí?").is_none());
+    }
 
     #[test]
     fn queries_are_sanitized() {

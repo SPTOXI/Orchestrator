@@ -107,9 +107,13 @@ pub struct SessionSpec {
 }
 
 /// Input of one turn.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TurnInput {
     pub text: String,
+    /// Project context for the session, set on its first turn only
+    /// (ADR-0013). Providers add it to the session's system instructions,
+    /// which then stay the same for the following turns.
+    pub context: Option<String>,
 }
 
 /// Aggregated output of one turn.

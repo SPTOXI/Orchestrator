@@ -2,6 +2,7 @@
 // L2 project memory, decisions and L3 search.
 
 import { type FormEvent, useEffect, useState } from "react";
+import { handoffStatusLabel } from "../lib/context";
 import { formatTime, relativePath } from "../lib/format";
 import {
   changeLabel,
@@ -31,6 +32,7 @@ interface Props {
   nonce: number;
   onOpenSession: (id: string) => void;
   onOpenFile: (path: string) => void;
+  onOpenHandoff: (handoffId: string) => void;
 }
 
 const SECTIONS: Array<[MemorySection, string]> = [
@@ -55,7 +57,8 @@ function WorkingSection({
   memory,
   onOpenSession,
   onOpenFile,
-}: Pick<Props, "memory" | "onOpenSession" | "onOpenFile">) {
+  onOpenHandoff,
+}: Pick<Props, "memory" | "onOpenSession" | "onOpenFile" | "onOpenHandoff">) {
   const working = memory.overview?.working;
   if (!working) return <div className="meta pad">Carregando…</div>;
   return (
@@ -66,8 +69,10 @@ function WorkingSection({
         <ul className="plain-list">
           {working.sessions.map((s) => (
             <li key={s.id} className="clickable" onClick={() => onOpenSession(s.id)}>
-              <span className={`dot ${s.status === "closed" ? "off" : "ok"}`} />
-              <strong className="ellipsis">{s.title}</strong>
+              <div className="row">
+                <span className={`dot ${s.status === "closed" ? "off" : "ok"}`} />
+                <strong className="ellipsis">{s.title}</strong>
+              </div>
               <span className="meta">
                 {s.provider}
                 {s.model ? ` / ${s.model}` : ""} · {s.turns} {s.turns === 1 ? "turno" : "turnos"} · {formatTime(s.updatedAt)}
@@ -99,6 +104,26 @@ function WorkingSection({
               <span className="mono ellipsis">{c.command}</span>
               <span className={`meta ${c.exitCode ? "err-text" : ""}`}>
                 {exitLabel(c.exitCode, c.background)} · {formatTime(c.at)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </section>
+      <section>
+        <h3>Handoffs</h3>
+        {memory.handoffs.length === 0 && (
+          <div className="meta">Nenhum handoff. Use "Handoff" numa sessão para passar o trabalho a outra IA.</div>
+        )}
+        <ul className="plain-list">
+          {memory.handoffs.slice(0, 8).map((h) => (
+            <li key={h.id} className="clickable" onClick={() => onOpenHandoff(h.id)} title={h.packet.nextAction}>
+              <span className={`badge status-${h.status === "accepted" ? "accepted" : "proposed"}`}>
+                {handoffStatusLabel(h)}
+              </span>
+              <strong className="ellipsis">{h.packet.goal}</strong>
+              <span className="meta ellipsis">
+                {h.from.provider}
+                {h.to ? ` → ${h.to.provider}` : ""} · {formatTime(h.createdAt)}
               </span>
             </li>
           ))}
@@ -416,9 +441,21 @@ const HIT_LABELS: Record<SearchHit["kind"], string> = {
   decision: "decisão",
   message: "sessão",
   event: "evento",
+  handoff: "handoff",
 };
 
-export function MemoryView({ ready, active, memory, projectId, section: initialSection, query, nonce, onOpenSession, onOpenFile }: Props) {
+export function MemoryView({
+  ready,
+  active,
+  memory,
+  projectId,
+  section: initialSection,
+  query,
+  nonce,
+  onOpenSession,
+  onOpenFile,
+  onOpenHandoff,
+}: Props) {
   const [section, setSection] = useState<MemorySection>(initialSection);
   const [text, setText] = useState(query);
   const [hits, setHits] = useState<SearchHit[] | null>(null);
@@ -464,6 +501,9 @@ export function MemoryView({ ready, active, memory, projectId, section: initialS
       case "message":
         onOpenSession(hit.refId);
         break;
+      case "handoff":
+        onOpenHandoff(hit.refId);
+        break;
       case "event":
         break;
     }
@@ -492,7 +532,12 @@ export function MemoryView({ ready, active, memory, projectId, section: initialS
         {!projectId ? (
           <div className="meta pad">Abra um projeto para ver a memória dele.</div>
         ) : section === "working" ? (
-          <WorkingSection memory={memory} onOpenSession={onOpenSession} onOpenFile={onOpenFile} />
+          <WorkingSection
+            memory={memory}
+            onOpenSession={onOpenSession}
+            onOpenFile={onOpenFile}
+            onOpenHandoff={onOpenHandoff}
+          />
         ) : section === "project" ? (
           <ProjectSection ready={ready} memory={memory} projectId={projectId} focus={focus} />
         ) : section === "decisions" ? (

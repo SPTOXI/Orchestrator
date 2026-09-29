@@ -3,15 +3,15 @@
 
 use async_trait::async_trait;
 use orchestrator_core::{
-    AuditEvent, CallOrigin, EventKind, MemorySink, ProviderId, SessionEvent, SessionId,
-    SessionInfo, SessionStatus, StreamEvent, ToolCall, ToolDefinition, ToolErrorKind, ToolResult,
-    TurnStatus,
+    AuditEvent, CallOrigin, ContextSectionSummary, ContextSummary, EventKind, MemorySink,
+    ProviderId, SessionEvent, SessionId, SessionInfo, SessionStatus, StreamEvent, ToolCall,
+    ToolDefinition, ToolErrorKind, ToolResult, TurnStatus,
 };
 use orchestrator_providers::{
-    AIProvider, EchoProvider, ManagerConfig, MemorySessionStore, NativeSession,
-    ProviderCapabilities, ProviderDescriptor, ProviderErrorKind, ProviderRegistry, ProviderStatus,
-    SessionManager, SessionSpec, SessionStore, StartRequest, ToolExecutor, TurnContext, TurnInput,
-    TurnOutput,
+    AIProvider, AttachedContext, ContextOptions, ContextRequest, ContextSource, EchoProvider,
+    ManagerConfig, MemorySessionStore, NativeSession, ProviderCapabilities, ProviderDescriptor,
+    ProviderErrorKind, ProviderRegistry, ProviderStatus, SessionManager, SessionSpec, SessionStore,
+    StartRequest, ToolExecutor, TurnContext, TurnInput, TurnOutput,
 };
 use orchestrator_runtime::{RuntimeConfig, ToolRuntime};
 use parking_lot::Mutex;
@@ -1075,4 +1075,230 @@ async fn sessions_and_transcripts_survive_a_restart() {
         &e.event,
         SessionEvent::TurnStarted { input, .. } if input == "de novo"
     )));
+}
+
+/// A context source that says what it got, like the app's Context Builder
+/// would (ADR-0013).
+#[derive(Default)]
+struct ScriptedContext {
+    requests: Mutex<Vec<(String, String, bool)>>,
+    fail: bool,
+}
+
+#[async_trait]
+impl ContextSource for ScriptedContext {
+    async fn build(&self, request: ContextRequest) -> Result<Option<AttachedContext>, String> {
+        self.requests.lock().push((
+            request.session.title.clone(),
+            request.task.clone(),
+            request.tools,
+        ));
+        if self.fail {
+            return Err("banco indisponível".into());
+        }
+        if request.options.enabled == Some(false) {
+            return Ok(None);
+        }
+        Ok(Some(AttachedContext {
+            text: format!("## TASK\n{}", request.task),
+            summary: ContextSummary {
+                tokens: 12,
+                budget: request.options.budget.unwrap_or(1_500),
+                sections: vec![ContextSectionSummary {
+                    kind: "task".into(),
+                    title: "TASK".into(),
+                    items: 1,
+                    tokens: 12,
+                }],
+                omitted: vec!["1 item de histórico (orçamento)".into()],
+                handoff_id: request.options.handoff_id.clone(),
+            },
+        }))
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_first_turn_carries_the_project_context() {
+    let h = harness();
+    let source = Arc::new(ScriptedContext::default());
+    h.manager.set_context_source(source.clone());
+    let info = h.start().await;
+
+    // First turn: the source is asked with the message as the task, the
+    // provider receives the text (echo keeps it for /context).
+    let first = h
+        .manager
+        .execute(&info.id, "/context".into(), CallOrigin::User)
+        .await
+        .unwrap();
+    assert_eq!(first.text, "## TASK\n/context");
+    assert_eq!(
+        source.requests.lock().clone(),
+        [("Echo #1".to_owned(), "/context".to_owned(), true)]
+    );
+    // The context counts as input for the model.
+    assert!(first.usage.input_tokens > 2);
+    let events = h.events(&info.id);
+    let attached = events
+        .iter()
+        .position(
+            |e| matches!(e, SessionEvent::ContextAttached { summary, .. } if summary.tokens == 12),
+        )
+        .expect("context in the transcript");
+    assert!(matches!(events[0], SessionEvent::TurnStarted { .. }));
+    assert!(attached > 0);
+    let built = h.audits(EventKind::ContextBuilt);
+    assert_eq!(built.len(), 1);
+    assert_eq!(built[0].origin, CallOrigin::System);
+    assert_eq!(built[0].data["sessionId"], json!(info.id));
+    assert_eq!(built[0].data["tokens"], 12);
+    assert_eq!(
+        built[0].data["omitted"][0],
+        "1 item de histórico (orçamento)"
+    );
+    assert!(
+        built[0].data.get("text").is_none(),
+        "the history never keeps the text"
+    );
+
+    // Later turns: no new context, the session still has the first one.
+    let second = h
+        .manager
+        .execute(&info.id, "/context".into(), CallOrigin::User)
+        .await
+        .unwrap();
+    assert_eq!(second.text, "## TASK\n/context");
+    assert_eq!(source.requests.lock().len(), 1);
+    assert_eq!(h.audits(EventKind::ContextBuilt).len(), 1);
+
+    // Options change only before the first turn.
+    assert!(h
+        .manager
+        .set_context_options(&info.id, ContextOptions::default())
+        .is_err());
+
+    // A session that opted out gets nothing.
+    let plain = h
+        .manager
+        .start(
+            StartRequest {
+                context: ContextOptions {
+                    enabled: Some(false),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            h._dir.path().to_path_buf(),
+            CallOrigin::User,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        h.manager.context_options(&plain.id).unwrap().enabled,
+        Some(false)
+    );
+    h.manager
+        .set_context_options(
+            &plain.id,
+            ContextOptions {
+                enabled: Some(false),
+                budget: Some(600),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        h.manager.context_options(&plain.id).unwrap().budget,
+        Some(600)
+    );
+    let none = h
+        .manager
+        .execute(&plain.id, "/context".into(), CallOrigin::User)
+        .await
+        .unwrap();
+    assert_eq!(
+        none.text,
+        "Nenhum contexto do projeto foi anexado a esta sessão."
+    );
+    assert_eq!(h.audits(EventKind::ContextBuilt).len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_context_failure_does_not_fail_the_turn() {
+    let h = harness();
+    h.manager.set_context_source(Arc::new(ScriptedContext {
+        fail: true,
+        ..Default::default()
+    }));
+    let info = h.start().await;
+    let done = h
+        .manager
+        .execute(&info.id, "olá".into(), CallOrigin::User)
+        .await
+        .unwrap();
+    assert_eq!(done.status, TurnStatus::Completed);
+    assert_eq!(done.text, "Eco: olá");
+    assert!(h.events(&info.id).iter().any(|e| matches!(
+        e,
+        SessionEvent::Notice { message, .. } if message.contains("banco indisponível")
+    )));
+    assert!(h.audits(EventKind::ContextBuilt).is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn context_options_and_the_received_context_survive_a_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let store: Arc<MemorySessionStore> = Arc::new(MemorySessionStore::new());
+    let open = |sink: &Arc<MemorySink>| {
+        let manager = SessionManager::with_store(
+            registry(sink, Vec::new()),
+            Arc::new(RuntimeTools(ToolRuntime::new(
+                RuntimeConfig {
+                    base_dir: dir.path().to_path_buf(),
+                },
+                sink.clone(),
+            ))),
+            sink.clone(),
+            config(),
+            store.clone(),
+        );
+        manager.set_context_source(Arc::new(ScriptedContext::default()));
+        manager
+    };
+    let sink = Arc::new(MemorySink::new());
+    let first = open(&sink);
+    let info = first
+        .start(
+            StartRequest {
+                context: ContextOptions {
+                    budget: Some(800),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            dir.path().to_path_buf(),
+            CallOrigin::User,
+        )
+        .await
+        .unwrap();
+    first
+        .execute(&info.id, "corrigir o checkout".into(), CallOrigin::User)
+        .await
+        .unwrap();
+    drop(first);
+
+    let sink = Arc::new(MemorySink::new());
+    let second = open(&sink);
+    assert_eq!(second.context_options(&info.id).unwrap().budget, Some(800));
+    second.resume(&info.id, CallOrigin::User).await.unwrap();
+    let again = second
+        .execute(&info.id, "/context".into(), CallOrigin::User)
+        .await
+        .unwrap();
+    // Not rebuilt: the context of the first turn came back with the session.
+    assert_eq!(again.text, "## TASK\ncorrigir o checkout");
+    assert!(sink
+        .audit_events()
+        .iter()
+        .all(|e| e.kind != EventKind::ContextBuilt));
 }

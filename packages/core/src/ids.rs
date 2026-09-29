@@ -79,6 +79,10 @@ define_id!(
     /// Identifies one deliberation of the model Council (ADR-0011).
     DeliberationId
 );
+define_id!(
+    /// Identifies one handoff between AIs (ADR-0013).
+    HandoffId
+);
 
 /// Stable, human-chosen identifier of a registered AI provider, e.g.
 /// `openai-codex` or `claude-code`. Not generated: it names an adapter.

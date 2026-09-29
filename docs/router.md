@@ -67,6 +67,11 @@ Regras do Full:
 - Escolher o modelo **não** dá permissão para operações. O gate de
   autonomia (Assistido / Autônomo / Acesso Irrestrito) chega na Fase 9, e
   nas Fases 8–9 o mesmo serviço escolhe o modelo de tasks e agentes.
+- A sessão aberta pelo Full recebe o contexto do projeto no primeiro turno,
+  como qualquer sessão (Fase 7, [context.md](./context.md)). Os membros do
+  Conselho continuam sem contexto, arquivos e ferramentas.
+- O handoff (Fase 7) usa o roteador para sugerir quem assume, pelo objetivo
+  e o que falta, sem gastar tokens.
 
 Sugerir e Full exigem pelo menos um membro.
 

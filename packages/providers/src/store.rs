@@ -1,6 +1,7 @@
 //! Where the `SessionManager` keeps sessions between runs (ADR-0012). The
 //! app stores them in its database; tests use [`MemorySessionStore`].
 
+use crate::project_context::ContextOptions;
 use crate::provider::NativeSession;
 use orchestrator_core::{SessionId, SessionInfo, SessionLogEntry};
 use parking_lot::Mutex;
@@ -15,6 +16,8 @@ pub struct PersistedSession {
     /// What the session was opened with.
     pub instructions: Option<String>,
     pub requested_model: Option<String>,
+    /// Project context options (ADR-0013).
+    pub context: ContextOptions,
 }
 
 /// Persistence of provider sessions. Implementations report their own

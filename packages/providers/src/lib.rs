@@ -22,6 +22,7 @@ mod echo;
 mod error;
 mod log;
 mod manager;
+mod project_context;
 mod provider;
 mod registry;
 mod store;
@@ -30,6 +31,7 @@ pub use context::{ToolExecutor, TurnContext, TurnObserver};
 pub use echo::EchoProvider;
 pub use error::{ProviderError, ProviderErrorKind};
 pub use manager::{ManagerConfig, SessionManager, SessionSnapshot, StartRequest, TurnResult};
+pub use project_context::{AttachedContext, ContextOptions, ContextRequest, ContextSource};
 pub use provider::{
     AIProvider, Completion, CompletionRequest, ModelInfo, NativeSession, ProviderCapabilities,
     ProviderDescriptor, ProviderStatus, SessionSpec, TurnInput, TurnOutput,

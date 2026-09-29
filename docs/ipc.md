@@ -13,8 +13,9 @@ Provider Layer (packages/providers) ──tool_call──▶ ToolRuntime::invoke
 ```
 
 Decisões registradas em [ADR-0003](./adr/0003-gateway-ipc-unico.md),
-[ADR-0009](./adr/0009-camada-de-providers-e-sessoes.md) e
-[ADR-0010](./adr/0010-providers-por-api-com-cadastro-livre.md).
+[ADR-0009](./adr/0009-camada-de-providers-e-sessoes.md),
+[ADR-0010](./adr/0010-providers-por-api-com-cadastro-livre.md) e
+[ADR-0013](./adr/0013-context-builder-e-handoff.md).
 
 ## Comandos
 
@@ -46,16 +47,23 @@ Não são ferramentas do sistema operacional, então não passam por
 | `provider_inspect` | `id` | `ProviderStatus` | — |
 | `provider_select` | `id` | `{ providers, active }` | `PROVIDER_SWITCHED` |
 | `sessions_list` | — | `SessionInfo[]` (mais nova primeiro) | — |
-| `session_start` | `request?: { provider?, title?, model?, instructions? }` | `SessionInfo` (no projeto aberto) | `SESSION_STARTED` |
+| `session_start` | `request?: { provider?, title?, model?, instructions?, context? }` | `SessionInfo` (no projeto aberto) | `SESSION_STARTED` |
 | `session_get` | `id` | `{ info, entries, lastSeq, truncated }` | — |
 | `session_send` | `id`, `input` | `turnId`; o progresso chega por eventos | `TURN_COMPLETED` ao terminar |
 | `session_cancel` | `id` | `SessionInfo` | `TURN_COMPLETED` (`cancelled`) |
 | `session_close` | `id` | `SessionInfo` | `SESSION_CLOSED` |
 | `session_resume` | `id` | `SessionInfo` | `SESSION_RESUMED` |
 | `session_spawn` | `parentId`, `request?` | `SessionInfo` do subagente | `SESSION_STARTED` com `parentSessionId` |
+| `session_context_get` | `id` | `ContextOptions` (`{ enabled?, budget?, handoffId? }`) | — |
+| `session_context_set` | `id`, `options: ContextOptions` | `ContextOptions`; recusado depois do primeiro turno (o contexto já foi) | — |
 
 Ferramentas pedidas pelo provider passam pelo mesmo `ToolRuntime::invoke` e
 geram `TOOL_CALLED` com `origin = agent { agentId, sessionId, provider }`.
+Desde a Fase 7, as ferramentas de memória (`memory.*`, `decision.*`) são
+atendidas pelo `EngineTools` antes do runtime, com o mesmo registro.
+
+No primeiro turno de cada sessão, o `SessionManager` anexa o contexto do
+projeto (se ligado) e grava `CONTEXT_BUILT` com origem `system`.
 
 ### Conexões de API (Fase 4, ADR-0010)
 
@@ -114,6 +122,23 @@ As escritas têm origem `user`. Referência: [`memory.md`](./memory.md).
 `council_history` também passa a vir do banco: as deliberações e o cache do
 Conselho sobrevivem ao reinício.
 
+### Contexto e handoff (Fase 7, ADR-0013)
+
+O Context Builder e o handoff entre IAs. Os comandos de contexto rejeitam
+com uma mensagem; os de handoff, com `{ kind, message }`. As escritas têm
+origem `user`. Referência: [`context.md`](./context.md).
+
+| Comando | Argumentos | Retorno | Histórico |
+| ------- | ---------- | ------- | --------- |
+| `context_preview` | `request?: { projectPath?, task?, handoffId?, budget?, sessionId? }` | `ContextPack` (seções, tokens, o que ficou de fora, texto exato); nada é enviado | — |
+| `context_settings_get` | — | `{ settings: { autoAttach, budgetTokens }, minBudget, maxBudget, defaultBudget, warning }` | — |
+| `context_settings_save` | `settings` | `ContextSettings` (grava `context.json`) | — |
+| `handoff_prepare` | `request: { sessionId, askAgent? }` (padrão `true`) | `HandoffDraft` (`{ from, projectPath, packet, byAgent, notes, usage }`); nada é gravado | com `askAgent`, o turno da IA na sessão de origem (`TURN_COMPLETED`, origem `system`) |
+| `handoff_create` | `request: { sessionId, packet, byAgent? }` | `Handoff` | `HANDOFF_CREATED` |
+| `handoff_start` | `request: { handoffId, provider, model?, title?, budget? }` | `{ handoff, session, turnId, sendError }` | `SESSION_STARTED`, `HANDOFF_ACCEPTED`, `CONTEXT_BUILT` e o primeiro turno |
+| `handoffs_list` | `projectId?` (sem ele, todos) | `Handoff[]` (mais novo primeiro, até 50) | — |
+| `handoff_get` | `id` | `Handoff \| null` | — |
+
 ## Eventos
 
 | Evento | Payload | Uso |
@@ -164,8 +189,9 @@ entrada "Stack" da memória) seguem o mesmo caminho
 
 - O `audit.jsonl` das fases anteriores é importado na primeira execução e
   renomeado para `audit.jsonl.imported`.
-- Sessões de provider, transcripts e deliberações do Conselho também ficam
-  no banco.
+- Sessões de provider (com as opções de contexto), transcripts,
+  deliberações do Conselho e handoffs também ficam no banco.
+- A configuração do contexto fica em `<app-data>/context.json`.
 - Se o arquivo não abrir, o app usa um banco em memória e avisa
   (`app_info.databaseWarning`, na barra de status; o rodapé do HISTORY
   mostra `banco: (memória)`).

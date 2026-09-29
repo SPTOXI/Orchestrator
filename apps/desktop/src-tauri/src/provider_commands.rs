@@ -11,7 +11,8 @@ use orchestrator_provider_api::{
     ConnectionManager, ConnectionView, ModelEntry, Preset, ProbeRequest, SaveRequest, TestReport,
 };
 use orchestrator_providers::{
-    ProviderError, ProviderInfo, ProviderStatus, SessionSnapshot, StartRequest, ToolExecutor,
+    ContextOptions, ProviderError, ProviderInfo, ProviderStatus, SessionSnapshot, StartRequest,
+    ToolExecutor,
 };
 use orchestrator_runtime::ToolRuntime;
 use serde::Serialize;
@@ -147,6 +148,27 @@ pub async fn session_resume(
         .sessions
         .resume(&SessionId::from(id), CallOrigin::User)
         .await
+}
+
+/// Context options of a session (ADR-0013); changeable before its first
+/// turn.
+#[tauri::command]
+pub fn session_context_get(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<ContextOptions, ProviderError> {
+    state.sessions.context_options(&SessionId::from(id))
+}
+
+#[tauri::command]
+pub fn session_context_set(
+    state: State<'_, AppState>,
+    id: String,
+    options: ContextOptions,
+) -> Result<ContextOptions, ProviderError> {
+    state
+        .sessions
+        .set_context_options(&SessionId::from(id), options)
 }
 
 /// Opens a subagent session (`spawnAgent`).

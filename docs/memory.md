@@ -1,9 +1,11 @@
 # Banco local, memória e histórico
 
-Referência da Fase 6. Decisão em
-[ADR-0012](./adr/0012-sqlite-memoria-e-historico.md); código em
+Referência da Fase 6, com os acréscimos da Fase 7. Decisões em
+[ADR-0012](./adr/0012-sqlite-memoria-e-historico.md) e
+[ADR-0013](./adr/0013-context-builder-e-handoff.md); código em
 [`packages/memory`](../packages/memory/README.md) (crate
-`orchestrator-memory`).
+`orchestrator-memory`). Como a memória chega às IAs está em
+[context.md](./context.md).
 
 > A memória pertence ao projeto, não ao provider. Trocar de IA não apaga o
 > que o projeto sabe.
@@ -25,9 +27,9 @@ Referência da Fase 6. Decisão em
 - **Segredos:** nunca vão para o banco. As chaves de API continuam só no
   cofre do sistema.
 - **Configuração:** continua em arquivos (`connections.json`,
-  `council.json`).
+  `council.json`, `context.json`).
 
-### Esquema (v1)
+### Esquema (v2)
 
 | Tabela | Conteúdo |
 | ------ | -------- |
@@ -40,8 +42,10 @@ Referência da Fase 6. Decisão em
 | `decisions` | decisões do projeto |
 | `deliberations` | deliberações do Conselho, com a chave e a validade do cache |
 | `search_index` | índice FTS5 da busca L3 |
+| `handoffs` | handoffs entre IAs (Fase 7, migração 2): projeto, sessões de origem e destino, estado, datas e o `Handoff` em JSON |
 
-As tabelas das próximas fases (tasks, agentes, file locks, artefatos,
+A migração 2 só acrescenta a tabela `handoffs`: um banco da Fase 6 é
+atualizado ao abrir, sem perder nada. As tabelas das próximas fases (tasks, agentes, file locks, artefatos,
 operações Git) entram com as migrações dessas fases.
 
 ## Histórico
@@ -134,10 +138,18 @@ Busca de texto (FTS5) sem acento e sem diferenciar maiúsculas. Cada palavra
 - decisões;
 - mensagens das sessões: o que o usuário enviou e o texto das respostas;
 - eventos notáveis: commits, pushes, comandos, ferramentas e turnos que
-  falharam.
+  falharam;
+- handoffs (Fase 7): objetivo, estado, o que falta e a próxima ação.
 
 O resultado vem por relevância, com o trecho e os termos marcados. Um clique
-abre a entrada, a decisão ou a sessão.
+abre a entrada, a decisão, a sessão ou o handoff.
+
+**Busca por relevância** (`search_related`, Fase 7): o Context Builder
+procura o que tem a ver com a tarefa. Aqui basta **qualquer** palavra
+significativa (consulta `OR`, a ordem fica com o ranking). Palavras com
+menos de 3 letras, números e palavras comuns em português e inglês ("de",
+"para", "the", "with"…) ficam de fora, até 12 termos. A busca da UI
+continua exigindo todas as palavras.
 
 ### Eventos
 
@@ -148,8 +160,30 @@ abre a entrada, a decisão ou a sessão.
 | `MEMORY_REMOVED` | entrada L2 apagada | `projectId`, `entryId`, `kind`, `title` |
 | `DECISION_SAVED` | decisão registrada ou alterada | `projectId`, `decisionId`, `title`, `status`, `previousStatus`, `source` |
 
-O que a UI grava tem origem `user`. Ferramentas para as IAs lerem e
-escreverem a memória entram com o Context Builder (Fase 7).
+O que a UI grava tem origem `user`. Desde a Fase 7, as IAs leem e gravam a
+memória pelas ferramentas `memory.*` e `decision.*` ([context.md](./context.md#ferramentas-de-memória-das-ias)):
+o que elas gravam tem origem `agent`, elas não alteram entradas do usuário
+nem do detector e não apagam nada.
+
+## Handoffs (Fase 7)
+
+Um handoff passa o trabalho de uma sessão para outra IA pelo
+`HandoffPacket`, sem a conversa ([context.md](./context.md#handoff-entre-ias)).
+No banco:
+
+- **`handoffs`:** um registro por handoff, `created` até outra sessão
+  assumir, e então `accepted`, com a sessão de destino e a data. A
+  aceitação é atômica: um handoff é assumido uma vez só ("este handoff já
+  foi assumido por …").
+- **Fatos da sessão** (`session_facts`): o que o histórico diz que a sessão
+  fez, base do rascunho:
+  - as primeiras 5 mensagens do usuário;
+  - arquivos alterados (até 20), comandos (até 15) e erros (até 10) da
+    sessão;
+  - arquivos e comandos do próprio usuário no projeto enquanto a sessão
+    estava aberta.
+- **Busca:** cada handoff entra no índice L3 (tipo `handoff`).
+- **Eventos:** `HANDOFF_CREATED` e `HANDOFF_ACCEPTED`, com o projeto.
 
 ## Conselho
 
@@ -166,10 +200,13 @@ Conselho limpa o cache guardado ([router.md](./router.md#cache)).
   - entradas fixadas;
   - um resumo do L1 (sessões, arquivos, erros).
 - **Aba "Memória do projeto":** seções Trabalho (L1), Projeto (L2),
-  Decisões e Busca (L3), com os editores de entradas e decisões.
+  Decisões e Busca (L3), com os editores de entradas e decisões. Desde a
+  Fase 7, Trabalho (L1) lista também os handoffs do projeto, pendentes e
+  aceitos, que abrem a aba Handoff.
 - **Atualização:** as seções se atualizam com os eventos do histórico
   (arquivos, comandos, turnos, memória).
 
 ## IPC
 
-Ver [ipc.md](./ipc.md#histórico-projetos-e-memória-fase-6-adr-0012).
+Ver [ipc.md](./ipc.md#histórico-projetos-e-memória-fase-6-adr-0012) e, para
+contexto e handoffs, [ipc.md](./ipc.md#contexto-e-handoff-fase-7-adr-0013).

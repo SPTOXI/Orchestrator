@@ -5,12 +5,13 @@ use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 
 /// Schema version this build writes.
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 /// Every migration, in order; `MIGRATIONS[n]` takes the schema from `n` to
 /// `n + 1`. Tables of later phases (tasks, agents, file locks…) come with
 /// their own migrations (ADR-0012).
-const MIGRATIONS: [&str; 1] = [r#"
+const MIGRATIONS: [&str; 2] = [
+    r#"
 CREATE TABLE projects (
     id              TEXT PRIMARY KEY,
     path            TEXT NOT NULL UNIQUE,
@@ -120,7 +121,24 @@ CREATE VIRTUAL TABLE search_index USING fts5(
     body,
     tokenize = 'unicode61 remove_diacritics 2'
 );
-"#];
+"#,
+    r#"
+-- Phase 7 (ADR-0013): handoffs between AIs.
+CREATE TABLE handoffs (
+    id            TEXT PRIMARY KEY,
+    project_id    TEXT REFERENCES projects(id) ON DELETE SET NULL,
+    project_path  TEXT NOT NULL,
+    from_session  TEXT NOT NULL,
+    to_session    TEXT,
+    status        TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    accepted_at   TEXT,
+    data          TEXT NOT NULL        -- JSON Handoff
+);
+CREATE INDEX handoffs_project ON handoffs(project_id, created_at);
+CREATE INDEX handoffs_from ON handoffs(from_session);
+"#,
+];
 
 pub struct Database {
     pub(crate) conn: Mutex<Connection>,
@@ -221,6 +239,38 @@ mod tests {
             .pragma_query_value(None, "journal_mode", |r| r.get(0))
             .unwrap();
         assert_eq!(mode, "wal");
+    }
+
+    #[test]
+    fn upgrades_a_phase_6_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("orchestrator.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(&format!(
+                "BEGIN;\n{}\nPRAGMA user_version = 1;\nCOMMIT;",
+                MIGRATIONS[0]
+            ))
+            .unwrap();
+            conn.execute(
+                "INSERT INTO projects (id, path, name, created_at, last_opened_at) VALUES ('p', '/x', 'x', 'a', 'a')",
+                [],
+            )
+            .unwrap();
+        }
+        let db = Database::open(&path).unwrap();
+        let conn = db.conn.lock();
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 2);
+        let projects: i64 = conn
+            .query_row("SELECT count(*) FROM projects", [], |r| r.get(0))
+            .unwrap();
+        let handoffs: i64 = conn
+            .query_row("SELECT count(*) FROM handoffs", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!((projects, handoffs), (1, 0));
     }
 
     #[test]

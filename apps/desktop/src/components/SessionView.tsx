@@ -1,12 +1,15 @@
 // Main area: one provider session — transcript (live), input, cancel,
-// close/resume and subagents (ADR-0009).
+// close/resume and subagents (ADR-0009); the project context of the first
+// message and the handoff to another AI (ADR-0013).
 
 import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { HANDOFF_PROMPT_PREFIX, SECTION_LABELS, summaryLine } from "../lib/context";
 import { formatDuration, formatTime } from "../lib/format";
-import { errorMessage, sessionApi } from "../lib/runtime";
+import { contextApi, errorMessage, sessionApi } from "../lib/runtime";
 import { formatUsage, type TranscriptItem } from "../lib/transcript";
 import { useSessionTranscript } from "../lib/useProviders";
-import type { ProviderInfo, SessionInfo } from "../lib/types";
+import type { ContextOptions, ContextPack, ProviderInfo, SessionInfo } from "../lib/types";
+import type { ContextTabRequest } from "./ContextView";
 import { SendIcon, StopIcon, SubagentIcon } from "./icons";
 import { statusDot, statusLabel } from "./ProvidersPanel";
 
@@ -20,7 +23,11 @@ interface Props {
   session: SessionInfo | null;
   parent: SessionInfo | null;
   providers: ProviderInfo[];
+  /** Title of another session (handoff links). */
+  sessionTitle: (id: string) => string | null;
   onOpenSession: (id: string) => void;
+  onOpenContext: (request: ContextTabRequest) => void;
+  onOpenHandoff: (sessionId: string) => void;
 }
 
 function compactJson(value: unknown, max = 160): string {
@@ -35,15 +42,33 @@ function prettyJson(value: unknown): string {
 
 function Item({
   item,
+  sessionId,
   providerName,
+  sessionTitle,
   onOpenSession,
 }: {
   item: TranscriptItem;
+  sessionId: string;
   providerName: string;
+  sessionTitle: (id: string) => string | null;
   onOpenSession: (id: string) => void;
 }) {
   switch (item.kind) {
     case "user":
+      // The Orchestrator asked the AI for the narrative of a handoff.
+      if (item.text.startsWith(HANDOFF_PROMPT_PREFIX)) {
+        return (
+          <div className="msg user orchestrator">
+            <div className="msg-author">
+              Orchestrator <span className="meta">pedido do resumo do handoff · {formatTime(item.at)}</span>
+            </div>
+            <details>
+              <summary className="meta">instruções enviadas à IA</summary>
+              <div className="msg-text">{item.text}</div>
+            </details>
+          </div>
+        );
+      }
       return (
         <div className="msg user">
           <div className="msg-author">
@@ -117,10 +142,147 @@ function Item({
           <SubagentIcon /> Subagente criado: <strong>{item.title}</strong> <span className="meta">({item.provider})</span>
         </button>
       );
+    case "context":
+      return (
+        <details className="context-item">
+          <summary>
+            Contexto do projeto anexado · <span className="meta">{summaryLine(item.summary)}</span>
+            {item.summary.handoffId && <span className="badge">handoff</span>}
+          </summary>
+          <ul className="plain-list">
+            {item.summary.sections.map((section) => (
+              <li key={section.kind}>
+                <span className="grow">{SECTION_LABELS[section.kind] ?? section.title}</span>
+                <span className="meta">
+                  {section.items} {section.items === 1 ? "item" : "itens"} · ~{section.tokens} tokens
+                </span>
+              </li>
+            ))}
+          </ul>
+          {item.summary.omitted.map((o) => (
+            <div key={o} className="meta">
+              Fora pelo orçamento: {o.replace(/ \(orçamento\)$/, "")}
+            </div>
+          ))}
+        </details>
+      );
+    case "handoff": {
+      const incoming = item.toSession === sessionId;
+      const other = incoming ? item.fromSession : item.toSession;
+      const title = sessionTitle(other) ?? "outra sessão";
+      return (
+        <button className="subagent-link handoff-link" onClick={() => onOpenSession(other)}>
+          {incoming ? "Assumiu o trabalho de " : "Trabalho passado para "}
+          <strong>{title}</strong>
+          {!incoming && <span className="meta"> ({item.provider})</span>}
+          <span className="meta"> · handoff</span>
+        </button>
+      );
+    }
   }
 }
 
-export function SessionView({ ready, active, sessionId, session, parent, providers, onOpenSession }: Props) {
+/** Before the first message: whether the project context goes with it,
+ * and how big it would be for what is being typed. */
+function ProjectContextBar({
+  ready,
+  session,
+  draft,
+  onOpenContext,
+}: {
+  ready: boolean;
+  session: SessionInfo;
+  draft: string;
+  onOpenContext: (request: ContextTabRequest) => void;
+}) {
+  const [options, setOptions] = useState<ContextOptions | null>(null);
+  const [auto, setAuto] = useState(true);
+  const [pack, setPack] = useState<ContextPack | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!ready) return;
+    Promise.all([sessionApi.context(session.id), contextApi.settings()])
+      .then(([o, view]) => {
+        setOptions(o);
+        setAuto(view.settings.autoAttach);
+      })
+      .catch((e) => setError(errorMessage(e)));
+  }, [ready, session.id]);
+
+  const handoff = options?.handoffId ?? null;
+  const enabled = handoff ? true : (options?.enabled ?? auto);
+
+  useEffect(() => {
+    if (!ready || !options || !enabled) {
+      setPack(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      contextApi
+        .preview({
+          sessionId: session.id,
+          projectPath: session.projectPath,
+          task: draft,
+          handoffId: handoff ?? undefined,
+          budget: options.budget ?? undefined,
+        })
+        .then((p) => {
+          setPack(p);
+          setError(null);
+        })
+        .catch((e) => setError(errorMessage(e)));
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [ready, options, enabled, draft, handoff, session.id, session.projectPath]);
+
+  const toggle = () => {
+    if (!options || handoff) return;
+    sessionApi
+      .setContext(session.id, { ...options, enabled: !enabled })
+      .then(setOptions)
+      .catch((e) => setError(errorMessage(e)));
+  };
+
+  return (
+    <div className="context-bar row">
+      <label className="check" title="O contexto vai uma vez, com a primeira mensagem">
+        <input type="checkbox" checked={enabled} disabled={!options || handoff !== null} onChange={toggle} />
+        {handoff ? "Contexto do projeto com o HANDOFF" : "Anexar o contexto do projeto à primeira mensagem"}
+      </label>
+      <span className="meta grow ellipsis">
+        {error ?? (!enabled ? "a IA recebe só a mensagem" : pack ? summaryLine(pack) : "calculando…")}
+      </span>
+      <button
+        className="link"
+        disabled={!enabled}
+        onClick={() =>
+          onOpenContext({
+            sessionId: session.id,
+            task: draft,
+            projectPath: session.projectPath,
+            handoffId: handoff ?? undefined,
+          })
+        }
+      >
+        Ver prévia
+      </button>
+    </div>
+  );
+}
+
+export function SessionView({
+  ready,
+  active,
+  sessionId,
+  session,
+  parent,
+  providers,
+  sessionTitle,
+  onOpenSession,
+  onOpenContext,
+  onOpenHandoff,
+}: Props) {
   const { transcript, error: syncError } = useSessionTranscript(sessionId, ready);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -213,6 +375,14 @@ export function SessionView({ ready, active, sessionId, session, parent, provide
         >
           <SubagentIcon /> Subagente
         </button>
+        <button
+          className="button small"
+          disabled={!ready || running || !session || session.turns === 0}
+          title="Passar este trabalho para outra IA, sem a conversa (HandoffPacket)"
+          onClick={() => onOpenHandoff(sessionId)}
+        >
+          Handoff
+        </button>
         {running && (
           <button
             className="button small danger"
@@ -294,7 +464,14 @@ export function SessionView({ ready, active, sessionId, session, parent, provide
           </div>
         )}
         {transcript.items.map((item) => (
-          <Item key={item.key} item={item} providerName={providerName} onOpenSession={onOpenSession} />
+          <Item
+            key={item.key}
+            item={item}
+            sessionId={sessionId}
+            providerName={providerName}
+            sessionTitle={sessionTitle}
+            onOpenSession={onOpenSession}
+          />
         ))}
         {running && <div className="meta typing">{providerName} está trabalhando…</div>}
       </div>
@@ -303,6 +480,9 @@ export function SessionView({ ready, active, sessionId, session, parent, provide
           O provider <code>{session?.provider}</code> não está mais registrado (conexão removida, renomeada ou
           desativada). Reative a conexão ou abra uma nova sessão.
         </div>
+      )}
+      {session && session.turns === 0 && !running && !closed && !transcript.items.some((i) => i.kind === "user") && (
+        <ProjectContextBar ready={ready} session={session} draft={input} onOpenContext={onOpenContext} />
       )}
       <form className="composer" onSubmit={send}>
         <textarea

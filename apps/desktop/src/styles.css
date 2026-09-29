@@ -2137,3 +2137,155 @@ input.full {
   justify-content: center;
   padding: 8px;
 }
+
+/* --------------------------------------------- context and handoff (F7) -- */
+
+.context-bar {
+  gap: 10px;
+  margin: 0 12px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
+  background: var(--bg-panel);
+  font-size: 12px;
+}
+
+.context-bar .check {
+  white-space: nowrap;
+}
+
+.context-item {
+  align-self: stretch;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.context-item summary {
+  cursor: pointer;
+}
+
+.context-item .badge {
+  margin-left: 6px;
+}
+
+.context-item .plain-list li {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 6px;
+}
+
+.msg.orchestrator {
+  opacity: 0.85;
+}
+
+.msg.orchestrator summary {
+  cursor: pointer;
+}
+
+.handoff-link {
+  background: rgba(63, 185, 80, 0.12);
+}
+
+.context-body,
+.handoff-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 18px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.context-body > section,
+.handoff-body > section {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  background: var(--bg-panel);
+  min-width: 0;
+}
+
+.context-body h3,
+.handoff-body h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+}
+
+.context-body h3 .meta,
+.handoff-body h3 .meta {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.row.wrap {
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+
+.row label.row {
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+input.narrow {
+  width: 90px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.field input,
+.field textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.context-items {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.context-notes {
+  margin-top: 6px;
+}
+
+.context-text pre.output {
+  max-height: 420px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.handoff-lists {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0 14px;
+}
+
+.handoff-step .inline-notice {
+  margin: 6px 0 0;
+}
+
+.handoff-step .row + .row {
+  margin-top: 8px;
+}

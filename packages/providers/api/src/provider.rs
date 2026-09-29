@@ -239,6 +239,14 @@ impl ApiProvider {
         } else {
             &[]
         };
+        // Project context (first turn only, ADR-0013): part of the session's
+        // system instructions from now on, saved with the conversation.
+        if let Some(context) = input.context.as_deref().filter(|c| !c.trim().is_empty()) {
+            conv.system = Some(match conv.system.take().filter(|s| !s.is_empty()) {
+                Some(base) => format!("{base}\n\n{context}"),
+                None => context.to_owned(),
+            });
+        }
         let system = self.system_prompt(conv.system.as_deref(), mode, &definitions);
         conv.messages.push(Message::user(input.text.clone()));
         let cancel = ctx.cancellation();

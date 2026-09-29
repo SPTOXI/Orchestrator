@@ -57,6 +57,9 @@ const KIND_FILTERS: Array<{ value: EventKind | ""; label: string }> = [
   { value: "MEMORY_SAVED", label: "MEMORY_SAVED" },
   { value: "MEMORY_REMOVED", label: "MEMORY_REMOVED" },
   { value: "DECISION_SAVED", label: "DECISION_SAVED" },
+  { value: "CONTEXT_BUILT", label: "CONTEXT_BUILT" },
+  { value: "HANDOFF_CREATED", label: "HANDOFF_CREATED" },
+  { value: "HANDOFF_ACCEPTED", label: "HANDOFF_ACCEPTED" },
 ];
 
 const PAGE = 500;

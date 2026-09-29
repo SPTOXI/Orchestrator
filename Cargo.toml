@@ -4,6 +4,7 @@ members = [
     "packages/core",
     "packages/git",
     "packages/memory",
+    "packages/orchestrator",
     "packages/providers",
     "packages/providers/api",
     "packages/router",
@@ -19,6 +20,7 @@ publish = false
 
 [workspace.dependencies]
 orchestrator-core = { path = "packages/core" }
+orchestrator-engine = { path = "packages/orchestrator" }
 orchestrator-git = { path = "packages/git" }
 orchestrator-memory = { path = "packages/memory" }
 orchestrator-providers = { path = "packages/providers" }
