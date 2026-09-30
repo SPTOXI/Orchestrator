@@ -1,8 +1,10 @@
 # packages/orchestrator
 
 **Orchestrator Engine** — crate `orchestrator-engine` (Fase 7,
-[ADR-0013](../../docs/adr/0013-context-builder-e-handoff.md)). Referência:
-[`docs/context.md`](../../docs/context.md).
+[ADR-0013](../../docs/adr/0013-context-builder-e-handoff.md); Task Manager
+na Fase 8a, [ADR-0014](../../docs/adr/0014-task-manager.md)). Referências:
+[`docs/context.md`](../../docs/context.md) e
+[`docs/tasks.md`](../../docs/tasks.md).
 
 | Módulo | Conteúdo |
 | ------ | -------- |
@@ -11,6 +13,7 @@
 | `tools.rs` | `EngineTools`: envolve o executor do app e oferece às IAs `memory.working`, `memory.search`, `memory.list`, `memory.save`, `decision.list` e `decision.save`, auditadas como as outras ferramentas |
 | `packet.rs` | `HandoffPacket`: limites, fatos do histórico, pedido e leitura tolerante da narrativa da IA, mistura, texto para a próxima IA e a primeira mensagem |
 | `handoff.rs` | `HandoffService` (`prepare`, `create`, `start`, `list`, `get`) e `ContextBuilder::preview` |
+| `task.rs` | `TaskService`: transições válidas, dependências sem ciclo, subtasks, contexto e sessão a partir da task |
 | `persistence.rs` | `StoreSessions`: o `SessionStore` dos providers sobre o banco local (movido do app) |
 | `text.rs` | estimativa de tokens (~4 caracteres por token), cortes, caminhos relativos e datas |
 
@@ -30,10 +33,13 @@ Regras:
   detector escreveram e não apaga nada.
 - A sessão que assume um handoff recebe o pacote, nunca a conversa
   anterior.
+- As regras das tasks moram aqui: a UI só oferece o que este crate
+  aceitaria (`TaskView.can`), e uma task só inicia quando o que ela espera
+  está concluído.
 
 | Próximas responsabilidades | Fase |
 | -------------------------- | ---- |
-| Task Manager (TODO, IN_PROGRESS, BLOCKED, REVIEW, DONE, CANCELLED; dependências), com o Context Builder partindo da task; handoff automático ao fim de um agente | 8 |
+| Agent Manager, subagentes e File Locks, executando as tasks; handoff automático ao fim de um agente | 8b |
 | Gate de autonomia: Assistido, Autônomo, Acesso Irrestrito; Pause, Cancel, Stop All Agents | 9 |
 | Otimização de tokens, cache, compactação, agent scheduling | 11 |
 

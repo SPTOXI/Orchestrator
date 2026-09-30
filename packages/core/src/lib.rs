@@ -13,6 +13,8 @@
 //! - [`SessionInfo`] / [`SessionEvent`]: provider sessions (ADR-0009).
 //! - [`HandoffPacket`] / [`ContextSummary`]: handoff between AIs and the
 //!   project context sent to them (ADR-0013).
+//! - [`Task`]: a piece of work of the project, with state and dependencies
+//!   (ADR-0014).
 
 pub mod context;
 pub mod event;
@@ -20,6 +22,7 @@ pub mod handoff;
 pub mod ids;
 pub mod project;
 pub mod session;
+pub mod task;
 pub mod tool;
 
 pub use context::{ContextSectionSummary, ContextSummary};
@@ -28,8 +31,8 @@ pub use event::{
 };
 pub use handoff::{Handoff, HandoffEnd, HandoffPacket, HandoffStatus};
 pub use ids::{
-    DeliberationId, EventId, HandoffId, ProcessId, ProviderId, SessionId, TerminalId, ToolCallId,
-    TurnId,
+    DeliberationId, EventId, HandoffId, ProcessId, ProviderId, SessionId, TaskId, TerminalId,
+    ToolCallId, TurnId,
 };
 pub use project::{
     DockerInfo, GitRemote, GitSummary, ProjectCandidate, ProjectProfile, RuntimeRequirement,
@@ -37,6 +40,7 @@ pub use project::{
 pub use session::{
     NoticeLevel, SessionEvent, SessionInfo, SessionLogEntry, SessionStatus, TokenUsage, TurnStatus,
 };
+pub use task::{Task, TaskInput, TaskPriority, TaskStatus};
 pub use tool::{
     CallOrigin, ToolCall, ToolDefinition, ToolError, ToolErrorKind, ToolResult, ToolSpec,
 };

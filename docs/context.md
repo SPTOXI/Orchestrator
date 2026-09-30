@@ -83,6 +83,14 @@ Na ordem do documento mestre. Uma seção vazia não entra.
   ("RELEVANT HISTORY: 2 itens (orçamento)"), no transcript, no histórico e
   na prévia.
 
+### A tarefa vem da task (Fase 8a)
+
+Quando a sessão é aberta a partir de uma task
+([tasks.md](./tasks.md)), o título, a descrição e os arquivos dela são a
+tarefa do contexto, e a mesma mensagem abre a conversa. É o *task-scoped
+context* da seção 23 do documento mestre: o contexto passa a seguir o
+trabalho planejado, não só a frase que o usuário digitou.
+
 ### Configuração
 
 `<app-data>/context.json`, editável na aba "Contexto do projeto":

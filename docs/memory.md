@@ -2,7 +2,9 @@
 
 Referência da Fase 6, com os acréscimos da Fase 7. Decisões em
 [ADR-0012](./adr/0012-sqlite-memoria-e-historico.md) e
-[ADR-0013](./adr/0013-context-builder-e-handoff.md); código em
+[ADR-0013](./adr/0013-context-builder-e-handoff.md), com as tasks da Fase
+8a em [ADR-0014](./adr/0014-task-manager.md) e
+[tasks.md](./tasks.md); código em
 [`packages/memory`](../packages/memory/README.md) (crate
 `orchestrator-memory`). Como a memória chega às IAs está em
 [context.md](./context.md).
@@ -43,9 +45,11 @@ Referência da Fase 6, com os acréscimos da Fase 7. Decisões em
 | `deliberations` | deliberações do Conselho, com a chave e a validade do cache |
 | `search_index` | índice FTS5 da busca L3 |
 | `handoffs` | handoffs entre IAs (Fase 7, migração 2): projeto, sessões de origem e destino, estado, datas e o `Handoff` em JSON |
+| `tasks`, `task_dependencies` | tasks do projeto e suas dependências (Fase 8a, migração 3) |
 
-A migração 2 só acrescenta a tabela `handoffs`: um banco da Fase 6 é
-atualizado ao abrir, sem perder nada. As tabelas das próximas fases (tasks, agentes, file locks, artefatos,
+As migrações 2 e 3 só acrescentam tabelas (`handoffs`; `tasks` e
+`task_dependencies`): um banco das fases anteriores é atualizado ao abrir,
+sem perder nada. As tabelas das próximas fases (tasks, agentes, file locks, artefatos,
 operações Git) entram com as migrações dessas fases.
 
 ## Histórico
@@ -139,7 +143,8 @@ Busca de texto (FTS5) sem acento e sem diferenciar maiúsculas. Cada palavra
 - mensagens das sessões: o que o usuário enviou e o texto das respostas;
 - eventos notáveis: commits, pushes, comandos, ferramentas e turnos que
   falharam;
-- handoffs (Fase 7): objetivo, estado, o que falta e a próxima ação.
+- handoffs (Fase 7): objetivo, estado, o que falta e a próxima ação;
+- tasks (Fase 8a): título, descrição, arquivos e resultado.
 
 O resultado vem por relevância, com o trecho e os termos marcados. Um clique
 abre a entrada, a decisão, a sessão ou o handoff.

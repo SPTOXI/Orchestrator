@@ -14,7 +14,8 @@
 //!   notable events;
 //! - **Council deliberations**, which also serve as its cache;
 //! - **handoffs** between AIs and the facts of a session they are built
-//!   from (ADR-0013).
+//!   from (ADR-0013);
+//! - **tasks** of the project, with their dependencies (ADR-0014).
 //!
 //! Depends only on `orchestrator-core`: the other crates see it through
 //! their own traits, wired by the app.
@@ -27,6 +28,7 @@ mod notes;
 mod search;
 mod sessions;
 mod store;
+mod tasks;
 mod working;
 
 pub use db::SCHEMA_VERSION;

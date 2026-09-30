@@ -67,6 +67,10 @@ pub enum EventKind {
     /// Project context was attached to a session: sections, estimated
     /// tokens and what was left out, never the text (ADR-0013).
     ContextBuilt,
+    /// A task changed in any way the three task events above do not cover:
+    /// edited, re-prioritized, blocked, sent to review, cancelled or
+    /// reopened (ADR-0014).
+    TaskUpdated,
 }
 
 /// A durable, provider-independent history entry.

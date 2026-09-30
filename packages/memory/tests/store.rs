@@ -4,8 +4,8 @@
 use chrono::{Duration, Utc};
 use orchestrator_core::{
     AuditEvent, CallOrigin, EventKind, Handoff, HandoffEnd, HandoffId, HandoffPacket,
-    HandoffStatus, SessionEvent, SessionId, SessionInfo, SessionLogEntry, SessionStatus,
-    TokenUsage, ToolCallId, TurnId,
+    HandoffStatus, SessionEvent, SessionId, SessionInfo, SessionLogEntry, SessionStatus, Task,
+    TaskId, TaskPriority, TaskStatus, TokenUsage, ToolCallId, TurnId,
 };
 use orchestrator_memory::{
     DecisionInput, DecisionStatus, HistoryQuery, MemoryInput, MemoryKind, MemoryStore,
@@ -924,4 +924,96 @@ fn related_search_matches_any_significant_word() {
         .search_related(&project, "e o", &[], 10)
         .unwrap()
         .is_empty());
+}
+
+#[test]
+fn tasks_keep_their_dependencies_and_order() {
+    let store = MemoryStore::in_memory();
+    record(&store, &opened("/p/saas", "saas", &["TypeScript"]));
+    let project = store.current_project().unwrap().id;
+
+    let make = |title: &str, status: TaskStatus, priority: TaskPriority| Task {
+        id: TaskId::new(),
+        project_id: project.clone(),
+        title: title.into(),
+        description: "detalhe do trabalho".into(),
+        status,
+        priority,
+        provider: None,
+        model: None,
+        agent: None,
+        parent_task: None,
+        dependencies: Vec::new(),
+        files: Vec::new(),
+        sessions: Vec::new(),
+        result: String::new(),
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        started_at: None,
+        finished_at: None,
+    };
+
+    let schema = make("Modelar o banco", TaskStatus::Done, TaskPriority::Normal);
+    let mut api = make(
+        "Expor a API de cobranças",
+        TaskStatus::Todo,
+        TaskPriority::Urgent,
+    );
+    api.dependencies = vec![schema.id.clone()];
+    api.files = vec!["src/api/pay.ts".into()];
+    let mut ui = make(
+        "Tela de cobrança",
+        TaskStatus::InProgress,
+        TaskPriority::Low,
+    );
+    ui.parent_task = Some(api.id.clone());
+    for task in [&schema, &api, &ui] {
+        store.task_save(task).unwrap();
+    }
+
+    // Panel order: what is moving first, then priority, then age.
+    let listed = store.tasks_list(Some(&project));
+    let titles: Vec<_> = listed.iter().map(|t| t.title.as_str()).collect();
+    assert_eq!(
+        titles,
+        [
+            "Tela de cobrança",
+            "Expor a API de cobranças",
+            "Modelar o banco"
+        ]
+    );
+
+    // Dependencies come from their own rows, with the rest of the task.
+    let stored = store.task(api.id.as_str()).unwrap();
+    assert_eq!(stored.dependencies, std::slice::from_ref(&schema.id));
+    assert_eq!(stored.files, ["src/api/pay.ts"]);
+    assert_eq!(
+        store.task_dependents(schema.id.as_str()),
+        std::slice::from_ref(&api.id)
+    );
+
+    // Changing the dependencies replaces them, and does not touch others.
+    let mut api = stored;
+    api.dependencies.clear();
+    api.status = TaskStatus::InProgress;
+    store.task_save(&api).unwrap();
+    assert!(store.task(api.id.as_str()).unwrap().dependencies.is_empty());
+    assert!(store.task_dependents(schema.id.as_str()).is_empty());
+    assert_eq!(store.tasks_list(Some(&project)).len(), 3);
+
+    // A task is found by the L3 search, by title and by description.
+    let hits = store.search(&project, "cobranças", 10).unwrap();
+    let task_hits: Vec<_> = hits.iter().filter(|h| h.kind == "task").collect();
+    assert_eq!(task_hits.len(), 1);
+    assert_eq!(task_hits[0].ref_id, api.id.to_string());
+
+    // The task of a session: recorded on the task, read back from it.
+    let session = SessionId::new();
+    api.sessions = vec![session.clone()];
+    store.task_save(&api).unwrap();
+    assert_eq!(
+        store.task_of_session(session.as_str()).map(|t| t.id),
+        Some(api.id.clone())
+    );
+    assert!(store.task_of_session(SessionId::new().as_str()).is_none());
 }

@@ -81,6 +81,12 @@ import type {
   ToolResult,
   ToolSpec,
   WriteOutput,
+  StartedTask,
+  StartTaskSession,
+  Task,
+  TaskInput,
+  TaskStatus,
+  TaskView,
 } from "./types";
 
 /** True when running inside the Tauri desktop app (not a plain browser). */
@@ -321,6 +327,20 @@ export const handoffApi = {
   start: (request: StartHandoff) => callProvider<StartedHandoff>("handoff_start", { request }),
   list: (projectId?: string) => callProvider<Handoff[]>("handoffs_list", { projectId }),
   get: (id: string) => callProvider<Handoff | null>("handoff_get", { id }),
+};
+
+/** Tasks of the project (ADR-0014). */
+export const taskApi = {
+  /** Tasks of a project (the open one by default), in panel order. */
+  list: (projectId?: string) => callProvider<TaskView[]>("tasks_list", { projectId }),
+  get: (id: string) => callProvider<TaskView | null>("task_get", { id }),
+  /** Creates a task (no `id`) or edits one. */
+  save: (input: TaskInput) => callProvider<Task>("task_save", { input }),
+  status: (id: string, status: TaskStatus) => callProvider<Task>("task_status", { id, status }),
+  startSession: (request: StartTaskSession) =>
+    callProvider<StartedTask>("task_start_session", { request }),
+  /** What a session opened for this task would receive. */
+  context: (id: string) => callProvider<ContextPack>("task_context", { id }),
 };
 
 /** History, projects and project memory in the local database (ADR-0012). */

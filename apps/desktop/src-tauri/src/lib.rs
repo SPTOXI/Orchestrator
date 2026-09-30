@@ -11,10 +11,13 @@ mod memory_commands;
 mod persistence;
 mod provider_commands;
 mod router_commands;
+mod task_commands;
 mod vault;
 
 use orchestrator_core::{AuditEvent, EventSink, StreamEvent};
-use orchestrator_engine::{ContextBuilder, EngineTools, HandoffService, StoreSessions};
+use orchestrator_engine::{
+    ContextBuilder, EngineTools, HandoffService, StoreSessions, TaskService,
+};
 use orchestrator_memory::{HistoryQuery, MemoryStore};
 use orchestrator_provider_api::ConnectionManager;
 use orchestrator_providers::{EchoProvider, ManagerConfig, ProviderRegistry, SessionManager};
@@ -93,6 +96,8 @@ pub struct AppState {
     pub context_warning: Option<String>,
     /// Handoffs between AIs (ADR-0013).
     pub handoffs: HandoffService,
+    /// Tasks of the project (ADR-0014).
+    pub tasks: TaskService,
     pub sink: Arc<DesktopSink>,
     pub data_dir: PathBuf,
 }
@@ -214,6 +219,12 @@ pub fn run() {
                 builder.clone(),
                 sink.clone(),
             );
+            let tasks = TaskService::new(
+                sessions.clone(),
+                store.clone(),
+                builder.clone(),
+                sink.clone(),
+            );
             app.manage(AppState {
                 runtime,
                 sessions,
@@ -226,6 +237,7 @@ pub fn run() {
                 builder,
                 context_warning,
                 handoffs,
+                tasks,
                 sink,
                 data_dir,
             });
@@ -285,6 +297,12 @@ pub fn run() {
             context_commands::handoff_start,
             context_commands::handoffs_list,
             context_commands::handoff_get,
+            task_commands::tasks_list,
+            task_commands::task_get,
+            task_commands::task_save,
+            task_commands::task_status,
+            task_commands::task_start_session,
+            task_commands::task_context,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build the Orchestrator desktop app");

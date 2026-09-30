@@ -15,7 +15,8 @@ Provider Layer (packages/providers) ──tool_call──▶ ToolRuntime::invoke
 Decisões registradas em [ADR-0003](./adr/0003-gateway-ipc-unico.md),
 [ADR-0009](./adr/0009-camada-de-providers-e-sessoes.md),
 [ADR-0010](./adr/0010-providers-por-api-com-cadastro-livre.md) e
-[ADR-0013](./adr/0013-context-builder-e-handoff.md).
+[ADR-0013](./adr/0013-context-builder-e-handoff.md) e
+[ADR-0014](./adr/0014-task-manager.md).
 
 ## Comandos
 
@@ -139,6 +140,23 @@ origem `user`. Referência: [`context.md`](./context.md).
 | `handoffs_list` | `projectId?` (sem ele, todos) | `Handoff[]` (mais novo primeiro, até 50) | — |
 | `handoff_get` | `id` | `Handoff \| null` | — |
 
+### Tasks (Fase 8a, ADR-0014)
+
+O Task Manager. Mesmo formato de erro dos providers (`{ kind, message }`);
+as escritas têm origem `user`. Referência: [`tasks.md`](./tasks.md).
+
+| Comando | Argumentos | Retorno | Histórico |
+| ------- | ---------- | ------- | --------- |
+| `tasks_list` | `projectId?` (padrão: o projeto aberto) | `TaskView[]`, em ordem do painel | — |
+| `task_get` | `id` | `TaskView \| null` | — |
+| `task_save` | `input: TaskInput` (sem `id`, cria) | `Task` | `TASK_CREATED` ou `TASK_UPDATED` |
+| `task_status` | `id`, `status` | `Task`; recusa transição inválida ou task não liberada | `TASK_STARTED`, `TASK_COMPLETED` ou `TASK_UPDATED` |
+| `task_start_session` | `request: { taskId, provider?, model?, budget? }` | `{ task, session, turnId, sendError }` | `SESSION_STARTED`, `TASK_STARTED`, `CONTEXT_BUILT` e o primeiro turno |
+| `task_context` | `id` | `ContextPack` da task (nada é enviado) | — |
+
+`TaskView` é a task mais o que o motor calcula: `waitingFor`, `subtasks` e
+`can` (os estados válidos agora) — a UI só oferece o que o motor aceitaria.
+
 ## Eventos
 
 | Evento | Payload | Uso |
@@ -192,6 +210,7 @@ entrada "Stack" da memória) seguem o mesmo caminho
 - Sessões de provider (com as opções de contexto), transcripts,
   deliberações do Conselho e handoffs também ficam no banco.
 - A configuração do contexto fica em `<app-data>/context.json`.
+- As tasks do projeto ficam no banco (migração 3, ADR-0014).
 - Se o arquivo não abrir, o app usa um banco em memória e avisa
   (`app_info.databaseWarning`, na barra de status; o rodapé do HISTORY
   mostra `banco: (memória)`).

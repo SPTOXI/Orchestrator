@@ -2289,3 +2289,91 @@ input.narrow {
 .handoff-step .row + .row {
   margin-top: 8px;
 }
+
+/* Tasks (ADR-0014): the panel groups by state; the view edits one task. */
+.task-group {
+  padding: 4px 0 8px;
+}
+
+.task-group h4 {
+  margin: 0;
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.task-status {
+  color: var(--text-dim);
+}
+
+.task-status.in_progress {
+  color: var(--accent);
+}
+
+.task-status.blocked,
+.task-status.cancelled {
+  color: var(--err);
+}
+
+.task-status.done {
+  color: var(--ok);
+}
+
+.task-status.review {
+  color: var(--warn);
+}
+
+.task-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+
+.badge.priority.high,
+.badge.priority.urgent {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.badge.priority.low {
+  color: var(--text-dim);
+}
+
+.badge.waiting {
+  border-color: var(--err);
+  color: var(--err);
+}
+
+.task-body {
+  overflow: auto;
+  padding: 12px 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.task-step {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.task-step h3 {
+  margin: 0 0 4px;
+  font-size: 13px;
+}
+
+.task-step > .meta {
+  margin: 0 0 8px;
+}
+
+.task-deps {
+  max-height: 180px;
+  overflow: auto;
+}
+
+.task-deps .check {
+  max-width: 100%;
+}

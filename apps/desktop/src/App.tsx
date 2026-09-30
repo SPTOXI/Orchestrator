@@ -11,6 +11,8 @@ import { GitPanel } from "./components/GitPanel";
 import { HandoffView } from "./components/HandoffView";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { MemoryPanel } from "./components/MemoryPanel";
+import { TasksPanel } from "./components/TasksPanel";
+import { TaskView } from "./components/TaskView";
 import { type MemorySection, MemoryView } from "./components/MemoryView";
 import {
   AgentsIcon,
@@ -40,6 +42,7 @@ import type { AppInfo, ConnectionsView, Deliberation, ProjectProfile, SessionInf
 import { useConnections } from "./lib/useConnections";
 import { useCouncil } from "./lib/useCouncil";
 import { useMemory } from "./lib/useMemory";
+import { useTasks } from "./lib/useTasks";
 import { useProjects } from "./lib/useProjects";
 import { useGitStatus } from "./lib/useGitStatus";
 import { useProviders } from "./lib/useProviders";
@@ -62,7 +65,9 @@ type Tab =
   /** Project memory; `nonce` changes when the sidebar asks again. */
   | { id: "memory"; kind: "memory"; section: MemorySection; query: string; nonce: number }
   | { id: "context"; kind: "context"; request: ContextTabRequest; nonce: number }
-  | { id: string; kind: "handoff"; sessionId: string | null; handoffId: string | null };
+  | { id: string; kind: "handoff"; sessionId: string | null; handoffId: string | null }
+  /** One task; `taskId` null is the form of a new one. */
+  | { id: string; kind: "task"; taskId: string | null; nonce: number };
 
 const ACTIVITIES: Array<{ id: PanelId; label: string; icon: () => ReactNode }> = [
   { id: "project", label: "PROJECT", icon: FolderIcon },
@@ -116,6 +121,8 @@ function tabTitle(tab: Tab, sessions: Map<string, SessionInfo>, connections: Con
       return "Contexto do projeto";
     case "handoff":
       return "Handoff";
+    case "task":
+      return tab.taskId ? "Task" : "Nova task";
     case "connection":
       if (!tab.connectionId) return "Nova API";
       return `API · ${connections?.connections.find((c) => c.connection.id === tab.connectionId)?.connection.name ?? tab.connectionId}`;
@@ -146,6 +153,13 @@ export function App() {
   const recent = projects.recent;
   const projectId = profile && projects.current?.path === profile.path ? projects.current.id : null;
   const memory = useMemory(ready, projectId);
+  const tasks = useTasks(ready, projectId);
+  /** What the top bar shows as the current task: the one of the open
+   * session, else the task being worked on now (ADR-0014). */
+  const currentTask =
+    tasks.list.find(
+      (task) => activeTab?.startsWith("session:") && task.sessions.includes(activeTab.slice("session:".length)),
+    ) ?? tasks.list.find((task) => task.status === "IN_PROGRESS") ?? null;
   const sessionsById = new Map(providers.sessions.map((s) => [s.id, s]));
   const activeProvider = providers.view?.providers.find((p) => p.active) ?? null;
   const runningSessions = providers.sessions.filter((s) => s.status === "running").length;
@@ -236,6 +250,11 @@ export function App() {
     const tab = { id: "context" as const, kind: "context" as const, request, nonce: Date.now() };
     setTabs((all) => (all.some((t) => t.id === "context") ? all.map((t) => (t.id === "context" ? tab : t)) : [...all, tab]));
     setActiveTab("context");
+  };
+  /** One tab per task; the new-task form has its own. */
+  const openTask = (taskId: string | null) => {
+    const id = taskId ? `task:${taskId}` : "task:new";
+    showTab({ id, kind: "task", taskId, nonce: Date.now() });
   };
   /** One handoff tab per source session (new) or saved handoff. */
   const openHandoff = (target: { sessionId?: string; handoffId?: string }) => {
@@ -366,20 +385,27 @@ export function App() {
         );
       case "tasks":
         return (
-          <PhasePlaceholder
-            title="Tasks"
-            phase="Fase 8"
-            description="Toda atividade relevante será uma Task com dependências, prioridade, provider e agente."
-            items={["Estados: TODO · IN_PROGRESS · BLOCKED · REVIEW · DONE · CANCELLED", "Agent Board (kanban)"]}
+          <TasksPanel
+            ready={ready}
+            tasks={tasks.list}
+            error={tasks.error}
+            projectName={profile?.name ?? null}
+            activeTaskId={activeTab?.startsWith("task:") ? activeTab.slice("task:".length) : null}
+            onOpen={openTask}
+            onNew={() => openTask(null)}
           />
         );
       case "agents":
         return (
           <PhasePlaceholder
             title="Agents"
-            phase="Fase 8"
+            phase="Fase 8b"
             description="Agentes são temporários; o conhecimento fica no projeto."
-            items={["Agent Manager e subagentes", "File Lock Manager", "Handoff automático ao fim de um agente"]}
+            items={[
+              "Agent Manager e subagentes executando as tasks",
+              "File Lock Manager para trabalho em paralelo",
+              "Agent Board e handoff automático ao fim de um agente",
+            ]}
           />
         );
       case "terminal":
@@ -434,6 +460,8 @@ export function App() {
         providerName={activeProvider?.name ?? null}
         providerCount={providers.view?.providers.length ?? null}
         runningSessions={runningSessions}
+        task={currentTask ? { title: currentTask.title, status: currentTask.status } : null}
+        openTasks={tasks.list.filter((t) => t.status !== "DONE" && t.status !== "CANCELLED").length}
       />
       <div className="workbench">
         <nav className="activity-bar">
@@ -609,11 +637,33 @@ export function App() {
                         openFile(/^([a-zA-Z]:)?[\\/]/.test(path) || !profile ? path : joinPath(profile.path, path))
                       }
                       onOpenHandoff={(handoffId) => openHandoff({ handoffId })}
+                      onOpenTask={openTask}
                     />
                   );
                 case "context":
                   return (
                     <ContextView key={tab.id} ready={ready} active={active} request={tab.request} nonce={tab.nonce} />
+                  );
+                case "task":
+                  return (
+                    <TaskView
+                      key={tab.id}
+                      ready={ready}
+                      active={active}
+                      taskId={tab.taskId}
+                      nonce={tab.nonce}
+                      tasks={tasks.list}
+                      providers={providers.view?.providers ?? []}
+                      onSaved={(id) => {
+                        void tasks.refresh();
+                        if (!tab.taskId) {
+                          closeTab(tab.id);
+                          openTask(id);
+                        }
+                      }}
+                      onOpenSession={openSession}
+                      onOpenContext={(taskId) => openContext({ taskId })}
+                    />
                   );
                 case "handoff":
                   return (

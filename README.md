@@ -33,7 +33,8 @@ cada fase em [`docs/phases/`](./docs/phases).
 | 5 | Roteador de modelos e Conselho de IAs (modos Sugerir e Full) | ✅ concluída |
 | 6 | SQLite, memória L1/L2/L3, histórico e decisões | ✅ concluída |
 | 7 | Context Builder e Handoff entre IAs | ✅ concluída |
-| 8 | Task Manager, agentes e subagentes, File Locks | ⏳ próxima |
+| 8a | Task Manager e painel TASKS | ✅ concluída |
+| 8b | Agentes, subagentes e File Locks | ⏳ próxima |
 | 9–11 | autonomia, GitHub, otimização | planejadas |
 
 A ordem das Fases 4–5 foi redefinida na
@@ -52,7 +53,7 @@ orchestrator/
 │   ├── runtime/            # [Rust] Tool Runtime: filesystem, shell, terminal, processos,
 │   │                       #        projeto, git, package managers, runtimes
 │   ├── orchestrator/       # [Rust] Orchestrator Engine: Context Builder, Handoff,
-│   │                       #        ferramentas de memória das IAs (tasks na Fase 8)
+│   │                       #        ferramentas de memória das IAs, Task Manager
 │   ├── agents/             # (Fase 8) Agent Manager, subagentes, File Lock Manager
 │   ├── memory/             # [Rust] banco local (SQLite): histórico, projetos, sessões,
 │   │                       #        memória L1/L2/L3, decisões, deliberações
@@ -110,6 +111,27 @@ pnpm check            # typecheck + cargo fmt --check + cargo clippy -D warnings
 ```
 
 ## O que já funciona
+
+### Fase 8a — tasks
+
+- **Todo trabalho relevante é uma task**, no painel TASKS: título,
+  descrição, estado (a fazer, em andamento, bloqueada, em revisão,
+  concluída, cancelada), prioridade e a IA escolhida.
+- **Dependências e subtasks:** uma task só inicia quando o que ela espera
+  está concluído — o Orchestrator recusa e diz o que falta. Ciclos entre
+  dependências são recusados na hora de salvar.
+- **A task vira o contexto:** abrir uma sessão a partir dela monta o
+  contexto do projeto com o título, a descrição e os arquivos da task, e
+  começa a conversa por ela.
+- **Roteador:** "Sugerir com o roteador" escolhe provider e modelo pelo
+  texto da task, sem gastar tokens.
+- **Histórico e busca:** `TASK_CREATED`, `TASK_STARTED`, `TASK_COMPLETED` e
+  `TASK_UPDATED` no HISTORY; as tasks entram na busca do projeto.
+- A barra superior passa a mostrar a **task atual**.
+
+![Uma task com estado, dependências e a IA que trabalha nela](./docs/assets/fase-8a-task.png)
+
+Referência: [`docs/tasks.md`](./docs/tasks.md).
 
 ### Fase 7 — contexto do projeto e handoff entre IAs
 
@@ -292,5 +314,6 @@ A referência completa das ferramentas está em
 [`docs/api-connections.md`](./docs/api-connections.md), o roteador em
 [`docs/router.md`](./docs/router.md), o banco e a memória em
 [`docs/memory.md`](./docs/memory.md), o contexto e o handoff em
-[`docs/context.md`](./docs/context.md) e a camada IPC em
+[`docs/context.md`](./docs/context.md), as tasks em
+[`docs/tasks.md`](./docs/tasks.md) e a camada IPC em
 [`docs/ipc.md`](./docs/ipc.md).

@@ -90,7 +90,8 @@ export type EventKind =
   | "MEMORY_SAVED"
   | "MEMORY_REMOVED"
   | "DECISION_SAVED"
-  | "CONTEXT_BUILT";
+  | "CONTEXT_BUILT"
+  | "TASK_UPDATED";
 
 export interface AuditEvent {
   id: string;
@@ -1004,7 +1005,7 @@ export interface MemoryOverview {
 }
 
 export interface SearchHit {
-  kind: "memory" | "decision" | "message" | "event" | "handoff";
+  kind: "memory" | "decision" | "message" | "event" | "handoff" | "task";
   refId: string;
   title: string;
   /** Matching terms between `[` and `]`. */
@@ -1133,6 +1134,77 @@ export interface StartHandoff {
 
 export interface StartedHandoff {
   handoff: Handoff;
+  session: SessionInfo;
+  turnId: string | null;
+  sendError: string | null;
+}
+
+/** Tasks of the project (ADR-0014). */
+export type TaskStatus = "TODO" | "IN_PROGRESS" | "BLOCKED" | "REVIEW" | "DONE" | "CANCELLED";
+
+export type TaskPriority = "LOW" | "NORMAL" | "HIGH" | "URGENT";
+
+export interface Task {
+  id: string;
+  projectId: string;
+  title: string;
+  description: string;
+  status: TaskStatus;
+  priority: TaskPriority;
+  provider: string | null;
+  model: string | null;
+  /** Who executes it; only from Fase 8b on. */
+  agent: string | null;
+  parentTask: string | null;
+  dependencies: string[];
+  files: string[];
+  sessions: string[];
+  result: string;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+export interface TaskRef {
+  id: string;
+  title: string;
+  status: TaskStatus;
+}
+
+/** A task with what the panel needs but the task does not store. */
+export interface TaskView extends Task {
+  /** Dependencies not done yet: while there is one, the task cannot start. */
+  waitingFor: TaskRef[];
+  subtasks: { done: number; total: number };
+  /** States this task may move to now, as the engine allows them. */
+  can: TaskStatus[];
+}
+
+/** What `task_save` receives; only what changed needs to go. */
+export interface TaskInput {
+  id?: string;
+  projectId?: string;
+  title?: string;
+  description?: string;
+  priority?: TaskPriority;
+  provider?: string;
+  model?: string;
+  parentTask?: string;
+  dependencies?: string[];
+  files?: string[];
+  result?: string;
+}
+
+export interface StartTaskSession {
+  taskId: string;
+  provider?: string | null;
+  model?: string | null;
+  budget?: number | null;
+}
+
+export interface StartedTask {
+  task: Task;
   session: SessionInfo;
   turnId: string | null;
   sendError: string | null;

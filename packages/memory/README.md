@@ -19,6 +19,7 @@ Um banco SQLite por instalação (`<app-data>/orchestrator.db`), embutido
 | `working.rs` | L1 derivada do histórico: sessões, arquivos, comandos e erros; `overview` com as contagens |
 | `search.rs` | índice e busca L3 (FTS5 sem acento, por prefixo, com trecho marcado); `search_related`, em que qualquer palavra significativa conta, para o Context Builder |
 | `handoffs.rs` | handoffs (gravar, listar, aceitar uma vez) e `session_facts`, o que o histórico diz que uma sessão fez |
+| `tasks.rs` | tasks e suas dependências (Fase 8a); as linhas de dependência são a verdade, e a task é lida com o que elas dizem |
 | `sessions.rs` | sessões de provider e transcripts (o app liga ao `SessionStore` dos providers) |
 | `deliberations.rs` | deliberações do Conselho e cache entre execuções (o app liga ao `DeliberationStore` do roteador) |
 
@@ -40,4 +41,5 @@ recusa de esquema mais novo, FTS e consultas. Os de integração
 - L1, L2, decisões e busca;
 - sessões e deliberações reabertas;
 - um arquivo inutilizável;
-- handoffs, fatos de uma sessão e a busca por relevância (Fase 7).
+- handoffs, fatos de uma sessão e a busca por relevância (Fase 7);
+- tasks com dependências, ordem do painel e busca (Fase 8a).

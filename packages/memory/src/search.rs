@@ -4,7 +4,7 @@
 use crate::model::{Decision, MemoryEntry, SearchHit};
 use crate::store::{parse_ts, ts, MemoryStore, Sql};
 use chrono::{DateTime, Utc};
-use orchestrator_core::{AuditEvent, EventKind, Handoff};
+use orchestrator_core::{AuditEvent, EventKind, Handoff, Task};
 use rusqlite::{params, Connection};
 use serde_json::Value;
 
@@ -146,6 +146,24 @@ pub(crate) fn index_handoff(conn: &Connection, handoff: &Handoff) -> Sql<()> {
         handoff.project_id.as_deref(),
         &handoff.created_at,
         &packet.goal,
+        &body,
+    )
+}
+
+pub(crate) fn index_task(conn: &Connection, task: &Task) -> Sql<()> {
+    let body = format!(
+        "{}\n{}\n{}",
+        task.description,
+        task.files.join("\n"),
+        task.result
+    );
+    put(
+        conn,
+        "task",
+        task.id.as_str(),
+        Some(task.project_id.as_str()),
+        &task.updated_at,
+        &task.title,
         &body,
     )
 }

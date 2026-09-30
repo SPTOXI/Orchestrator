@@ -83,6 +83,10 @@ define_id!(
     /// Identifies one handoff between AIs (ADR-0013).
     HandoffId
 );
+define_id!(
+    /// Identifies one task of a project (ADR-0014).
+    TaskId
+);
 
 /// Stable, human-chosen identifier of a registered AI provider, e.g.
 /// `openai-codex` or `claude-code`. Not generated: it names an adapter.

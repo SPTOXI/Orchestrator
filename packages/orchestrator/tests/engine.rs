@@ -5,11 +5,12 @@
 use async_trait::async_trait;
 use orchestrator_core::{
     AuditEvent, CallOrigin, EventKind, EventSink, HandoffStatus, ProviderId, SessionEvent,
-    SessionId, SessionStatus, StreamEvent, ToolCall, ToolDefinition, ToolResult, TurnStatus,
+    SessionId, SessionStatus, StreamEvent, TaskInput, TaskPriority, TaskStatus, ToolCall,
+    ToolDefinition, ToolResult, TurnStatus,
 };
 use orchestrator_engine::{
     packet, BuildRequest, ContextBuilder, CreateRequest, EngineTools, HandoffService,
-    PrepareRequest, SectionKind, StartHandoff, StoreSessions,
+    PrepareRequest, SectionKind, StartHandoff, StartTaskSession, StoreSessions, TaskService,
 };
 use orchestrator_memory::{
     DecisionInput, DecisionStatus, HistoryQuery, MemoryInput, MemoryKind, MemoryStore, Source,
@@ -156,6 +157,7 @@ struct World {
     sessions: SessionManager,
     builder: Arc<ContextBuilder>,
     handoffs: HandoffService,
+    tasks: TaskService,
 }
 
 fn git(dir: &Path, args: &[&str]) {
@@ -238,6 +240,12 @@ async fn world() -> World {
         builder.clone(),
         sink.clone(),
     );
+    let tasks = TaskService::new(
+        sessions.clone(),
+        store.clone(),
+        builder.clone(),
+        sink.clone(),
+    );
     World {
         _dir: dir,
         project_path,
@@ -248,6 +256,7 @@ async fn world() -> World {
         sessions,
         builder,
         handoffs,
+        tasks,
     }
 }
 
@@ -793,4 +802,175 @@ async fn without_its_ai_the_draft_keeps_the_facts() {
     assert_eq!(draft.packet.goal, "Revisar o README");
     assert!(draft.packet.status.is_empty() && draft.packet.completed.is_empty());
     assert!(draft.usage.is_some(), "the turn was spent and is reported");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_task_orders_the_work_and_carries_it_into_a_session() {
+    let w = world().await;
+    let project = w.project_id();
+    let new = |title: &str| TaskInput {
+        project_id: Some(project.clone()),
+        title: Some(title.into()),
+        ..Default::default()
+    };
+
+    // A task needs a title, and the project it belongs to.
+    assert!(w
+        .tasks
+        .save(new("   "), CallOrigin::User)
+        .unwrap_err()
+        .message
+        .contains("título"));
+
+    let schema = w
+        .tasks
+        .save(new("Modelar as cobranças"), CallOrigin::User)
+        .unwrap();
+    let api = w
+        .tasks
+        .save(
+            TaskInput {
+                description: Some("Aplicar as retentativas no cliente do gateway.".into()),
+                files: Some(vec!["src/api/webhooks.ts".into()]),
+                priority: Some(TaskPriority::High),
+                dependencies: Some(vec![schema.id.clone()]),
+                ..new("Expor a API de cobranças")
+            },
+            CallOrigin::User,
+        )
+        .unwrap();
+    assert_eq!(w.sink.of(EventKind::TaskCreated).len(), 2);
+
+    // A cycle between dependencies is refused, however long.
+    let err = w
+        .tasks
+        .save(
+            TaskInput {
+                id: Some(schema.id.clone()),
+                dependencies: Some(vec![api.id.clone()]),
+                ..Default::default()
+            },
+            CallOrigin::User,
+        )
+        .unwrap_err();
+    assert!(err.message.contains("ciclo"), "{}", err.message);
+
+    // While the dependency is open, the task cannot start — by hand or by
+    // opening a session for it.
+    let err = w
+        .tasks
+        .set_status(&api.id, TaskStatus::InProgress, CallOrigin::User)
+        .unwrap_err();
+    assert!(
+        err.message.contains("Modelar as cobranças"),
+        "{}",
+        err.message
+    );
+    let err = w
+        .tasks
+        .start_session(
+            StartTaskSession {
+                task_id: api.id.clone(),
+                provider: Some("echo".into()),
+                model: None,
+                budget: None,
+            },
+            CallOrigin::User,
+        )
+        .await
+        .unwrap_err();
+    assert!(err.message.contains("espera"), "{}", err.message);
+
+    // The panel says what it waits for and which moves are allowed.
+    let view = w.tasks.get(&api.id).unwrap();
+    assert_eq!(view.waiting_for.len(), 1);
+    assert_eq!(view.waiting_for[0].title, "Modelar as cobranças");
+    assert!(!view.can.contains(&TaskStatus::Done));
+    // In progress comes first in the panel, then priority.
+    let listed = w.tasks.list(Some(&project));
+    assert_eq!(listed.len(), 2);
+    assert_eq!(listed[0].task.title, "Expor a API de cobranças");
+
+    // With the dependency done, the task starts in a session of its own.
+    w.tasks
+        .set_status(&schema.id, TaskStatus::InProgress, CallOrigin::User)
+        .unwrap();
+    w.tasks
+        .set_status(&schema.id, TaskStatus::Done, CallOrigin::User)
+        .unwrap();
+    assert_eq!(w.sink.of(EventKind::TaskCompleted).len(), 1);
+    assert!(w.tasks.get(&api.id).unwrap().waiting_for.is_empty());
+
+    let started = w
+        .tasks
+        .start_session(
+            StartTaskSession {
+                task_id: api.id.clone(),
+                provider: Some("echo".into()),
+                model: None,
+                budget: None,
+            },
+            CallOrigin::User,
+        )
+        .await
+        .unwrap();
+    assert!(started.send_error.is_none());
+    assert_eq!(started.task.status, TaskStatus::InProgress);
+    assert!(started.task.started_at.is_some());
+    assert_eq!(
+        started.task.sessions,
+        std::slice::from_ref(&started.session.id)
+    );
+    w.idle(&started.session.id).await;
+
+    // The session's context came from the task: its words and its files,
+    // never a generic "first message".
+    let context = w.say(&started.session.id, "/context").await;
+    assert!(context.contains("## TASK"), "{context}");
+    assert!(
+        context.contains("src/api/webhooks.ts (mentioned in the task)"),
+        "{context}"
+    );
+    // The task is in the project's memory, so the search finds it.
+    let hits = w.store.search(&project, "cobrancas", 10).unwrap();
+    assert!(hits.iter().any(|h| h.kind == "task"), "{hits:?}");
+    assert_eq!(
+        w.store
+            .task_of_session(started.session.id.as_str())
+            .map(|t| t.id),
+        Some(api.id.clone())
+    );
+
+    // Finishing, then reopening: the history keeps both, and a reopened
+    // task is open work again.
+    w.tasks
+        .set_status(&api.id, TaskStatus::Review, CallOrigin::User)
+        .unwrap();
+    let done = w
+        .tasks
+        .set_status(&api.id, TaskStatus::Done, CallOrigin::User)
+        .unwrap();
+    assert!(done.finished_at.is_some());
+    assert!(w
+        .tasks
+        .set_status(&api.id, TaskStatus::Review, CallOrigin::User)
+        .is_err());
+    let reopened = w
+        .tasks
+        .set_status(&api.id, TaskStatus::Todo, CallOrigin::User)
+        .unwrap();
+    assert!(reopened.finished_at.is_none());
+    // Only the moves the three master-document events do not cover.
+    let updates = w.sink.of(EventKind::TaskUpdated);
+    let moves: Vec<_> = updates
+        .iter()
+        .map(|e| (e.data["from"].clone(), e.data["to"].clone()))
+        .collect();
+    assert_eq!(
+        moves,
+        [
+            (json!("IN_PROGRESS"), json!("REVIEW")),
+            (json!("DONE"), json!("TODO"))
+        ]
+    );
 }

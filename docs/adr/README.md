@@ -18,5 +18,6 @@ adiciona algo fora dela, é registrada aqui **antes** de ser implementada.
 | [0011](./0011-roteador-de-modelos-e-conselho.md) | Roteador de modelos e Conselho de IAs | Aceita |
 | [0012](./0012-sqlite-memoria-e-historico.md) | SQLite, memória do projeto e histórico | Aceita |
 | [0013](./0013-context-builder-e-handoff.md) | Context Builder e Handoff entre IAs | Aceita |
+| [0014](./0014-task-manager.md) | Task Manager | Aceita |
 
 Formato: Contexto → Decisão → Consequências.

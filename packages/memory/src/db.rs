@@ -5,12 +5,12 @@ use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 
 /// Schema version this build writes.
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 /// Every migration, in order; `MIGRATIONS[n]` takes the schema from `n` to
 /// `n + 1`. Tables of later phases (tasks, agents, file locks…) come with
 /// their own migrations (ADR-0012).
-const MIGRATIONS: [&str; 2] = [
+const MIGRATIONS: [&str; 3] = [
     r#"
 CREATE TABLE projects (
     id              TEXT PRIMARY KEY,
@@ -138,6 +138,29 @@ CREATE TABLE handoffs (
 CREATE INDEX handoffs_project ON handoffs(project_id, created_at);
 CREATE INDEX handoffs_from ON handoffs(from_session);
 "#,
+    r#"
+-- Phase 8a (ADR-0014): tasks of a project.
+CREATE TABLE tasks (
+    id           TEXT PRIMARY KEY,
+    project_id   TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    parent_task  TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+    status       TEXT NOT NULL,
+    priority     INTEGER NOT NULL,     -- higher comes first
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    data         TEXT NOT NULL         -- JSON Task
+);
+CREATE INDEX tasks_project ON tasks(project_id, status, priority DESC, created_at);
+CREATE INDEX tasks_parent ON tasks(parent_task);
+
+-- The dependency rows are the truth: a task is loaded with what they say.
+CREATE TABLE task_dependencies (
+    task_id     TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    depends_on  TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    PRIMARY KEY (task_id, depends_on)
+);
+CREATE INDEX task_dependencies_depends ON task_dependencies(depends_on);
+"#,
 ];
 
 pub struct Database {
@@ -263,14 +286,50 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 2);
+        assert_eq!(version, SCHEMA_VERSION);
         let projects: i64 = conn
             .query_row("SELECT count(*) FROM projects", [], |r| r.get(0))
             .unwrap();
         let handoffs: i64 = conn
             .query_row("SELECT count(*) FROM handoffs", [], |r| r.get(0))
             .unwrap();
-        assert_eq!((projects, handoffs), (1, 0));
+        let tasks: i64 = conn
+            .query_row("SELECT count(*) FROM tasks", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!((projects, handoffs, tasks), (1, 0, 0));
+    }
+
+    #[test]
+    fn upgrades_a_phase_7_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("orchestrator.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(&format!(
+                "BEGIN;\n{}\n{}\nPRAGMA user_version = 2;\nCOMMIT;",
+                MIGRATIONS[0], MIGRATIONS[1]
+            ))
+            .unwrap();
+            conn.execute(
+                "INSERT INTO projects (id, path, name, created_at, last_opened_at) VALUES ('p', '/x', 'x', 'a', 'a')",
+                [],
+            )
+            .unwrap();
+        }
+        let db = Database::open(&path).unwrap();
+        let conn = db.conn.lock();
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+        // The tasks of the new schema live beside what was already there.
+        let projects: i64 = conn
+            .query_row("SELECT count(*) FROM projects", [], |r| r.get(0))
+            .unwrap();
+        let tasks: i64 = conn
+            .query_row("SELECT count(*) FROM tasks", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!((projects, tasks), (1, 0));
     }
 
     #[test]

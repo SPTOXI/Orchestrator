@@ -33,6 +33,7 @@ interface Props {
   onOpenSession: (id: string) => void;
   onOpenFile: (path: string) => void;
   onOpenHandoff: (handoffId: string) => void;
+  onOpenTask: (taskId: string) => void;
 }
 
 const SECTIONS: Array<[MemorySection, string]> = [
@@ -442,6 +443,7 @@ const HIT_LABELS: Record<SearchHit["kind"], string> = {
   message: "sessão",
   event: "evento",
   handoff: "handoff",
+  task: "task",
 };
 
 export function MemoryView({
@@ -455,6 +457,7 @@ export function MemoryView({
   onOpenSession,
   onOpenFile,
   onOpenHandoff,
+  onOpenTask,
 }: Props) {
   const [section, setSection] = useState<MemorySection>(initialSection);
   const [text, setText] = useState(query);
@@ -503,6 +506,9 @@ export function MemoryView({
         break;
       case "handoff":
         onOpenHandoff(hit.refId);
+        break;
+      case "task":
+        onOpenTask(hit.refId);
         break;
       case "event":
         break;

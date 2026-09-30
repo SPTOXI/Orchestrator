@@ -60,6 +60,10 @@ const KIND_FILTERS: Array<{ value: EventKind | ""; label: string }> = [
   { value: "CONTEXT_BUILT", label: "CONTEXT_BUILT" },
   { value: "HANDOFF_CREATED", label: "HANDOFF_CREATED" },
   { value: "HANDOFF_ACCEPTED", label: "HANDOFF_ACCEPTED" },
+  { value: "TASK_CREATED", label: "TASK_CREATED" },
+  { value: "TASK_STARTED", label: "TASK_STARTED" },
+  { value: "TASK_COMPLETED", label: "TASK_COMPLETED" },
+  { value: "TASK_UPDATED", label: "TASK_UPDATED" },
 ];
 
 const PAGE = 500;

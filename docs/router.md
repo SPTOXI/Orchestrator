@@ -72,6 +72,8 @@ Regras do Full:
   Conselho continuam sem contexto, arquivos e ferramentas.
 - O handoff (Fase 7) usa o roteador para sugerir quem assume, pelo objetivo
   e o que falta, sem gastar tokens.
+- A task (Fase 8a) usa o mesmo caminho: "Sugerir com o roteador" recomenda
+  provider e modelo pelo título e pela descrição ([tasks.md](./tasks.md)).
 
 Sugerir e Full exigem pelo menos um membro.
 

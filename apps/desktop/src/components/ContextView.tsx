@@ -4,15 +4,18 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { SECTION_LABELS, summaryLine } from "../lib/context";
-import { contextApi, errorMessage } from "../lib/runtime";
+import { contextApi, errorMessage, taskApi } from "../lib/runtime";
 import type { ContextPack, ContextSettings, ContextSettingsView } from "../lib/types";
 
-/** What the tab previews: a session's first message, a handoff, or a task. */
+/** What the tab previews: a session's first message, a handoff, a saved
+ * task, or a task typed here. */
 export interface ContextTabRequest {
   sessionId?: string;
   task?: string;
   handoffId?: string;
   projectPath?: string;
+  /** A task of the project: its own context, built by the engine. */
+  taskId?: string;
 }
 
 interface Props {
@@ -54,13 +57,15 @@ export function ContextView({ ready, active, request, nonce }: Props) {
     try {
       const parsed = Number.parseInt(budget, 10);
       setPack(
-        await contextApi.preview({
-          sessionId: request.sessionId,
-          handoffId: request.handoffId,
-          projectPath: request.projectPath,
-          task,
-          budget: Number.isFinite(parsed) ? parsed : undefined,
-        }),
+        request.taskId
+          ? await taskApi.context(request.taskId)
+          : await contextApi.preview({
+              sessionId: request.sessionId,
+              handoffId: request.handoffId,
+              projectPath: request.projectPath,
+              task,
+              budget: Number.isFinite(parsed) ? parsed : undefined,
+            }),
       );
       setError(null);
     } catch (e) {
@@ -68,7 +73,7 @@ export function ContextView({ ready, active, request, nonce }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [budget, request.handoffId, request.projectPath, request.sessionId, task]);
+  }, [budget, request.handoffId, request.projectPath, request.sessionId, request.taskId, task]);
 
   useEffect(() => {
     if (!ready || !active) return;
@@ -176,6 +181,7 @@ export function ContextView({ ready, active, request, nonce }: Props) {
               />
             </label>
             {request.handoffId && <span className="badge">inclui o handoff</span>}
+            {request.taskId && <span className="badge">o contexto desta task</span>}
             {request.sessionId && <span className="meta">sessão {request.sessionId.slice(0, 8)}…</span>}
           </div>
           {pack && (pack.omitted.length > 0 || pack.notes.length > 0) && (

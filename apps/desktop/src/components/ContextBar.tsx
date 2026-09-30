@@ -21,6 +21,10 @@ interface Props {
   /** Registered providers (null before loading). */
   providerCount: number | null;
   runningSessions: number;
+  /** Task being worked on now, if any (ADR-0014). */
+  task: { title: string; status: string } | null;
+  /** How many tasks are open (not done, not cancelled). */
+  openTasks: number;
 }
 
 export function ContextBar({
@@ -32,6 +36,8 @@ export function ContextBar({
   providerName,
   providerCount,
   runningSessions,
+  task,
+  openTasks,
 }: Props) {
   const openTerminals = terminals.filter((t) => t.alive).length;
   const running = processes.filter((p) => p.status === "running").length;
@@ -46,8 +52,21 @@ export function ContextBar({
         : "Nenhuma API cadastrada: adicione uma no painel AI PROVIDERS",
       pending: !providerName,
     },
-    { label: "Task", value: "—", hint: "Task Manager: Fase 8", pending: true },
-    { label: "Agent", value: "—", hint: "Agent Manager: Fase 8", pending: true },
+    {
+      label: "Task",
+      value: task
+        ? task.title
+        : openTasks > 0
+          ? `${openTasks} ${openTasks === 1 ? "aberta" : "abertas"}`
+          : "—",
+      hint: task
+        ? `Task ${task.status.toLowerCase()} (painel TASKS)`
+        : openTasks > 0
+          ? "Nenhuma task em andamento; veja o painel TASKS"
+          : "Nenhuma task ainda: crie uma no painel TASKS",
+      pending: !task,
+    },
+    { label: "Agent", value: "—", hint: "Agent Manager: Fase 8b", pending: true },
     { label: "Autonomia", value: "—", hint: "Assistido / Autônomo / Acesso Irrestrito: Fase 9", pending: true },
     {
       label: "Branch",

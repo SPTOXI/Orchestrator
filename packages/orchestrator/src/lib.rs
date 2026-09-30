@@ -9,6 +9,8 @@
 //!   (`memory.*`, `decision.*`).
 //! - [`HandoffService`]: one AI hands its work to another through a
 //!   `HandoffPacket`, never the conversation.
+//! - [`TaskService`]: the project's tasks — states, dependencies and the
+//!   session that works on one (ADR-0014).
 //!
 //! Depends on `core`, `providers`, `memory` and `git`; the app wires it.
 
@@ -17,6 +19,7 @@ mod handoff;
 pub mod packet;
 mod persistence;
 mod settings;
+mod task;
 mod text;
 mod tools;
 
@@ -27,5 +30,9 @@ pub use handoff::{
 };
 pub use persistence::StoreSessions;
 pub use settings::{ContextSettings, DEFAULT_BUDGET, MAX_BUDGET, MIN_BUDGET};
+pub use task::{
+    next_states, StartTaskSession, StartedTask, SubtaskProgress, TaskRef, TaskService, TaskView,
+    MAX_DEPENDENCIES, MAX_FILES, MAX_TEXT, MAX_TITLE,
+};
 pub use text::estimate_tokens;
 pub use tools::{definitions as memory_tool_definitions, EngineTools};

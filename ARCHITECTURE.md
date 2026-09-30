@@ -83,7 +83,9 @@ apenas apresentação.
 | Roteador de modelos e Conselho | `packages/router` | Rust | 5, 6 | ✅ ranking sem tokens, Conselho de 1 a 5 IAs com votos e cache, modos Desligado/Sugerir/Full (ADR-0011); deliberações e cache guardados (ADR-0012) |
 | SQLite, Memory, History, Decisions | `packages/memory` | Rust | 6, 7 | ✅ banco local, histórico por projeto, projetos, sessões, memória L1/L2/L3, decisões, deliberações (ADR-0012); handoffs, fatos da sessão e busca por relevância (ADR-0013) |
 | Context Builder, Handoff, ferramentas de memória das IAs | `packages/orchestrator` (`orchestrator-engine`) | Rust | 7 | ✅ contexto por seções com orçamento de tokens, `HandoffPacket` com rascunho por fatos e pela IA, `memory.*`/`decision.*` para as IAs (ADR-0013) |
-| Task Manager, Agent Manager, Subagents, File Locks | `packages/orchestrator` + `packages/agents` | Rust | 8 | planejado |
+| SQLite: tasks | `packages/memory` | Rust | 8a | ✅ migração 3: `tasks` e `task_dependencies` (ADR-0014) |
+| Task Manager | `packages/orchestrator` (`orchestrator-engine`) | Rust | 8a | ✅ tasks com estados, dependências, subtasks e prioridade; contexto e sessão a partir da task (ADR-0014) |
+| Agent Manager, Subagents, File Locks | `packages/orchestrator` + `packages/agents` | Rust | 8b | planejado |
 | Autonomia (Assistido/Autônomo/Irrestrito) | `packages/orchestrator` | Rust | 9 | planejado |
 | GitHub | `packages/git` | Rust | 10 | planejado |
 | Otimização de tokens, cache, compactação, scheduling | `packages/orchestrator` | Rust | 11 | planejado |
@@ -230,7 +232,11 @@ a conter fora do gate explícito da Fase 9.
   `MEMORY_SAVED`, `MEMORY_REMOVED`, `DECISION_SAVED`
   ([ADR-0012](./docs/adr/0012-sqlite-memoria-e-historico.md)),
   `CONTEXT_BUILT` ([ADR-0013](./docs/adr/0013-context-builder-e-handoff.md);
-  `HANDOFF_CREATED` e `HANDOFF_ACCEPTED` já eram da seção 22).
+  `HANDOFF_CREATED` e `HANDOFF_ACCEPTED` já eram da seção 22) e
+  `TASK_UPDATED` ([ADR-0014](./docs/adr/0014-task-manager.md); os três
+  `TASK_*` restantes já eram da seção 22).
+- `Task`, `TaskStatus`, `TaskPriority`, `TaskInput`, `TaskId` — contratos
+  das tasks (Fase 8a).
 - `HandoffPacket`, `Handoff`, `HandoffEnd`, `HandoffStatus`, `HandoffId`,
   `ContextSummary` e os eventos de sessão `contextAttached` e `handedOff`
   (Fase 7).
@@ -263,6 +269,7 @@ Detalhada em [`docs/ipc.md`](./docs/ipc.md) e
 | `memory_overview`, `memory_list`, `memory_save`, `memory_delete`, `memory_search`, `decisions_list`, `decision_save` | memória do projeto e decisões (Fase 6) |
 | `context_preview`, `context_settings_get`, `context_settings_save` | prévia e configuração do contexto (Fase 7) |
 | `handoff_prepare`, `handoff_create`, `handoff_start`, `handoffs_list`, `handoff_get` | handoff entre IAs (Fase 7) |
+| `tasks_list`, `task_get`, `task_save`, `task_status`, `task_start_session`, `task_context` | tasks do projeto (Fase 8a) |
 
 | Evento Tauri | Payload |
 | ------------ | ------- |
@@ -287,9 +294,10 @@ projeto.
 | `deliberations` | deliberações e cache do Conselho |
 | `search_index` | índice FTS5 da busca L3 |
 | `handoffs` | handoffs entre IAs, com o pacote (Fase 7, migração 2) |
+| `tasks`, `task_dependencies` | tasks do projeto e suas dependências (Fase 8a, migração 3) |
 
-As tabelas `tasks`, `task_dependencies`, `agents`, `artifacts`, `file_locks`
-e `git_operations` entram com as migrações das Fases 8–10. Configuração
+As tabelas `agents`, `artifacts`, `file_locks` e `git_operations` entram com
+as migrações das Fases 8b–10. Configuração
 (`connections.json`, `council.json`, `context.json`) continua em arquivos, e
 segredos só no cofre do SO.
 
@@ -334,8 +342,25 @@ Implementado na Fase 7 (`packages/orchestrator`,
   `HANDOFF_ACCEPTED`).
 
 Os buffers com offset do runtime (`terminal.read`/`process.read { since }`)
-permitem que uma IA leia só a saída nova; tasks e agentes (Fase 8) usam o
-mesmo Context Builder, com a task no lugar da primeira mensagem.
+permitem que uma IA leia só a saída nova.
+
+## 8.1 Tasks (Fase 8a)
+
+Implementado em `packages/orchestrator` e `packages/memory`
+([ADR-0014](./docs/adr/0014-task-manager.md), referência em
+[`docs/tasks.md`](./docs/tasks.md)):
+
+- **Task**: título, descrição, estado (`TODO`, `IN_PROGRESS`, `BLOCKED`,
+  `REVIEW`, `DONE`, `CANCELLED`), prioridade, provider/modelo, subtasks,
+  dependências, arquivos, sessões e resultado. Tasks não são apagadas: são
+  canceladas.
+- **Regras no motor**: transições válidas, dependências sem ciclo e
+  "só inicia quando o que ela espera está concluído". A UI só oferece o
+  que o motor aceitaria (`TaskView.can`).
+- **A task alimenta o resto**: o Context Builder monta o contexto a partir
+  dela (*task-scoped context*), o roteador sugere o modelo pelo texto dela
+  e a busca L3 a encontra.
+- Agentes executando tasks, em paralelo e com File Locks, são a Fase 8b.
 
 ## 9. Providers (Fases 3–7)
 
