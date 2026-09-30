@@ -19,14 +19,23 @@ use std::path::PathBuf;
 pub struct TokenUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,
-    /// Input tokens served from the provider's prompt cache.
+    /// Input tokens served from the provider's prompt cache (part of
+    /// `input_tokens`).
     #[serde(default)]
     pub cached_input_tokens: u64,
+    /// Input tokens written to the provider's prompt cache (part of
+    /// `input_tokens`; Anthropic, ADR-0018).
+    #[serde(default)]
+    pub cache_write_tokens: u64,
     #[serde(default)]
     pub reasoning_tokens: u64,
     /// Cost in USD, when the provider reports it.
     #[serde(default)]
     pub cost_usd: Option<f64>,
+    /// What the prompt cache saved compared with the full input price
+    /// (negative when a write was never read back). ADR-0018.
+    #[serde(default)]
+    pub cache_saved_usd: Option<f64>,
     /// True when any part was estimated instead of reported by the vendor.
     #[serde(default)]
     pub estimated: bool,
@@ -42,16 +51,22 @@ impl TokenUsage {
     }
 }
 
+fn add_optional(a: Option<f64>, b: Option<f64>) -> Option<f64> {
+    match (a, b) {
+        (None, None) => None,
+        (a, b) => Some(a.unwrap_or(0.0) + b.unwrap_or(0.0)),
+    }
+}
+
 impl AddAssign for TokenUsage {
     fn add_assign(&mut self, other: Self) {
         self.input_tokens += other.input_tokens;
         self.output_tokens += other.output_tokens;
         self.cached_input_tokens += other.cached_input_tokens;
+        self.cache_write_tokens += other.cache_write_tokens;
         self.reasoning_tokens += other.reasoning_tokens;
-        self.cost_usd = match (self.cost_usd, other.cost_usd) {
-            (None, None) => None,
-            (a, b) => Some(a.unwrap_or(0.0) + b.unwrap_or(0.0)),
-        };
+        self.cost_usd = add_optional(self.cost_usd, other.cost_usd);
+        self.cache_saved_usd = add_optional(self.cache_saved_usd, other.cache_saved_usd);
         self.estimated |= other.estimated;
     }
 }
@@ -243,6 +258,18 @@ mod tests {
         assert_eq!(total.total_tokens(), 18);
         assert_eq!(total.cost_usd, Some(0.5));
         assert!(total.estimated);
+        assert_eq!(total.cache_saved_usd, None);
+        total += TokenUsage {
+            input_tokens: 100,
+            cached_input_tokens: 80,
+            cache_write_tokens: 10,
+            cache_saved_usd: Some(0.25),
+            ..Default::default()
+        };
+        assert_eq!(total.cached_input_tokens, 80);
+        assert_eq!(total.cache_write_tokens, 10);
+        assert_eq!(total.cache_saved_usd, Some(0.25));
+        assert_eq!(total.cost_usd, Some(0.5));
     }
 
     #[test]

@@ -59,11 +59,8 @@ fn claude_models() -> Vec<ModelEntry> {
     .map(|id| {
         let mut model = ModelEntry::new(*id);
         model.supports_tools = Some(true);
-        if let Some((input, output, context, tags)) = crate::anthropic::reference(id) {
-            model.input_price = Some(input);
-            model.output_price = Some(output);
-            model.context_window = Some(context);
-            model.tags = tags.iter().map(|t| (*t).to_owned()).collect();
+        if let Some(reference) = crate::anthropic::reference(id) {
+            reference.fill(&mut model);
         }
         model
     })

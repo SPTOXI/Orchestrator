@@ -81,6 +81,9 @@ pub struct ModelEntry {
     pub input_price: Option<f64>,
     /// USD per million output tokens.
     pub output_price: Option<f64>,
+    /// USD per million input tokens read from the provider's prompt cache.
+    /// Unset: the full input price (Anthropic: 10% of it). ADR-0018.
+    pub cached_input_price: Option<f64>,
     /// Free labels ("código", "barato", "raciocínio"…).
     pub tags: Vec<String>,
     /// Extra fields merged into the request body for this model.
@@ -132,6 +135,38 @@ pub struct ProtocolOptions {
     /// declines (`fallbacks: "default"`). Default on for the models that
     /// support it.
     pub refusal_fallback: Option<bool>,
+    /// Prompt cache (ADR-0018): `cache_control` markers (Anthropic) and
+    /// `prompt_cache_key` (OpenAI's own API). Default on.
+    pub prompt_cache: Option<bool>,
+    /// Anthropic: how long a cache entry lives. Default 5 minutes.
+    pub cache_ttl: Option<CacheTtl>,
+}
+
+impl ProtocolOptions {
+    pub fn prompt_cache(&self) -> bool {
+        self.prompt_cache != Some(false)
+    }
+}
+
+/// Lifetime of an Anthropic prompt cache entry. Writes cost 1.25× the
+/// input price for 5 minutes and 2× for an hour.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CacheTtl {
+    #[default]
+    #[serde(rename = "5m")]
+    FiveMinutes,
+    #[serde(rename = "1h")]
+    OneHour,
+}
+
+impl CacheTtl {
+    /// Cache write price as a multiple of the input price.
+    pub fn write_multiplier(self) -> f64 {
+        match self {
+            Self::FiveMinutes => 1.25,
+            Self::OneHour => 2.0,
+        }
+    }
 }
 
 /// How a generic API authenticates.

@@ -90,6 +90,14 @@ impl Protocol for OpenAi {
         if let Some(max) = req.model.max_output_tokens.or(req.conn.max_output_tokens) {
             body["max_completion_tokens"] = max.into();
         }
+        // The cache is automatic; the key keeps one conversation's requests
+        // on the same cache (ADR-0018). Only OpenAI's own API: compatible
+        // servers may reject an unknown field.
+        if let Some(key) = req.cache_key.filter(|_| {
+            req.conn.options.prompt_cache() && req.conn.base().contains("://api.openai.com")
+        }) {
+            body["prompt_cache_key"] = key.into();
+        }
         let body = with_extra_body(body, req);
         let mut headers = Vec::new();
         if let Some(key) = req.key {
@@ -308,5 +316,56 @@ impl Decoder for OpenAiDecoder {
             notices,
             served_model: self.served,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::conversation::Message;
+    use serde_json::json;
+
+    fn body(base: &str, options: Value, cache_key: Option<&str>) -> Value {
+        let conn: Connection = serde_json::from_value(json!({
+            "id": "c", "name": "C", "kind": "openai", "baseUrl": base,
+            "options": options, "models": [{"id": "gpt-test"}]
+        }))
+        .unwrap();
+        let model = conn.models[0].clone();
+        OpenAi
+            .request(&Request {
+                conn: &conn,
+                key: Some("k"),
+                model: &model,
+                system: Some("sys"),
+                messages: &[Message::user("oi")],
+                tools: &[],
+                stream: true,
+                cache_key,
+            })
+            .unwrap()
+            .body
+            .unwrap()
+    }
+
+    #[test]
+    fn the_cache_key_goes_only_to_openai_for_sessions() {
+        let official = "https://api.openai.com/v1";
+        assert_eq!(
+            body(official, json!({}), Some("sessao-1"))["prompt_cache_key"],
+            "sessao-1"
+        );
+        assert!(body(official, json!({}), None)
+            .get("prompt_cache_key")
+            .is_none());
+        assert!(body(official, json!({"promptCache": false}), Some("s"))
+            .get("prompt_cache_key")
+            .is_none());
+        assert!(
+            body("https://openrouter.ai/api/v1", json!({}), Some("s"))
+                .get("prompt_cache_key")
+                .is_none(),
+            "compatible APIs may reject unknown fields"
+        );
     }
 }

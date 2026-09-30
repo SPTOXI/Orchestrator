@@ -967,6 +967,7 @@ async fn run_turn(
         json!({
             "sessionId": session.id,
             "provider": descriptor.id,
+            "model": turn.native.model,
             "turnId": result.turn_id,
             "status": status,
             "error": result.error,

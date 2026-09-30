@@ -11,7 +11,7 @@ A fase é feita em passos, cada um commitado e enviado ao terminar, para
 poder ser retomada de onde parou.
 
 1. ✅ ADR-0018 e este arquivo.
-2. ⏳ Custo real e cache de prompt: `TokenUsage` (gravação no cache,
+2. ✅ Custo real e cache de prompt: `TokenUsage` (gravação no cache,
    economia), preço do cache por modelo, marcadores `cache_control`
    (Anthropic), `prompt_cache_key` (OpenAI), retentativas; testes.
 3. ⏳ Compactação de contexto: adapter das APIs, `SessionManager`,

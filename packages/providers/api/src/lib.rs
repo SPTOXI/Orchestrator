@@ -14,6 +14,7 @@
 mod anthropic;
 mod config;
 mod conversation;
+mod cost;
 mod gemini;
 mod generic;
 mod http;
@@ -27,8 +28,9 @@ mod secrets;
 mod tools;
 
 pub use config::{
-    ApiKind, Connection, Credential, CredentialSource, GenericAuth, GenericProfile, MessageFormat,
-    ModelEntry, ProtocolOptions, RoleNames, StreamFormat, ToolMode, DEFAULT_MAX_TOOL_ROUNDS,
+    ApiKind, CacheTtl, Connection, Credential, CredentialSource, GenericAuth, GenericProfile,
+    MessageFormat, ModelEntry, ProtocolOptions, RoleNames, StreamFormat, ToolMode,
+    DEFAULT_MAX_TOOL_ROUNDS,
 };
 pub use manager::{ConnectionManager, ConnectionView, KeyStatus, ProbeRequest, SaveRequest};
 pub use presets::{presets, Preset};

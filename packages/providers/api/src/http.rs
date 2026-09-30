@@ -13,6 +13,56 @@ use tokio_util::sync::CancellationToken;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 /// Error bodies are read up to this size.
 const MAX_ERROR_BODY: usize = 64 * 1024;
+/// Repeats of a request the server did not take (ADR-0018).
+pub const MAX_RETRIES: u32 = 2;
+const RETRY_BASE: Duration = Duration::from_secs(2);
+const MAX_RETRY_WAIT: Duration = Duration::from_secs(60);
+/// Timeout, rate limit, server errors and overload (529, Anthropic).
+const RETRY_STATUSES: &[u16] = &[408, 429, 500, 502, 503, 504, 529];
+
+/// A request about to be repeated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Retry {
+    /// 1 for the first repeat.
+    pub attempt: u32,
+    pub wait: Duration,
+    /// What went wrong, as the API said it.
+    pub reason: String,
+}
+
+struct Failure {
+    error: ProviderError,
+    retryable: bool,
+    retry_after: Option<Duration>,
+}
+
+impl Failure {
+    fn final_(error: ProviderError) -> Self {
+        Self {
+            error,
+            retryable: false,
+            retry_after: None,
+        }
+    }
+}
+
+/// `retry-after-ms` (milliseconds) or `retry-after` (seconds; an HTTP date
+/// is ignored and the default backoff applies).
+fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    let text = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(str::trim)
+    };
+    if let Some(ms) = text("retry-after-ms").and_then(|v| v.parse::<f64>().ok()) {
+        return (ms.is_finite() && ms >= 0.0).then(|| Duration::from_millis(ms as u64));
+    }
+    text("retry-after")
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|s| s.is_finite() && *s >= 0.0)
+        .map(Duration::from_secs_f64)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
@@ -84,6 +134,51 @@ impl HttpClient {
         call: &HttpCall,
         cancel: &CancellationToken,
     ) -> Result<reqwest::Response, ProviderError> {
+        self.send_once(call, cancel).await.map_err(|f| f.error)
+    }
+
+    /// [`Self::send`], repeating a request the server did not take (rate
+    /// limit, overload, a 5xx, a connection that never opened) up to
+    /// [`MAX_RETRIES`] times. The wait is what the server asks for
+    /// (`retry-after`, capped) or 2 s, then 4 s. `on_retry` is told before
+    /// each wait; cancelling ends the wait (ADR-0018).
+    pub async fn send_retrying(
+        &self,
+        call: &HttpCall,
+        cancel: &CancellationToken,
+        on_retry: &(dyn Fn(&Retry) + Send + Sync),
+    ) -> Result<reqwest::Response, ProviderError> {
+        let mut attempt = 0;
+        loop {
+            let failure = match self.send_once(call, cancel).await {
+                Ok(response) => return Ok(response),
+                Err(failure) => failure,
+            };
+            if !failure.retryable || attempt >= MAX_RETRIES {
+                return Err(failure.error);
+            }
+            attempt += 1;
+            let wait = failure
+                .retry_after
+                .unwrap_or(RETRY_BASE * 2u32.pow(attempt - 1))
+                .min(MAX_RETRY_WAIT);
+            on_retry(&Retry {
+                attempt,
+                wait,
+                reason: failure.error.message.clone(),
+            });
+            tokio::select! {
+                () = tokio::time::sleep(wait) => {}
+                () = cancel.cancelled() => return Err(ProviderError::cancelled("request cancelled")),
+            }
+        }
+    }
+
+    async fn send_once(
+        &self,
+        call: &HttpCall,
+        cancel: &CancellationToken,
+    ) -> Result<reqwest::Response, Failure> {
         let mut request = match call.method {
             Method::Get => self.client.get(&call.url),
             Method::Post => self.client.post(&call.url),
@@ -95,15 +190,33 @@ impl HttpClient {
             request = request.json(body);
         }
         let response = tokio::select! {
-            result = request.send() => result.map_err(|e| transport_error(e, &call.url))?,
-            () = cancel.cancelled() => return Err(ProviderError::cancelled("request cancelled")),
+            result = request.send() => match result {
+                Ok(response) => response,
+                Err(err) => {
+                    // Nothing reached the server: safe to send again.
+                    let retryable = err.is_connect();
+                    return Err(Failure {
+                        error: transport_error(err, &call.url),
+                        retryable,
+                        retry_after: None,
+                    });
+                }
+            },
+            () = cancel.cancelled() => {
+                return Err(Failure::final_(ProviderError::cancelled("request cancelled")))
+            }
         };
         let status = response.status();
         if status.is_success() {
             return Ok(response);
         }
+        let retry_after = retry_after(response.headers());
         let body = read_limited(response, cancel).await.unwrap_or_default();
-        Err(status_error(status.as_u16(), &body))
+        Err(Failure {
+            error: status_error(status.as_u16(), &body),
+            retryable: RETRY_STATUSES.contains(&status.as_u16()),
+            retry_after,
+        })
     }
 
     /// Sends and parses a JSON response.

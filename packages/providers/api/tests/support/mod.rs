@@ -39,6 +39,8 @@ pub struct Reply {
     pub content_type: &'static str,
     pub chunks: Vec<String>,
     pub delay: Duration,
+    /// Extra response headers.
+    pub headers: Vec<(String, String)>,
 }
 
 impl Reply {
@@ -48,6 +50,7 @@ impl Reply {
             content_type: "application/json",
             chunks: vec![value.to_string()],
             delay: Duration::ZERO,
+            headers: Vec::new(),
         }
     }
 
@@ -73,6 +76,7 @@ impl Reply {
             content_type: "text/event-stream",
             chunks,
             delay: Duration::ZERO,
+            headers: Vec::new(),
         }
     }
 
@@ -87,11 +91,17 @@ impl Reply {
             content_type: "application/x-ndjson",
             chunks: lines.into_iter().map(|l| format!("{l}\n")).collect(),
             delay: Duration::ZERO,
+            headers: Vec::new(),
         }
     }
 
     pub fn slow(mut self, delay: Duration) -> Self {
         self.delay = delay;
+        self
+    }
+
+    pub fn header(mut self, name: &str, value: &str) -> Self {
+        self.headers.push((name.to_owned(), value.to_owned()));
         self
     }
 }
@@ -130,8 +140,13 @@ impl FakeApi {
                         log.len() - 1
                     };
                     let reply = handler(&request, index);
+                    let extra: String = reply
+                        .headers
+                        .iter()
+                        .map(|(name, value)| format!("{name}: {value}\r\n"))
+                        .collect();
                     let head = format!(
-                        "HTTP/1.1 {} X\r\nContent-Type: {}\r\nConnection: close\r\n\r\n",
+                        "HTTP/1.1 {} X\r\nContent-Type: {}\r\n{extra}Connection: close\r\n\r\n",
                         reply.status, reply.content_type
                     );
                     if socket.write_all(head.as_bytes()).await.is_err() {

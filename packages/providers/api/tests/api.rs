@@ -195,7 +195,7 @@ async fn anthropic_sends_thinking_and_tool_use_back_unchanged() {
     assert_eq!(first.headers["x-api-key"], "sk-ant");
     assert_eq!(first.headers["anthropic-version"], "2023-06-01");
     assert_eq!(first.body["max_tokens"], 64000);
-    assert!(first.body["system"]
+    assert!(first.body["system"][0]["text"]
         .as_str()
         .unwrap()
         .contains("Orchestrator"));
@@ -381,6 +381,7 @@ async fn http_errors_become_readable_failures() {
             )
         } else {
             Reply::status(429, json!({"error": {"message": "Rate limit reached"}}))
+                .header("retry-after", "0")
         }
     })
     .await;

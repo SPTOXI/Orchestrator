@@ -8,7 +8,7 @@
 //!   by default for the models that support it on api.anthropic.com
 //!   (connection option `refusalFallback`).
 
-use crate::config::{Connection, ModelEntry, StreamFormat};
+use crate::config::{CacheTtl, Connection, ModelEntry, StreamFormat};
 use crate::conversation::{Role, ToolCallPart};
 use crate::http::{Frame, HttpCall};
 use crate::jsonpath;
@@ -36,6 +36,25 @@ const FALLBACK_MODELS: &[&str] = &[
 ];
 
 pub struct Anthropic;
+
+/// Blocks that accept a `cache_control` marker.
+const CACHEABLE: &[&str] = &["text", "tool_result", "tool_use", "image", "document"];
+
+/// Marks the last block of the last message, so the next request reads the
+/// whole conversation up to here from the cache.
+fn mark_last_block(messages: &mut [Value], marker: &Value) {
+    let block = messages
+        .last_mut()
+        .and_then(|message| message.get_mut("content"))
+        .and_then(Value::as_array_mut)
+        .and_then(|content| content.last_mut());
+    if let Some(block) = block {
+        let kind = block.get("type").and_then(Value::as_str).unwrap_or("");
+        if CACHEABLE.contains(&kind) {
+            block["cache_control"] = marker.clone();
+        }
+    }
+}
 
 fn auth_headers(key: Option<&str>) -> Vec<(String, String)> {
     let mut headers = vec![("anthropic-version".to_owned(), API_VERSION.to_owned())];
@@ -109,6 +128,16 @@ impl Protocol for Anthropic {
             } else {
                 DEFAULT_MAX_TOKENS_NO_STREAM
             });
+        // Prompt cache (ADR-0018): the tools (the same in every session of
+        // this model), the system prompt and the conversation so far.
+        let cached = req.cache_key.is_some() && req.conn.options.prompt_cache();
+        let marker = cached.then(|| match req.conn.options.cache_ttl.unwrap_or_default() {
+            CacheTtl::FiveMinutes => json!({"type": "ephemeral"}),
+            CacheTtl::OneHour => json!({"type": "ephemeral", "ttl": "1h"}),
+        });
+        if let Some(marker) = &marker {
+            mark_last_block(&mut messages, marker);
+        }
         let mut body = json!({
             "model": req.model.id,
             "max_tokens": max_tokens,
@@ -116,26 +145,32 @@ impl Protocol for Anthropic {
             "stream": req.stream,
         });
         if let Some(system) = req.system {
-            body["system"] = system.into();
+            body["system"] = match &marker {
+                Some(marker) => json!([{"type": "text", "text": system, "cache_control": marker}]),
+                None => system.into(),
+            };
         }
         if !req.tools.is_empty() {
             let eager = req.stream && req.conn.options.eager_tool_streaming != Some(false);
-            body["tools"] = Value::Array(
-                req.tools
-                    .iter()
-                    .map(|tool| {
-                        let mut entry = json!({
-                            "name": api_name(&tool.name),
-                            "description": tool.description,
-                            "input_schema": tool.parameters,
-                        });
-                        if eager {
-                            entry["eager_input_streaming"] = true.into();
-                        }
-                        entry
-                    })
-                    .collect(),
-            );
+            let mut tools: Vec<Value> = req
+                .tools
+                .iter()
+                .map(|tool| {
+                    let mut entry = json!({
+                        "name": api_name(&tool.name),
+                        "description": tool.description,
+                        "input_schema": tool.parameters,
+                    });
+                    if eager {
+                        entry["eager_input_streaming"] = true.into();
+                    }
+                    entry
+                })
+                .collect();
+            if let (Some(marker), Some(last)) = (&marker, tools.last_mut()) {
+                last["cache_control"] = marker.clone();
+            }
+            body["tools"] = Value::Array(tools);
         }
         let mut headers = auth_headers(req.key);
         if uses_fallback(req) {
@@ -267,6 +302,7 @@ impl AnthropicDecoder {
         if input + read + written > 0 {
             self.usage.input_tokens = input + read + written;
             self.usage.cached_input_tokens = read;
+            self.usage.cache_write_tokens = written;
         }
         if let Some(output) = jsonpath::get_u64(usage, "output_tokens") {
             self.usage.output_tokens = output;
@@ -548,21 +584,70 @@ impl Decoder for AnthropicDecoder {
     }
 }
 
-/// Reference prices and limits of current Claude models (USD per million
-/// tokens; Anthropic first-party rates, as of September 2026). Used to
-/// pre-fill models found by "Buscar modelos"; the user can edit them.
-pub fn reference(model: &str) -> Option<(f64, f64, u32, &'static [&'static str])> {
+/// Reference prices and limits of a Claude model (USD per million tokens;
+/// Anthropic first-party rates, as of September 2026). Used to pre-fill
+/// models found by "Buscar modelos"; the user can edit them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Reference {
+    pub input: f64,
+    pub output: f64,
+    /// Cache reads (ADR-0018).
+    pub cache_read: f64,
+    pub context: u32,
+    pub tags: &'static [&'static str],
+}
+
+impl Reference {
+    /// Fills what `model` does not say yet.
+    pub fn fill(&self, model: &mut ModelEntry) {
+        model.input_price.get_or_insert(self.input);
+        model.output_price.get_or_insert(self.output);
+        model.cached_input_price.get_or_insert(self.cache_read);
+        model.context_window.get_or_insert(self.context);
+        if model.tags.is_empty() {
+            model.tags = self.tags.iter().map(|t| (*t).to_owned()).collect();
+        }
+    }
+}
+
+pub fn reference(model: &str) -> Option<Reference> {
+    let r = |input, output, cache_read, context, tags| Reference {
+        input,
+        output,
+        cache_read,
+        context,
+        tags,
+    };
     Some(match model {
-        "claude-fable-5-1" | "claude-fable-5" => {
-            (10.0, 50.0, 1_000_000, &["máxima capacidade", "raciocínio"])
-        }
-        "claude-opus-5-5" => (4.0, 20.0, 1_000_000, &["código", "raciocínio", "agentes"]),
+        "claude-fable-5-1" => r(
+            10.0,
+            50.0,
+            0.25,
+            1_000_000,
+            &["máxima capacidade", "raciocínio"],
+        ),
+        "claude-fable-5" => r(
+            10.0,
+            50.0,
+            1.0,
+            1_000_000,
+            &["máxima capacidade", "raciocínio"],
+        ),
+        "claude-opus-5-5" => r(
+            4.0,
+            20.0,
+            0.2,
+            1_000_000,
+            &["código", "raciocínio", "agentes"],
+        ),
         "claude-opus-5" | "claude-opus-4-8" | "claude-opus-4-7" | "claude-opus-4-6" => {
-            (5.0, 25.0, 1_000_000, &["código", "raciocínio"])
+            r(5.0, 25.0, 0.5, 1_000_000, &["código", "raciocínio"])
         }
-        "claude-sonnet-5-5" | "claude-sonnet-5" => (2.0, 10.0, 1_000_000, &["código", "rápido"]),
-        "claude-sonnet-4-6" => (3.0, 15.0, 1_000_000, &["código", "rápido"]),
-        "claude-haiku-4-5" => (1.0, 5.0, 200_000, &["barato", "rápido"]),
+        "claude-sonnet-5-5" | "claude-sonnet-5" => {
+            r(2.0, 10.0, 0.2, 1_000_000, &["código", "rápido"])
+        }
+        "claude-sonnet-4-6" => r(3.0, 15.0, 0.3, 1_000_000, &["código", "rápido"]),
+        "claude-haiku-4-5" => r(1.0, 5.0, 0.1, 200_000, &["barato", "rápido"]),
         _ => return None,
     })
 }
@@ -596,6 +681,7 @@ mod tests {
                 messages: &[Message::user("oi")],
                 tools: &[],
                 stream: true,
+                cache_key: None,
             })
             .unwrap()
     }

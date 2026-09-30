@@ -19,6 +19,12 @@ pub struct Request<'a> {
     /// Native tools (empty in prompt/none modes).
     pub tools: &'a [ToolDefinition],
     pub stream: bool,
+    /// The session the request belongs to: its requests share the
+    /// vendor's prompt cache (markers on Anthropic, `prompt_cache_key` on
+    /// OpenAI). `None` for one-off requests (completions, connection
+    /// tests): a prompt that is never repeated would only pay for the
+    /// cache write.
+    pub cache_key: Option<&'a str>,
 }
 
 /// Incremental output for the UI.

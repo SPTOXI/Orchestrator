@@ -6,7 +6,7 @@
 
 use crate::config::{ApiKind, Connection, CredentialSource, ModelEntry, ToolMode};
 use crate::conversation::{Conversation, Message, Part, Role, ToolResultPart};
-use crate::http::{FrameReader, HttpClient};
+use crate::http::{FrameReader, HttpClient, Retry};
 use crate::protocol::{protocol, Delta, Reply, Request, Stop};
 use crate::secrets::SecretStore;
 use crate::tools::{
@@ -146,14 +146,14 @@ impl ApiProvider {
             .clone()
     }
 
-    /// One request to the model; streamed deltas go to `on_delta`.
+    /// One request to the model; streamed deltas go to `on_delta`. A
+    /// request the server did not take is repeated (ADR-0018); `on_retry`
+    /// hears about each repeat.
     pub(crate) async fn call_model(
         &self,
-        model: &ModelEntry,
-        system: Option<&str>,
-        messages: &[Message],
-        tools: &[ToolDefinition],
+        call: ModelCall<'_>,
         on_delta: &(dyn Fn(Delta) + Send + Sync),
+        on_retry: &(dyn Fn(&Retry) + Send + Sync),
         cancel: &CancellationToken,
     ) -> Result<Reply, ProviderError> {
         let key = self.key().await?;
@@ -162,14 +162,15 @@ impl ApiProvider {
         let req = Request {
             conn: &self.conn,
             key: key.as_deref(),
-            model,
-            system,
-            messages,
-            tools,
+            model: call.model,
+            system: call.system,
+            messages: call.messages,
+            tools: call.tools,
             stream,
+            cache_key: call.cache_key,
         };
-        let call = protocol.request(&req)?;
-        let response = self.client.send(&call, cancel).await?;
+        let http = protocol.request(&req)?;
+        let response = self.client.send_retrying(&http, cancel, on_retry).await?;
         let mut decoder = protocol.decoder(&req);
         let mut reader = FrameReader::new(response, protocol.stream_format(&self.conn, stream));
         while let Some(frame) = reader.next(cancel).await? {
@@ -183,18 +184,9 @@ impl ApiProvider {
         decoder.finish()
     }
 
-    /// Usage plus cost from the model's configured prices.
-    fn priced(&self, model: &ModelEntry, mut usage: TokenUsage) -> TokenUsage {
-        let input = model
-            .input_price
-            .map(|p| usage.input_tokens as f64 * p / 1_000_000.0);
-        let output = model
-            .output_price
-            .map(|p| usage.output_tokens as f64 * p / 1_000_000.0);
-        if input.is_some() || output.is_some() {
-            usage.cost_usd = Some(input.unwrap_or(0.0) + output.unwrap_or(0.0));
-        }
-        usage
+    /// Usage plus cost from the model's configured prices (ADR-0018).
+    fn priced(&self, model: &ModelEntry, usage: TokenUsage) -> TokenUsage {
+        crate::cost::priced(&self.conn, model, usage)
     }
 
     fn system_prompt(
@@ -277,11 +269,15 @@ impl ApiProvider {
             };
             let reply = self
                 .call_model(
-                    &model,
-                    system.as_deref(),
-                    &request_messages,
-                    native_tools,
+                    ModelCall {
+                        model: &model,
+                        system: system.as_deref(),
+                        messages: &request_messages,
+                        tools: native_tools,
+                        cache_key: Some(&native.reference),
+                    },
                     &on_delta,
+                    &|retry| retry_notice(ctx, retry),
                     &cancel,
                 )
                 .await?;
@@ -396,14 +392,8 @@ impl ApiProvider {
         }
         if self.conn.kind == ApiKind::Anthropic {
             for model in &mut models {
-                if let Some((input, output, context, tags)) = crate::anthropic::reference(&model.id)
-                {
-                    model.input_price.get_or_insert(input);
-                    model.output_price.get_or_insert(output);
-                    model.context_window.get_or_insert(context);
-                    if model.tags.is_empty() {
-                        model.tags = tags.iter().map(|t| (*t).to_owned()).collect();
-                    }
+                if let Some(reference) = crate::anthropic::reference(&model.id) {
+                    reference.fill(model);
                 }
             }
         }
@@ -448,11 +438,15 @@ impl ApiProvider {
 
         let reply = self
             .call_model(
-                &model,
-                Some("This is a connection test from the Orchestrator."),
-                &[Message::user("Reply with exactly: OK")],
-                &[],
+                ModelCall {
+                    model: &model,
+                    system: Some("This is a connection test from the Orchestrator."),
+                    messages: &[Message::user("Reply with exactly: OK")],
+                    tools: &[],
+                    cache_key: None,
+                },
                 &quiet,
+                &|_| {},
                 &cancel,
             )
             .await?;
@@ -478,7 +472,18 @@ impl ApiProvider {
             "Call the tool orchestrator.ping with value \"orchestrator\". Do not answer with text.",
         );
         let result = self
-            .call_model(&model, system.as_deref(), &[asked], tools, &quiet, &cancel)
+            .call_model(
+                ModelCall {
+                    model: &model,
+                    system: system.as_deref(),
+                    messages: &[asked],
+                    tools,
+                    cache_key: None,
+                },
+                &quiet,
+                &|_| {},
+                &cancel,
+            )
             .await;
         match result {
             Ok(reply) => {
@@ -531,6 +536,31 @@ impl ApiProvider {
         }
         system
     }
+}
+
+/// What one model request carries.
+pub(crate) struct ModelCall<'a> {
+    pub model: &'a ModelEntry,
+    pub system: Option<&'a str>,
+    pub messages: &'a [Message],
+    /// Native tools (empty in prompt/none modes).
+    pub tools: &'a [ToolDefinition],
+    /// The session, so its requests share the vendor's prompt cache.
+    pub cache_key: Option<&'a str>,
+}
+
+/// Tells the session that a request is about to be repeated.
+fn retry_notice(ctx: &TurnContext, retry: &Retry) {
+    ctx.notice(
+        NoticeLevel::Warning,
+        format!(
+            "{} — tentando de novo em {} s ({} de {})",
+            retry.reason,
+            retry.wait.as_secs_f64().ceil() as u64,
+            retry.attempt,
+            crate::http::MAX_RETRIES
+        ),
+    );
 }
 
 /// Text-only view of the conversation for the prompt tool protocol.
@@ -737,11 +767,15 @@ impl AIProvider for ApiProvider {
         let quiet = |_: Delta| {};
         let reply = self
             .call_model(
-                &model,
-                request.system.as_deref(),
-                &[Message::user(request.prompt.clone())],
-                &[],
+                ModelCall {
+                    model: &model,
+                    system: request.system.as_deref(),
+                    messages: &[Message::user(request.prompt.clone())],
+                    tools: &[],
+                    cache_key: None,
+                },
                 &quiet,
+                &|_| {},
                 cancel,
             )
             .await?;
