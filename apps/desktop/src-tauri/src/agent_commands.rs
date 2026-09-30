@@ -76,3 +76,18 @@ pub async fn agent_settings_save(
 ) -> Result<AgentSettings, ProviderError> {
     state.agents.save_settings(settings)
 }
+
+/// `Pause` (section 11): the agent stops at its next tool call or turn.
+#[tauri::command]
+pub fn agent_pause(state: State<'_, AppState>, id: String) -> Result<AgentView, ProviderError> {
+    state
+        .agents
+        .pause(&AgentId::from(id), orchestrator_core::CallOrigin::User)
+}
+
+#[tauri::command]
+pub fn agent_resume(state: State<'_, AppState>, id: String) -> Result<AgentView, ProviderError> {
+    state
+        .agents
+        .resume(&AgentId::from(id), orchestrator_core::CallOrigin::User)
+}

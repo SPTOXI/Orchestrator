@@ -2,19 +2,21 @@
 //!
 //! An agent is one task, one session and one outcome. It is disposable:
 //! what it produced is on the task, in the project's memory and in the
-//! history — never only here. What limits it, while the autonomy gate
-//! (Fase 9) does not exist, is the turn ceiling, the parallelism ceiling,
-//! the file locks and the user's `Parar` / `Parar todos`.
+//! history — never only here. What it may do is the autonomy gate's
+//! decision (ADR-0016), in the mode of its project or the one the user
+//! gave it; how much it runs is the turn and parallelism ceilings; and the
+//! user can pause it, resume it and stop it.
 
 use crate::locks::LockManager;
 use crate::settings::{self, AgentSettings};
 use chrono::Utc;
 use orchestrator_core::{
-    Agent, AgentId, AgentStatus, AuditEvent, CallOrigin, EventKind, EventSink, ProviderId,
-    SessionEvent, SessionId, TaskId, TaskInput, TaskStatus, TurnStatus,
+    Agent, AgentId, AgentStatus, AuditEvent, AutonomyMode, CallOrigin, EventKind, EventSink,
+    ProviderId, SessionEvent, SessionId, TaskId, TaskInput, TaskStatus, TurnStatus,
 };
 use orchestrator_engine::{
-    CreateRequest, HandoffService, PrepareRequest, StartTaskSession, TaskService,
+    ApprovalView, AutonomyService, CreateRequest, HandoffService, PrepareRequest, StartTaskSession,
+    TaskService,
 };
 use orchestrator_memory::MemoryStore;
 use orchestrator_providers::{ProviderError, SessionManager};
@@ -48,6 +50,10 @@ pub struct StartAgent {
     pub model: Option<String>,
     /// Turn ceiling for this agent; `None` = the setting.
     pub max_turns: Option<u32>,
+    /// Autonomy mode granted to this agent and its subagents; `None`: the
+    /// project's (ADR-0016).
+    #[serde(default)]
+    pub autonomy: Option<AutonomyMode>,
 }
 
 /// An agent with what the panel and the board show but the agent does not
@@ -62,6 +68,12 @@ pub struct AgentView {
     /// Task the agent executes, as the board shows it.
     pub task_title: String,
     pub task_status: TaskStatus,
+    /// Held by a pause (its own, or of every AI).
+    pub paused: bool,
+    /// What it is waiting for the user to authorize, if anything.
+    pub approval: Option<String>,
+    /// Mode its calls are judged by now.
+    pub mode: AutonomyMode,
 }
 
 /// How an agent's work ended.
@@ -84,6 +96,7 @@ struct Inner {
     tasks: TaskService,
     handoffs: HandoffService,
     locks: Arc<LockManager>,
+    autonomy: AutonomyService,
     sink: Arc<dyn EventSink>,
     settings: RwLock<AgentSettings>,
     settings_path: Option<PathBuf>,
@@ -113,18 +126,31 @@ fn clip(text: &str, max: usize) -> String {
     orchestrator_engine::clip(text, max)
 }
 
+/// What the Agent Manager works with, wired by the app.
+pub struct AgentDeps {
+    pub sessions: SessionManager,
+    pub store: Arc<MemoryStore>,
+    pub tasks: TaskService,
+    pub handoffs: HandoffService,
+    pub locks: Arc<LockManager>,
+    /// Pause, and the mode an agent's calls are judged by (ADR-0016).
+    pub autonomy: AutonomyService,
+    pub sink: Arc<dyn EventSink>,
+}
+
 impl AgentService {
     /// Reads the settings from `settings_path` (defaults plus a warning
     /// when the file is unusable).
-    pub fn new(
-        sessions: SessionManager,
-        store: Arc<MemoryStore>,
-        tasks: TaskService,
-        handoffs: HandoffService,
-        locks: Arc<LockManager>,
-        sink: Arc<dyn EventSink>,
-        settings_path: Option<PathBuf>,
-    ) -> (Self, Option<String>) {
+    pub fn new(deps: AgentDeps, settings_path: Option<PathBuf>) -> (Self, Option<String>) {
+        let AgentDeps {
+            sessions,
+            store,
+            tasks,
+            handoffs,
+            locks,
+            autonomy,
+            sink,
+        } = deps;
         let (settings, warning) = match &settings_path {
             Some(path) => settings::load(path),
             None => (AgentSettings::default(), None),
@@ -136,6 +162,7 @@ impl AgentService {
                 tasks,
                 handoffs,
                 locks,
+                autonomy,
                 sink,
                 settings: RwLock::new(settings),
                 settings_path,
@@ -172,11 +199,16 @@ impl AgentService {
     /// order.
     pub fn list(&self, project_id: Option<&str>) -> Vec<AgentView> {
         let agents = self.inner.store.agents_list(project_id);
-        agents.into_iter().map(|a| self.view(a)).collect()
+        let pending = self.inner.autonomy.pending();
+        agents.into_iter().map(|a| self.view(a, &pending)).collect()
     }
 
     pub fn get(&self, id: &AgentId) -> Option<AgentView> {
-        self.inner.store.agent(id.as_str()).map(|a| self.view(a))
+        let pending = self.inner.autonomy.pending();
+        self.inner
+            .store
+            .agent(id.as_str())
+            .map(|a| self.view(a, &pending))
     }
 
     /// Locks held in a project, for the panel.
@@ -242,6 +274,44 @@ impl AgentService {
             let _ = self.stop(&id, origin.clone()).await;
         }
         Ok(asked)
+    }
+
+    /// `Pause` (section 11): the agent stops at its next tool call or its
+    /// next turn, whichever comes first, keeping its slot and its files.
+    pub fn pause(&self, id: &AgentId, origin: CallOrigin) -> Result<AgentView, ProviderError> {
+        let agent = self
+            .inner
+            .store
+            .agent(id.as_str())
+            .ok_or_else(|| not_found(id))?;
+        if agent.status != AgentStatus::Running {
+            return Err(invalid("só um agente em execução pode ser pausado"));
+        }
+        self.inner.autonomy.pause_agent(&agent, origin);
+        self.get(id).ok_or_else(|| not_found(id))
+    }
+
+    pub fn resume(&self, id: &AgentId, origin: CallOrigin) -> Result<AgentView, ProviderError> {
+        let agent = self
+            .inner
+            .store
+            .agent(id.as_str())
+            .ok_or_else(|| not_found(id))?;
+        self.inner.autonomy.resume_agent(&agent, origin);
+        self.get(id).ok_or_else(|| not_found(id))
+    }
+
+    /// Pauses every AI: agents, their queue and the sessions the user
+    /// drives (their calls wait in the gate).
+    pub fn pause_all(&self, origin: CallOrigin) -> bool {
+        self.inner.autonomy.pause_all(origin)
+    }
+
+    pub fn resume_all(&self, origin: CallOrigin) -> bool {
+        let changed = self.inner.autonomy.resume_all(origin);
+        // What was queued during the pause may start now.
+        self.pump();
+        changed
     }
 
     /// On startup: nothing is running, so no agent may stay `RUNNING` and
@@ -343,6 +413,8 @@ impl AgentService {
                 provider: Some(parent.provider.clone()),
                 model: parent.model.clone(),
                 max_turns: None,
+                // The grant is for that line of work.
+                autonomy: parent.autonomy,
             },
             Some(parent.id.clone()),
         )?;
@@ -352,14 +424,27 @@ impl AgentService {
 
     // ---- internals -------------------------------------------------
 
-    fn view(&self, agent: Agent) -> AgentView {
+    fn view(&self, agent: Agent, pending: &[ApprovalView]) -> AgentView {
         let task = self.inner.store.task(agent.task.as_str());
         let waiting = match agent.status {
             AgentStatus::Queued => self.waiting_reason(&agent, task.as_ref()),
             _ => None,
         };
+        let autonomy = &self.inner.autonomy;
+        let paused = agent.status == AgentStatus::Running
+            && (autonomy.paused_all() || autonomy.is_agent_paused(agent.id.as_str()));
+        let approval = pending
+            .iter()
+            .find(|p| p.request.agent_id.as_ref() == Some(&agent.id))
+            .map(|p| p.request.summary.clone());
+        let mode = agent
+            .autonomy
+            .unwrap_or_else(|| autonomy.mode_of(Some(&agent.project_id)));
         AgentView {
             waiting,
+            paused,
+            approval,
+            mode,
             task_title: task
                 .as_ref()
                 .map(|t| t.title.clone())
@@ -375,6 +460,9 @@ impl AgentService {
         agent: &Agent,
         task: Option<&orchestrator_core::Task>,
     ) -> Option<String> {
+        if self.inner.autonomy.paused_all() {
+            return Some("as IAs estão pausadas".to_owned());
+        }
         let running = self
             .inner
             .store
@@ -505,6 +593,7 @@ impl AgentService {
             result: String::new(),
             error: None,
             handoff: None,
+            autonomy: request.autonomy,
             created_at: now,
             updated_at: now,
             started_at: None,
@@ -532,6 +621,10 @@ impl AgentService {
         let Some(runtime) = runtime else {
             return;
         };
+        // Nothing starts while the AIs are paused.
+        if self.inner.autonomy.paused_all() {
+            return;
+        }
         let settings = self.settings();
         let live = self.inner.store.agents_live();
         let mut running = live
@@ -651,7 +744,14 @@ impl AgentService {
             EventKind::AgentStarted,
             &agent,
             format!("agente em execução · {}", agent.provider),
-            json!({"sessionId": opened.session.id, "files": agent.files}),
+            json!({
+                "sessionId": opened.session.id,
+                "files": agent.files,
+                "autonomy": agent.autonomy,
+                "mode": agent
+                    .autonomy
+                    .unwrap_or_else(|| self.inner.autonomy.mode_of(Some(&agent.project_id))),
+            }),
             self.origin_of(&agent),
         );
         let _ = self.inner.sessions.annotate(
@@ -670,6 +770,15 @@ impl AgentService {
         let mut message = opened.first_message;
         loop {
             if live.cancel.is_cancelled() {
+                return Ending::Stopped;
+            }
+            // Paused (this agent, or every AI): the next turn waits.
+            if !self
+                .inner
+                .autonomy
+                .wait_while_paused(Some(id.as_str()), &live.cancel)
+                .await
+            {
                 return Ending::Stopped;
             }
             // The count goes up before the turn, so the panel shows the
@@ -789,6 +898,7 @@ impl AgentService {
         }
 
         self.inner.locks.release(&agent);
+        self.inner.autonomy.forget_agent(agent.id.as_str());
         agent.files.clear();
         self.inner
             .store

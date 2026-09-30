@@ -90,6 +90,12 @@ import type {
   Agent,
   AgentSettings,
   AgentView,
+  ApprovalAnswer,
+  ApprovalView,
+  AutonomyMode,
+  AutonomyOverview,
+  PolicyRule,
+  Trial,
   FileLock,
   StartAgent,
 } from "./types";
@@ -363,6 +369,39 @@ export const agentApi = {
   settings: () => callProvider<AgentSettings>("agent_settings_get"),
   saveSettings: (settings: AgentSettings) =>
     callProvider<AgentSettings>("agent_settings_save", { settings }),
+  /** Pause: the agent stops at its next tool call or turn (ADR-0016). */
+  pause: (id: string) => callProvider<AgentView>("agent_pause", { id }),
+  resume: (id: string) => callProvider<AgentView>("agent_resume", { id }),
+};
+
+/** Autonomy: modes, rules, requests for authorization and pause (ADR-0016). */
+export const autonomyApi = {
+  /** The autonomy of a project (the open one by default). */
+  get: (projectId?: string | null) => callProvider<AutonomyOverview>("autonomy_get", { projectId }),
+  /** The project's mode; null goes back to the default. */
+  setMode: (projectId: string | null, mode: AutonomyMode | null) =>
+    callProvider<AutonomyOverview>("autonomy_set_mode", { projectId, mode }),
+  setDefault: (projectId: string | null, mode: AutonomyMode) =>
+    callProvider<AutonomyOverview>("autonomy_set_default", { projectId, mode }),
+  saveRules: (projectId: string | null, rules: PolicyRule[]) =>
+    callProvider<AutonomyOverview>("autonomy_save_rules", { projectId, rules }),
+  resetRules: (projectId: string | null) =>
+    callProvider<AutonomyOverview>("autonomy_reset_rules", { projectId }),
+  /** Which rule decides a call (rules may be a draft). */
+  tryCall: (request: {
+    projectId: string | null;
+    mode: AutonomyMode | null;
+    rules: PolicyRule[] | null;
+    tool: string;
+    args: unknown;
+  }) => callProvider<Trial>("autonomy_try", request),
+  pending: () => callProvider<ApprovalView[]>("approvals_pending"),
+  answer: (id: string, answer: ApprovalAnswer, note?: string | null) =>
+    callProvider<void>("approval_answer", { id, answer, note: note ?? null }),
+  revoke: (grantId: string) => callProvider<boolean>("autonomy_revoke", { grantId }),
+  /** Pause every AI (section 11). */
+  pauseAll: () => callProvider<boolean>("execution_pause"),
+  resumeAll: () => callProvider<boolean>("execution_resume"),
 };
 
 /** History, projects and project memory in the local database (ADR-0012). */

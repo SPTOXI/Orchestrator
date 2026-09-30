@@ -2,20 +2,22 @@
 
 **Agent Manager, subagentes e File Lock Manager** — crate
 `orchestrator-agents` (Fase 8b,
-[ADR-0015](../../docs/adr/0015-agentes-subagentes-e-file-locks.md)).
+[ADR-0015](../../docs/adr/0015-agentes-subagentes-e-file-locks.md); pausa e
+modo por agente na Fase 9,
+[ADR-0016](../../docs/adr/0016-autonomia-e-pause.md)).
 Referência: [`docs/agents.md`](../../docs/agents.md).
 
 | Módulo | Conteúdo |
 | ------ | -------- |
-| `service.rs` | `AgentService`: fila, execução turno a turno, teto de turnos, parar (um e todos), delegação, handoff automático de quem parou no meio, e `AgentView` (agente + o que o painel calcula) |
+| `service.rs` | `AgentService`: fila, execução turno a turno, teto de turnos, pausar e retomar (um e todos), parar (um e todos), delegação, o modo de autonomia dado ao agente (herdado pelos subagentes), handoff automático de quem parou no meio, e `AgentView` (agente + o que o painel calcula: espera, pausa, pedido pendente, modo) |
 | `locks.rs` | `LockManager`: trava por arquivo, tomada ao iniciar e ao escrever, solta quando o agente termina |
-| `tools.rs` | `AgentTools`: `agent.finish` e `agent.delegate` para as IAs, e a verificação das travas no caminho de toda chamada de ferramenta |
+| `tools.rs` | `AgentTools`: `agent.finish` e `agent.delegate` para as IAs, a verificação das travas no caminho de toda chamada de ferramenta, e o `TOOL_CALLED` do que ele mesmo responde |
 | `settings.rs` | `AgentSettings` (`maxParallel`, `maxTurns`) em `<app-data>/agents.json` |
 
 Depende de `orchestrator-core`, `orchestrator-engine`,
 `orchestrator-providers` e `orchestrator-memory`. O app (`src-tauri`) só
-liga as peças: envolve o executor de ferramentas com o `AgentTools`, cria o
-`AgentService` e expõe os comandos.
+liga as peças: envolve o executor de ferramentas com o `AgentTools` (e este
+com o `AutonomyGate` do motor), cria o `AgentService` e expõe os comandos.
 
 Regras:
 
@@ -29,12 +31,13 @@ Regras:
   bloqueado no próprio projeto, e leitura nunca trava.
 - **Trava negada recusa a ferramenta com o motivo** — sem espera, sem
   deadlock.
-- O teto de turnos não é política de permissão: é o que impede um agente de
-  rodar para sempre enquanto o gate de autonomia (Fase 9) não existe.
+- O que um agente pode fazer é o modo de autonomia (gate do motor); o teto
+  de turnos diz quanto ele roda.
+- **Pausado não é um estado gravado:** o agente continua `RUNNING`, com a
+  vaga e as travas, e espera antes do próximo turno e no gate.
 
 | Próximas responsabilidades | Fase |
 | -------------------------- | ---- |
-| Gate de autonomia (Assistido, Autônomo, Acesso Irrestrito) e `Pause` | 9 |
 | Agent scheduling por custo e afinidade, cache entre agentes | 11 |
 
 Testes: `cargo test -p orchestrator-agents`. Os unitários cobrem os
@@ -49,4 +52,9 @@ cobrem:
 - dois agentes e o mesmo arquivo: a fila espera, o usuário para o primeiro
   e o segundo anda;
 - a escrita recusada com `LOCKED` no meio de um turno;
-- delegação: subtask criada e subagente executando depois do pai.
+- delegação: subtask criada e subagente executando depois do pai, com o
+  modo herdado;
+- um agente em Assistido esperando a autorização e terminando depois dela;
+- parar um agente cancela o pedido que ele esperava;
+- pausar um agente segura o próximo turno até retomar;
+- com as IAs pausadas, a fila não inicia ninguém.

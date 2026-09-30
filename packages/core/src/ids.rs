@@ -91,6 +91,10 @@ define_id!(
     /// Identifies one agent executing a task (ADR-0015).
     AgentId
 );
+define_id!(
+    /// Identifies one request for the user's authorization (ADR-0016).
+    ApprovalId
+);
 
 /// Stable, human-chosen identifier of a registered AI provider, e.g.
 /// `openai-codex` or `claude-code`. Not generated: it names an adapter.

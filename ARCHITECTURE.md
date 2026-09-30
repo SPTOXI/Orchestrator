@@ -87,7 +87,7 @@ apenas apresentação.
 | Task Manager | `packages/orchestrator` (`orchestrator-engine`) | Rust | 8a | ✅ tasks com estados, dependências, subtasks e prioridade; contexto e sessão a partir da task (ADR-0014) |
 | SQLite: agentes e travas | `packages/memory` | Rust | 8b | ✅ migração 4: `agents` e `file_locks` (ADR-0015) |
 | Agent Manager, Subagents, File Locks | `packages/agents` | Rust | 8b | ✅ agentes executando tasks em paralelo, subagentes, travas por arquivo, handoff automático, Agent Board (ADR-0015) |
-| Autonomia (Assistido/Autônomo/Irrestrito) | `packages/orchestrator` | Rust | 9 | planejado |
+| Autonomia (Assistido/Autônomo/Irrestrito), pedidos de autorização e Pause | `packages/orchestrator` (`orchestrator-engine`, módulo `autonomy`) | Rust | 9 | ✅ gate na frente de toda chamada de IA, regras do usuário, pedidos com resposta, liberação por sessão, modo por projeto e por agente, pausa (ADR-0016) |
 | GitHub | `packages/git` | Rust | 10 | planejado |
 | Otimização de tokens, cache, compactação, scheduling | `packages/orchestrator` | Rust | 11 | planejado |
 
@@ -191,23 +191,33 @@ interativos (`GIT_TERMINAL_PROMPT=0`); consultas não disputam o `index.lock`
 (`GIT_OPTIONAL_LOCKS=0`). `git.commit` emite `GIT_COMMIT`; `git.push`, `GIT_PUSH`.
 Falhas do Git viram `COMMAND_FAILED` com a saída do comando.
 
-### 4.5 Autonomia e o runtime
+### 4.5 Autonomia e o runtime (Fase 9)
 
-Desde a Fase 3 há dois chamadores: o usuário, pela UI, e as sessões de
-provider, por `TurnContext::call_tool` → `ToolRuntime::invoke` (origem
-`agent`). Até a Fase 9 as chamadas de IA são executadas sem gate, com
-auditoria completa. O caminho `call_tool` → `invoke` é o ponto onde, na
-Fase 9, entra o gate de autonomia:
+Há dois chamadores: o usuário, pela UI (`runtime_invoke`, origem `user`), e
+as sessões de provider, por `TurnContext::call_tool` (origem `agent`). Só o
+segundo caminho passa pelo gate de autonomia
+([ADR-0016](./docs/adr/0016-autonomia-e-pause.md), referência em
+[`docs/autonomy.md`](./docs/autonomy.md)), que é o executor mais de fora das
+sessões:
+
+```text
+TurnContext::call_tool → AutonomyGate → AgentTools → EngineTools → RuntimeTools → ToolRuntime::invoke
+```
 
 | Modo | Comportamento no gate |
 | ---- | --------------------- |
-| Assistido | pede autorização ao usuário quando a política exigir |
-| Autônomo | aplica as políticas configuradas pelo usuário |
-| Acesso Irrestrito | **nenhuma** política operacional; sem confirmações ocultas, sem lista de comandos proibidos |
+| Assistido | consultas rodam; toda ação, leitura fora do projeto ou de `.env*` pede autorização |
+| Autônomo | as regras do usuário decidem (permitir, perguntar, negar; a primeira que casa decide) |
+| Acesso Irrestrito | **nada** é avaliado: sem confirmações, sem lista de comandos proibidos, sem exceção |
 
-Em todos os modos a auditoria continua ativa. O runtime **não** contém hoje
-nenhuma lista de comandos proibidos nem bloqueio silencioso, e não deve passar
-a conter fora do gate explícito da Fase 9.
+- O modo de uma chamada é o do agente (quando o usuário deu um a ele), senão
+  o do projeto, senão o padrão (Assistido).
+- "Perguntar" abre um pedido que o usuário responde (Permitir, Permitir
+  nesta sessão, Negar com motivo); cancelar o turno cancela o pedido.
+- `Pause` retém as chamadas no gate e os turnos dos agentes.
+- Em todos os modos a auditoria continua ativa: uma chamada recusada pelo
+  gate é registrada como `TOOL_CALLED` pelo próprio gate. O runtime continua
+  sem lista de comandos proibidos e sem bloqueio silencioso.
 
 ## 5. Contratos e eventos (packages/core)
 
@@ -242,6 +252,12 @@ a conter fora do gate explícito da Fase 9.
   das travas de arquivo (Fase 8b, ADR-0015), e `ToolErrorKind::Locked` para
   a escrita recusada por trava. `AGENT_STARTED` e `AGENT_FINISHED` já eram
   da seção 22.
+- `AutonomyMode`, `Decision`, `PolicyRule`, `ApprovalRequest`,
+  `ApprovalAnswer`, `ApprovalId` — contratos da autonomia (Fase 9,
+  ADR-0016), `ToolErrorKind::Denied` e os eventos `AUTONOMY_CHANGED`,
+  `APPROVAL_REQUESTED`, `APPROVAL_DECIDED`, `EXECUTION_PAUSED` e
+  `EXECUTION_RESUMED`. O agente ganhou o campo `autonomy` (o modo que o
+  usuário deu a ele).
 - `HandoffPacket`, `Handoff`, `HandoffEnd`, `HandoffStatus`, `HandoffId`,
   `ContextSummary` e os eventos de sessão `contextAttached` e `handedOff`
   (Fase 7).
@@ -387,9 +403,10 @@ em [`docs/agents.md`](./docs/agents.md)):
   usuário nunca é bloqueado.
 - **Parou no meio, sai handoff** montado pelos fatos da sessão, sem gastar
   turno de IA.
-- **Controles** da seção 11: Parar e Parar todos. `Pause` e o gate de
-  autonomia são a Fase 9; até lá, o que limita um agente é o teto de turnos
-  (padrão 12), o teto de paralelismo e as travas.
+- **Controles** da seção 11: Pausar, Retomar, Parar e Parar todos (Fase 9).
+  O que um agente pode fazer é o modo de autonomia (do projeto ou dado a ele
+  ao iniciar); quanto ele roda é o teto de turnos (padrão 12) e o de
+  paralelismo.
 
 ## 9. Providers (Fases 3–7)
 
@@ -471,7 +488,8 @@ depende só de `core` e `providers`:
   - *Desligado:* só o roteador;
   - *Sugerir:* o usuário aprova ou escolhe outro modelo;
   - *Full:* o Conselho abre a sessão e envia a tarefa, com origem
-    `council`. O Full não dispensa o gate de autonomia da Fase 9.
+    `council`. O Full não dispensa o gate de autonomia: as ferramentas que
+    a sessão pedir passam por ele (Fase 9).
 - **Cache:** mesma pergunta, mesmos candidatos e mesmos membros = zero
   tokens, também entre execuções do app (Fase 6).
 - **Histórico:** `COUNCIL_CONFIGURED`, `COUNCIL_DELIBERATED` e

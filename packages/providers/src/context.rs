@@ -26,6 +26,14 @@ pub trait ToolExecutor: Send + Sync + 'static {
     fn tools(&self) -> Vec<ToolDefinition>;
 
     async fn execute(&self, call: ToolCall) -> ToolResult;
+
+    /// Executes a call on behalf of a turn that may be cancelled while the
+    /// call waits (for the user's authorization or a pause, ADR-0016).
+    /// Executors that never wait just run the call.
+    async fn execute_with(&self, call: ToolCall, cancel: CancellationToken) -> ToolResult {
+        let _ = cancel;
+        self.execute(call).await
+    }
 }
 
 /// Receives the events of a turn: the session manager (transcript + live
@@ -171,8 +179,9 @@ impl TurnContext {
         let tools = self.tools.clone();
         let this = self.clone();
         let fallback = call.clone();
+        let cancel = self.cancel.clone();
         let task = tokio::spawn(async move {
-            let result = tools.execute(call).await;
+            let result = tools.execute_with(call, cancel).await;
             this.completed(result.clone());
             result
         });

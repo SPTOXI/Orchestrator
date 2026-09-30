@@ -66,6 +66,11 @@ const KIND_FILTERS: Array<{ value: EventKind | ""; label: string }> = [
   { value: "TASK_UPDATED", label: "TASK_UPDATED" },
   { value: "AGENT_STARTED", label: "AGENT_STARTED" },
   { value: "AGENT_FINISHED", label: "AGENT_FINISHED" },
+  { value: "AUTONOMY_CHANGED", label: "AUTONOMY_CHANGED" },
+  { value: "APPROVAL_REQUESTED", label: "APPROVAL_REQUESTED" },
+  { value: "APPROVAL_DECIDED", label: "APPROVAL_DECIDED" },
+  { value: "EXECUTION_PAUSED", label: "EXECUTION_PAUSED" },
+  { value: "EXECUTION_RESUMED", label: "EXECUTION_RESUMED" },
 ];
 
 const PAGE = 500;

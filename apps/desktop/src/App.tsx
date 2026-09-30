@@ -1,4 +1,4 @@
-import { type MouseEvent as ReactMouseEvent, type ReactNode, useCallback, useEffect, useState } from "react";
+import { type MouseEvent as ReactMouseEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { CommandPanel } from "./components/CommandPanel";
 import { ConnectionEditor } from "./components/ConnectionEditor";
 import { ContextBar } from "./components/ContextBar";
@@ -27,6 +27,8 @@ import {
 } from "./components/icons";
 import { AgentsPanel } from "./components/AgentsPanel";
 import { BoardView } from "./components/BoardView";
+import { ApprovalBar } from "./components/ApprovalBar";
+import { AutonomyView } from "./components/AutonomyView";
 import { ProcessesPanel } from "./components/ProcessesPanel";
 import { ProfileView } from "./components/ProfileView";
 import { ProjectPanel, RecentList } from "./components/ProjectPanel";
@@ -45,6 +47,8 @@ import { useCouncil } from "./lib/useCouncil";
 import { useMemory } from "./lib/useMemory";
 import { agentChip, agentOfTask } from "./lib/agents";
 import { useAgents } from "./lib/useAgents";
+import { useAutonomy } from "./lib/useAutonomy";
+import { autonomyChip } from "./lib/autonomy";
 import { useTasks } from "./lib/useTasks";
 import { useProjects } from "./lib/useProjects";
 import { useGitStatus } from "./lib/useGitStatus";
@@ -72,7 +76,9 @@ type Tab =
   /** One task; `taskId` null is the form of a new one. */
   | { id: string; kind: "task"; taskId: string | null; nonce: number }
   /** Agent Board: the tasks of the project in columns (ADR-0015). */
-  | { id: "board"; kind: "board" };
+  | { id: "board"; kind: "board" }
+  /** Mode, requests, rules and pause (ADR-0016). */
+  | { id: "autonomy"; kind: "autonomy" };
 
 const ACTIVITIES: Array<{ id: PanelId; label: string; icon: () => ReactNode }> = [
   { id: "project", label: "PROJECT", icon: FolderIcon },
@@ -130,6 +136,8 @@ function tabTitle(tab: Tab, sessions: Map<string, SessionInfo>, connections: Con
       return tab.taskId ? "Task" : "Nova task";
     case "board":
       return "Agent Board";
+    case "autonomy":
+      return "Autonomia";
     case "connection":
       if (!tab.connectionId) return "Nova API";
       return `API · ${connections?.connections.find((c) => c.connection.id === tab.connectionId)?.connection.name ?? tab.connectionId}`;
@@ -162,6 +170,12 @@ export function App() {
   const memory = useMemory(ready, projectId);
   const tasks = useTasks(ready, projectId);
   const agents = useAgents(ready, projectId);
+  const autonomy = useAutonomy(ready, projectId);
+  /** Tool calls waiting for the user, so a transcript can say so. */
+  const waitingCalls = useMemo(
+    () => new Set(autonomy.pending.map((request) => request.callId)),
+    [autonomy.pending],
+  );
   const openSessionId = activeTab?.startsWith("session:") ? activeTab.slice("session:".length) : null;
   /** What the top bar shows as the current task: the one of the open
    * session, else the task being worked on now (ADR-0014). */
@@ -267,6 +281,13 @@ export function App() {
   };
   /** The Agent Board is a single tab (section 25). */
   const openBoard = () => showTab({ id: "board", kind: "board" });
+  /** The autonomy tab is a single tab (ADR-0016). */
+  const openAutonomy = () => showTab({ id: "autonomy", kind: "autonomy" });
+  const pauseAgent = async (id: string, paused: boolean) => {
+    if (paused) await agentApi.resume(id);
+    else await agentApi.pause(id);
+    await agents.refresh();
+  };
   /** One tab per task; the new-task form has its own. */
   const openTask = (taskId: string | null) => {
     const id = taskId ? `task:${taskId}` : "task:new";
@@ -432,6 +453,18 @@ export function App() {
               await agents.refresh();
             }}
             onSaveSettings={agents.saveSettings}
+            pausedAll={autonomy.overview?.pausedAll ?? false}
+            onPause={(id) => pauseAgent(id, false)}
+            onResume={(id) => pauseAgent(id, true)}
+            onPauseAll={async () => {
+              await autonomy.pauseAll();
+              await agents.refresh();
+            }}
+            onResumeAll={async () => {
+              await autonomy.resumeAll();
+              await agents.refresh();
+            }}
+            onOpenAutonomy={openAutonomy}
           />
         );
       case "terminal":
@@ -477,20 +510,25 @@ export function App() {
 
   return (
     <div className="app">
-      <ContextBar
-        projectName={profile?.name ?? null}
-        branch={branchLabel}
-        gitStatus={git.status}
-        terminals={sessions.terminals}
-        processes={sessions.processes}
-        providerName={activeProvider?.name ?? null}
-        providerCount={providers.view?.providers.length ?? null}
-        runningSessions={runningSessions}
-        task={currentTask ? { title: currentTask.title, status: currentTask.status } : null}
-        openTasks={tasks.list.filter((t) => t.status !== "DONE" && t.status !== "CANCELLED").length}
-        agent={currentAgent ? { title: currentAgent.taskTitle, status: currentAgent.status } : null}
-        agentSummary={agentChip(agents.list, openSessionId)}
-      />
+      <div className="top">
+        <ContextBar
+          projectName={profile?.name ?? null}
+          branch={branchLabel}
+          gitStatus={git.status}
+          terminals={sessions.terminals}
+          processes={sessions.processes}
+          providerName={activeProvider?.name ?? null}
+          providerCount={providers.view?.providers.length ?? null}
+          runningSessions={runningSessions}
+          task={currentTask ? { title: currentTask.title, status: currentTask.status } : null}
+          openTasks={tasks.list.filter((t) => t.status !== "DONE" && t.status !== "CANCELLED").length}
+          agent={currentAgent ? { title: currentAgent.taskTitle, status: currentAgent.status } : null}
+          agentSummary={agentChip(agents.list, openSessionId)}
+          autonomy={autonomyChip(autonomy.overview, autonomy.pending.length)}
+          onOpenAutonomy={openAutonomy}
+        />
+        <ApprovalBar pending={autonomy.pending} onAnswer={autonomy.answer} onOpen={openAutonomy} />
+      </div>
       <div className="workbench">
         <nav className="activity-bar">
           {ACTIVITIES.map(({ id, label, icon: IconComponent }) => (
@@ -623,6 +661,7 @@ export function App() {
                       onOpenSession={openSession}
                       onOpenContext={openContext}
                       onOpenHandoff={(sessionId) => openHandoff({ sessionId })}
+                      waitingCalls={waitingCalls}
                     />
                   );
                 }
@@ -682,6 +721,7 @@ export function App() {
                       nonce={tab.nonce}
                       tasks={tasks.list}
                       agents={agents.list}
+                      projectMode={autonomy.overview?.mode ?? null}
                       providers={providers.view?.providers ?? []}
                       onAgentChanged={() => void agents.refresh()}
                       onSaved={(id) => {
@@ -704,6 +744,18 @@ export function App() {
                       agents={agents.list}
                       onOpenTask={openTask}
                       onOpenSession={openSession}
+                      onPause={(id) => void pauseAgent(id, false)}
+                      onResume={(id) => void pauseAgent(id, true)}
+                    />
+                  );
+                case "autonomy":
+                  return (
+                    <AutonomyView
+                      key={tab.id}
+                      active={active}
+                      ready={ready}
+                      projectName={projectId ? (profile?.name ?? null) : null}
+                      autonomy={autonomy}
                     />
                   );
                 case "handoff":
@@ -878,6 +930,11 @@ function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenPr
                   ao mesmo tempo quando não há conflito, com travas por arquivo, subagentes e Agent Board.
                 </li>
                 <li>
+                  <strong>Autonomia</strong>: você decide o que as IAs fazem sozinhas — Assistido (pede
+                  autorização), Autônomo (segue as suas regras) ou Acesso Irrestrito — por projeto ou por
+                  agente; e pode pausar as IAs a qualquer momento.
+                </li>
+                <li>
                   <strong>HISTORY</strong>: toda chamada de ferramenta é auditada, inclusive as feitas por IAs.
                 </li>
               </ul>
@@ -887,8 +944,8 @@ function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenPr
         <div>
           <h2>Próximas fases</h2>
           <ul>
-            <li>9 — Autonomia (Assistido, Autônomo, Irrestrito)</li>
-            <li>10–11 — GitHub, otimização de tokens</li>
+            <li>10 — GitHub, pull requests e operações remotas</li>
+            <li>11 — Otimização de tokens, cache, compactação de contexto</li>
           </ul>
         </div>
       </div>

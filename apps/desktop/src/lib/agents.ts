@@ -47,10 +47,13 @@ export const BOARD_COLUMNS: Array<{ status: TaskStatus; title: string }> = [
 export function agentProgress(agent: AgentView): string {
   if (agent.status === "QUEUED") return agent.waiting ?? "";
   const turns = `${agent.turns} de ${agent.maxTurns} turnos`;
-  if (agent.status === "RUNNING") return agent.files.length > 0
-    ? `${turns} · ${agent.files.length} ${agent.files.length === 1 ? "arquivo" : "arquivos"}`
-    : turns;
-  return turns;
+  if (agent.status !== "RUNNING") return turns;
+  // What it waits for comes first: it is what the user can act on.
+  if (agent.approval) return `esperando sua autorização: ${agent.approval}`;
+  const files = agent.files.length > 0
+    ? ` · ${agent.files.length} ${agent.files.length === 1 ? "arquivo" : "arquivos"}`
+    : "";
+  return agent.paused ? `pausado · ${turns}${files}` : `${turns}${files}`;
 }
 
 /** The agent of a task: the one still working, else the newest one. */

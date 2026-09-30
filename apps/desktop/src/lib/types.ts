@@ -92,7 +92,12 @@ export type EventKind =
   | "MEMORY_REMOVED"
   | "DECISION_SAVED"
   | "CONTEXT_BUILT"
-  | "TASK_UPDATED";
+  | "TASK_UPDATED"
+  | "AUTONOMY_CHANGED"
+  | "APPROVAL_REQUESTED"
+  | "APPROVAL_DECIDED"
+  | "EXECUTION_PAUSED"
+  | "EXECUTION_RESUMED";
 
 export interface AuditEvent {
   id: string;
@@ -1238,6 +1243,8 @@ export interface Agent {
   error: string | null;
   /** Handoff created when it stopped before finishing. */
   handoff: string | null;
+  /** Mode the user granted to this agent; null: the project's (ADR-0016). */
+  autonomy: AutonomyMode | null;
   createdAt: string;
   updatedAt: string;
   startedAt: string | null;
@@ -1250,6 +1257,12 @@ export interface AgentView extends Agent {
   waiting: string | null;
   taskTitle: string;
   taskStatus: TaskStatus;
+  /** Held by a pause (its own, or of every AI). */
+  paused: boolean;
+  /** What it waits for the user to authorize. */
+  approval: string | null;
+  /** Mode its calls are judged by now. */
+  mode: AutonomyMode;
 }
 
 /** A file held by an agent while it works. */
@@ -1267,6 +1280,8 @@ export interface StartAgent {
   provider?: string | null;
   model?: string | null;
   maxTurns?: number | null;
+  /** Mode granted to this agent and its subagents; null: the project's. */
+  autonomy?: AutonomyMode | null;
 }
 
 export interface AgentSettings {
@@ -1274,4 +1289,91 @@ export interface AgentSettings {
   maxParallel: number;
   /** Turns an agent may spend before it stops on its own (1–50). */
   maxTurns: number;
+}
+
+/** Autonomy (ADR-0016). */
+export type AutonomyMode = "assisted" | "autonomous" | "unrestricted";
+/** What a rule decides (not the router's `Decision`). */
+export type RuleDecision = "allow" | "ask" | "deny";
+export type RuleAccess = "read" | "write";
+export type RuleWhere = "inside" | "outside";
+
+/** One rule; empty fields match everything; the first that matches decides. */
+export interface PolicyRule {
+  tools: string[];
+  access?: RuleAccess | null;
+  where?: RuleWhere | null;
+  command?: string | null;
+  path?: string | null;
+  decision: RuleDecision;
+  note?: string | null;
+}
+
+export interface ApprovalRequest {
+  id: string;
+  callId: string;
+  tool: string;
+  summary: string;
+  detail: string | null;
+  reason: string;
+  mode: AutonomyMode;
+  rule: number | null;
+  command: string | null;
+  sessionId: string;
+  agentId: string | null;
+  agentTitle: string | null;
+  taskId: string | null;
+  projectId: string | null;
+  provider: string | null;
+  requestedAt: string;
+}
+
+export interface ApprovalView extends ApprovalRequest {
+  projectName: string | null;
+}
+
+export type ApprovalAnswer = "approve" | "approveSession" | "deny";
+
+export interface SessionGrant {
+  id: string;
+  sessionId: string;
+  tool: string;
+  mode: AutonomyMode;
+  rule: number | null;
+  command: string | null;
+  agentTitle: string | null;
+  grantedAt: string;
+}
+
+export interface AutonomyOverview {
+  projectId: string | null;
+  mode: AutonomyMode;
+  projectMode: AutonomyMode | null;
+  defaultMode: AutonomyMode;
+  rules: PolicyRule[];
+  assistedRules: PolicyRule[];
+  defaultRules: PolicyRule[];
+  pausedAll: boolean;
+  pausedAgents: string[];
+  pending: number;
+  grants: SessionGrant[];
+  warning: string | null;
+}
+
+export interface TrialTarget {
+  path: string;
+  inside: boolean;
+  command: string | null;
+  decision: RuleDecision;
+  rule: number | null;
+}
+
+export interface Trial {
+  mode: AutonomyMode;
+  decision: RuleDecision;
+  rule: number | null;
+  reason: string;
+  targets: TrialTarget[];
+  opaque: boolean;
+  unknownTool: boolean;
 }

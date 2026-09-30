@@ -18,7 +18,7 @@ export const MODE_LABELS: Record<CouncilMode, string> = {
 export const MODE_HINTS: Record<CouncilMode, string> = {
   off: "Só o roteador, sem gastar tokens: ele ordena os modelos e você escolhe.",
   suggest: "O Conselho delibera e recomenda; você aprova ou escolhe outro modelo.",
-  full: "O Conselho decide e abre a sessão sozinho, enviando a tarefa. Não dispensa o controle de autonomia (Fase 9).",
+  full: "O Conselho decide e abre a sessão sozinho, enviando a tarefa. As ferramentas que a sessão pedir passam pelo modo de autonomia do projeto.",
 };
 
 export const PREFERENCE_LABELS: Record<Preference, string> = {

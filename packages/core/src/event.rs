@@ -71,6 +71,19 @@ pub enum EventKind {
     /// edited, re-prioritized, blocked, sent to review, cancelled or
     /// reopened (ADR-0014).
     TaskUpdated,
+    /// The autonomy mode of a project, the default mode or the user's
+    /// rules changed (ADR-0016).
+    AutonomyChanged,
+    /// An AI asked for something that needs the user's authorization
+    /// (ADR-0016).
+    ApprovalRequested,
+    /// A request was approved, approved for the session, denied or
+    /// cancelled (ADR-0016).
+    ApprovalDecided,
+    /// The AIs, or one agent, were paused (ADR-0016).
+    ExecutionPaused,
+    /// The AIs, or one agent, were resumed (ADR-0016).
+    ExecutionResumed,
 }
 
 /// A durable, provider-independent history entry.
@@ -233,6 +246,14 @@ mod tests {
         assert_eq!(
             serde_json::to_value(EventKind::HandoffAccepted).unwrap(),
             json!("HANDOFF_ACCEPTED")
+        );
+        assert_eq!(
+            serde_json::to_value(EventKind::ApprovalDecided).unwrap(),
+            json!("APPROVAL_DECIDED")
+        );
+        assert_eq!(
+            serde_json::to_value(EventKind::ExecutionPaused).unwrap(),
+            json!("EXECUTION_PAUSED")
         );
     }
 

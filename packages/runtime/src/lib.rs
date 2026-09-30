@@ -7,9 +7,9 @@
 //! domain events (`FILE_CHANGED`, `COMMAND_EXECUTED`, …).
 //!
 //! The runtime contains no command blocklist and no hidden confirmations.
-//! The autonomy gate (Assisted / Autonomous / Unrestricted) is added in
-//! Phase 9 in front of [`ToolRuntime::invoke`]; auditing stays on in every
-//! mode.
+//! The autonomy gate (Assisted / Autonomous / Unrestricted, ADR-0016) sits
+//! in front of [`ToolRuntime::invoke`] on the AIs' path only, in the
+//! engine; auditing stays on in every mode.
 
 mod catalog;
 pub mod filesystem;

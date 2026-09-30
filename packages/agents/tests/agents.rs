@@ -4,15 +4,16 @@
 
 use async_trait::async_trait;
 use orchestrator_agents::{
-    AgentService, AgentSettings, AgentSlot, AgentTools, LockManager, StartAgent,
+    AgentDeps, AgentService, AgentSettings, AgentSlot, AgentTools, LockManager, StartAgent,
 };
 use orchestrator_core::{
-    Agent, AgentId, AgentStatus, AuditEvent, CallOrigin, EventKind, EventSink, FileLock,
-    ProviderId, SessionId, StreamEvent, TaskInput, TaskStatus, ToolCall, ToolDefinition,
-    ToolErrorKind, ToolResult,
+    Agent, AgentId, AgentStatus, ApprovalAnswer, AuditEvent, AutonomyMode, CallOrigin, EventKind,
+    EventSink, FileLock, ProviderId, SessionId, StreamEvent, TaskInput, TaskStatus, ToolCall,
+    ToolDefinition, ToolErrorKind, ToolResult,
 };
 use orchestrator_engine::{
-    ContextBuilder, EngineTools, HandoffService, StoreSessions, TaskService,
+    AutonomyGate, AutonomyService, ContextBuilder, EngineTools, HandoffService, StoreSessions,
+    TaskService,
 };
 use orchestrator_memory::MemoryStore;
 use orchestrator_providers::{
@@ -234,6 +235,7 @@ struct World {
     tasks: TaskService,
     agents: AgentService,
     locks: Arc<LockManager>,
+    autonomy: AutonomyService,
 }
 
 fn git(dir: &Path, args: &[&str]) {
@@ -286,15 +288,27 @@ async fn world() -> World {
 
     let locks = Arc::new(LockManager::new(store.clone()));
     let slot = AgentSlot::new();
-    let tools = AgentTools::new(
-        Arc::new(EngineTools::new(
-            Arc::new(RuntimeTools(runtime.clone())),
+    // The app's chain, gate included. The tests of the Phase 8b behaviour
+    // run in Unrestricted; the ones about autonomy give the agent a mode.
+    let (autonomy, _) = AutonomyService::new(store.clone(), sink.clone(), None);
+    autonomy
+        .set_default_mode(AutonomyMode::Unrestricted, CallOrigin::User)
+        .unwrap();
+    let base = runtime.clone();
+    autonomy.set_workdir(Arc::new(move || base.base_dir()));
+    let tools = AutonomyGate::new(
+        Arc::new(AgentTools::new(
+            Arc::new(EngineTools::new(
+                Arc::new(RuntimeTools(runtime.clone())),
+                store.clone(),
+                sink.clone(),
+            )),
             store.clone(),
+            locks.clone(),
+            slot.clone(),
             sink.clone(),
         )),
-        store.clone(),
-        locks.clone(),
-        slot.clone(),
+        autonomy.clone(),
     );
     let sessions = SessionManager::with_store(
         registry,
@@ -316,12 +330,15 @@ async fn world() -> World {
     );
     let handoffs = HandoffService::new(sessions.clone(), store.clone(), builder, sink.clone());
     let (agents, warning) = AgentService::new(
-        sessions,
-        store.clone(),
-        tasks.clone(),
-        handoffs,
-        locks.clone(),
-        sink.clone(),
+        AgentDeps {
+            sessions,
+            store: store.clone(),
+            tasks: tasks.clone(),
+            handoffs,
+            locks: locks.clone(),
+            autonomy: autonomy.clone(),
+            sink: sink.clone(),
+        },
         None,
     );
     assert!(warning.is_none());
@@ -337,6 +354,7 @@ async fn world() -> World {
         tasks,
         agents,
         locks,
+        autonomy,
     }
 }
 
@@ -394,6 +412,7 @@ async fn an_agent_executes_a_task_and_leaves_it_for_review() {
             provider: None,
             model: None,
             max_turns: None,
+            autonomy: None,
         })
         .expect("agente na fila");
     assert_eq!(agent.status, AgentStatus::Queued);
@@ -428,6 +447,14 @@ async fn an_agent_executes_a_task_and_leaves_it_for_review() {
     assert_eq!((started.len(), finished.len()), (1, 1));
     assert_eq!(finished[0].data["outcome"], json!("DONE"));
     assert_eq!(finished[0].data["turns"], json!(1));
+    // Its own tools are in the history like any other (ADR-0016).
+    let finish = world
+        .sink
+        .of(EventKind::ToolCalled)
+        .into_iter()
+        .find(|e| e.data["tool"] == "agent.finish")
+        .expect("TOOL_CALLED do agent.finish");
+    assert_eq!(finish.data["ok"], json!(true));
 }
 
 #[tokio::test]
@@ -442,6 +469,7 @@ async fn the_turn_ceiling_stops_an_agent_and_leaves_a_handoff() {
             provider: None,
             model: None,
             max_turns: Some(2),
+            autonomy: None,
         })
         .expect("agente na fila");
     let ended = world.wait_final(&agent.id).await;
@@ -477,6 +505,7 @@ async fn two_agents_never_change_the_same_file() {
             provider: None,
             model: None,
             max_turns: Some(500),
+            autonomy: None,
         })
         .unwrap();
     world
@@ -497,6 +526,7 @@ async fn two_agents_never_change_the_same_file() {
             provider: None,
             model: None,
             max_turns: Some(2),
+            autonomy: None,
         })
         .unwrap();
     let view = world.agents.get(&queued.id).expect("agente na fila");
@@ -558,6 +588,7 @@ async fn a_write_on_a_file_another_agent_holds_is_refused_with_the_reason() {
         result: String::new(),
         error: None,
         handoff: None,
+        autonomy: None,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
         started_at: Some(chrono::Utc::now()),
@@ -579,6 +610,7 @@ async fn a_write_on_a_file_another_agent_holds_is_refused_with_the_reason() {
             provider: None,
             model: None,
             max_turns: Some(2),
+            autonomy: None,
         })
         .unwrap();
     let ended = world.wait_final(&intruder.id).await;
@@ -598,6 +630,14 @@ async fn a_write_on_a_file_another_agent_holds_is_refused_with_the_reason() {
     let locks: Vec<FileLock> = world.locks.list(Some(&world.project_id));
     assert_eq!(locks.len(), 1);
     assert_eq!(locks[0].agent_id, owner.id);
+    // And the refusal is in the history, not only in the transcript.
+    let refused = world
+        .sink
+        .of(EventKind::ToolCalled)
+        .into_iter()
+        .find(|e| e.data["tool"] == "filesystem.write" && e.data["ok"] == json!(false))
+        .expect("a recusa da trava fica no histórico");
+    assert_eq!(refused.data["error"]["kind"], json!("LOCKED"));
 }
 
 #[tokio::test]
@@ -618,6 +658,7 @@ async fn an_agent_delegates_a_subtask_to_a_subagent() {
             provider: None,
             model: None,
             max_turns: None,
+            autonomy: Some(AutonomyMode::Autonomous),
         })
         .unwrap();
     let parent = world.wait_final(&parent.id).await;
@@ -640,6 +681,8 @@ async fn an_agent_delegates_a_subtask_to_a_subagent() {
         .find(|a| a.parent_agent.as_ref() == Some(&parent.id))
         .expect("subagente criado");
     assert_eq!(sub.task, subtask.id);
+    // The mode granted to the parent is for its line of work.
+    assert_eq!(sub.autonomy, Some(AutonomyMode::Autonomous));
     // With one slot, the subagent only started once the parent was done.
     let sub = world.wait_final(&sub.id).await;
     assert_eq!(sub.status, AgentStatus::Done);
@@ -647,4 +690,170 @@ async fn an_agent_delegates_a_subtask_to_a_subagent() {
         world.store.task(subtask.id.as_str()).unwrap().status,
         TaskStatus::Review
     );
+}
+
+fn start(
+    world: &World,
+    task: &orchestrator_core::Task,
+    max_turns: Option<u32>,
+    autonomy: Option<AutonomyMode>,
+) -> Agent {
+    world
+        .agents
+        .start(StartAgent {
+            task_id: task.id.clone(),
+            provider: None,
+            model: None,
+            max_turns,
+            autonomy,
+        })
+        .expect("agente na fila")
+}
+
+#[tokio::test]
+async fn an_assisted_agent_waits_for_the_users_authorization() {
+    let world = world().await;
+    let task = world.task("Aplicar retentativas", &["src/pay.ts"]);
+    let agent = start(&world, &task, None, Some(AutonomyMode::Assisted));
+
+    world
+        .wait_until("o pedido de autorização", |w| {
+            !w.autonomy.pending().is_empty()
+        })
+        .await;
+    let request = world.autonomy.pending().remove(0);
+    assert_eq!(request.request.agent_id.as_ref(), Some(&agent.id));
+    assert_eq!(
+        request.request.agent_title.as_deref(),
+        Some("Aplicar retentativas")
+    );
+    assert_eq!(request.request.task_id.as_ref(), Some(&task.id));
+    assert_eq!(request.request.summary, "Escrever src/pay.ts (21 B)");
+    let view = world.agents.get(&agent.id).unwrap();
+    assert_eq!(view.agent.status, AgentStatus::Running);
+    assert_eq!(view.approval.as_deref(), Some("Escrever src/pay.ts (21 B)"));
+    assert_eq!(view.mode, AutonomyMode::Assisted);
+    // Nothing happens before the answer.
+    let content = std::fs::read_to_string(world.root.join("src/pay.ts")).unwrap();
+    assert_eq!(content, "export const pay = 1;");
+
+    world
+        .autonomy
+        .answer(
+            &request.request.id,
+            ApprovalAnswer::Approve,
+            None,
+            CallOrigin::User,
+        )
+        .unwrap();
+    let done = world.wait_final(&agent.id).await;
+    assert_eq!(done.status, AgentStatus::Done);
+    let content = std::fs::read_to_string(world.root.join("src/pay.ts")).unwrap();
+    assert_eq!(content, "export const pay = 2;");
+    // Delivering the result is not an action that needs a yes.
+    assert_eq!(world.sink.of(EventKind::ApprovalRequested).len(), 1);
+    let started = &world.sink.of(EventKind::AgentStarted)[0];
+    assert_eq!(started.data["mode"], json!("assisted"));
+    assert_eq!(started.data["autonomy"], json!("assisted"));
+}
+
+#[tokio::test]
+async fn stopping_an_agent_withdraws_what_it_was_waiting_for() {
+    let world = world().await;
+    let task = world.task("Aplicar retentativas", &["src/pay.ts"]);
+    let agent = start(&world, &task, None, Some(AutonomyMode::Assisted));
+    world
+        .wait_until("o pedido de autorização", |w| {
+            !w.autonomy.pending().is_empty()
+        })
+        .await;
+    world
+        .agents
+        .stop(&agent.id, CallOrigin::User)
+        .await
+        .unwrap();
+    let ended = world.wait_final(&agent.id).await;
+    assert_eq!(ended.status, AgentStatus::Stopped);
+    assert!(world.autonomy.pending().is_empty());
+    let decided = &world.sink.of(EventKind::ApprovalDecided)[0];
+    assert_eq!(decided.data["answer"], json!("cancelled"));
+    let content = std::fs::read_to_string(world.root.join("src/pay.ts")).unwrap();
+    assert_eq!(content, "export const pay = 1;");
+    assert!(world.locks.list(None).is_empty());
+}
+
+#[tokio::test]
+async fn a_paused_agent_holds_its_next_turn_until_resumed() {
+    let world = world().await;
+    let task = world.task("Tarefa sem fim", &[]);
+    let agent = start(&world, &task, Some(500), None);
+    world
+        .wait_until("dois turnos", |w| {
+            w.store.agent(agent.id.as_str()).unwrap().turns >= 2
+        })
+        .await;
+
+    let view = world.agents.pause(&agent.id, CallOrigin::User).unwrap();
+    assert!(view.paused);
+    // The turn in flight ends; no other one begins.
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    let held = world.store.agent(agent.id.as_str()).unwrap().turns;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let still = world.store.agent(agent.id.as_str()).unwrap();
+    assert_eq!(still.turns, held, "um agente pausado não começa turno");
+    assert_eq!(
+        still.status,
+        AgentStatus::Running,
+        "pausado não é encerrado"
+    );
+
+    let view = world.agents.resume(&agent.id, CallOrigin::User).unwrap();
+    assert!(!view.paused);
+    world
+        .wait_until("o agente voltar a trabalhar", |w| {
+            w.store.agent(agent.id.as_str()).unwrap().turns > held
+        })
+        .await;
+    world
+        .agents
+        .stop(&agent.id, CallOrigin::User)
+        .await
+        .unwrap();
+    assert_eq!(
+        world.wait_final(&agent.id).await.status,
+        AgentStatus::Stopped
+    );
+
+    let paused = world.sink.of(EventKind::ExecutionPaused);
+    assert_eq!(paused.len(), 1);
+    assert_eq!(paused[0].data["scope"], json!("agent"));
+    assert_eq!(world.sink.of(EventKind::ExecutionResumed).len(), 1);
+
+    // Only a running agent can be paused.
+    let queued_task = world.task("Outra", &[]);
+    world.agents.pause_all(CallOrigin::User);
+    let queued = start(&world, &queued_task, None, None);
+    assert!(world.agents.pause(&queued.id, CallOrigin::User).is_err());
+    world
+        .agents
+        .stop(&queued.id, CallOrigin::User)
+        .await
+        .unwrap();
+    world.agents.resume_all(CallOrigin::User);
+}
+
+#[tokio::test]
+async fn while_the_ais_are_paused_the_queue_waits() {
+    let world = world().await;
+    assert!(world.agents.pause_all(CallOrigin::User));
+    let task = world.task("Aplicar retentativas", &["src/pay.ts"]);
+    let agent = start(&world, &task, None, None);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let view = world.agents.get(&agent.id).unwrap();
+    assert_eq!(view.agent.status, AgentStatus::Queued);
+    assert_eq!(view.waiting.as_deref(), Some("as IAs estão pausadas"));
+
+    assert!(world.agents.resume_all(CallOrigin::User));
+    let done = world.wait_final(&agent.id).await;
+    assert_eq!(done.status, AgentStatus::Done);
 }

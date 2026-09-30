@@ -6,6 +6,7 @@
 //! turns, locks, delegation) are the agent manager's; this crate only says
 //! what an agent is.
 
+use crate::autonomy::AutonomyMode;
 use crate::context::ContextSummary;
 use crate::ids::{AgentId, HandoffId, ProviderId, SessionId, TaskId};
 use chrono::{DateTime, Utc};
@@ -92,6 +93,10 @@ pub struct Agent {
     pub error: Option<String>,
     /// Handoff created when it stopped before finishing.
     pub handoff: Option<HandoffId>,
+    /// Autonomy mode the user granted to this agent (and its subagents);
+    /// `None`: the project's (ADR-0016).
+    #[serde(default)]
+    pub autonomy: Option<AutonomyMode>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
@@ -147,6 +152,7 @@ mod tests {
             result: String::new(),
             error: None,
             handoff: None,
+            autonomy: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
             started_at: None,
@@ -165,6 +171,16 @@ mod tests {
         assert_eq!(value["session"], "s1");
         assert_eq!(value["parentAgent"], json!(null));
         assert_eq!(value["maxTurns"], 12);
+        assert_eq!(value["autonomy"], json!(null));
+
+        // A Phase 8b row has no `autonomy`: it reads as the project's mode.
+        let mut old = value.clone();
+        old.as_object_mut().unwrap().remove("autonomy");
+        let back: Agent = serde_json::from_value(old).unwrap();
+        assert_eq!(back.autonomy, None);
+        agent.autonomy = Some(crate::AutonomyMode::Unrestricted);
+        let value = serde_json::to_value(&agent).unwrap();
+        assert_eq!(value["autonomy"], "unrestricted");
     }
 
     #[test]

@@ -18,8 +18,8 @@ pub struct AgentSettings {
     /// How many agents may run at the same time.
     pub max_parallel: u32,
     /// Turns an agent may spend before the Orchestrator stops it. Not a
-    /// permission policy: it is what keeps an agent from running forever
-    /// while the autonomy gate (Fase 9) does not exist.
+    /// permission policy (that is the autonomy mode, ADR-0016): it says how
+    /// much an agent runs, the same in every mode.
     pub max_turns: u32,
 }
 

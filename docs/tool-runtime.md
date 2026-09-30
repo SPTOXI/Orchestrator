@@ -33,12 +33,19 @@ componente que executa operações no sistema operacional. Toda chamada entra po
   `ALREADY_EXISTS`, `PERMISSION_DENIED` (negado pelo SO), `IO`, `SPAWN`,
   `NOT_RUNNING`, `COMMAND_FAILED` (um comando externo, ex. `git`, falhou; a
   mensagem traz a saída dele), `CANCELLED` (pedido por um turno de IA já
-  cancelado; nada foi executado, ADR-0009), `LOCKED` (outro agente está com
-  o arquivo; nunca acontece com o usuário, ADR-0015), `INTERNAL`.
+  cancelado, ou cancelado enquanto esperava autorização; nada foi
+  executado, ADR-0009 e ADR-0016), `LOCKED` (outro agente está com o
+  arquivo; nunca acontece com o usuário, ADR-0015), `DENIED` (o usuário, ou
+  uma regra dele, negou a chamada de uma IA; a mensagem diz quem e por quê;
+  ADR-0016), `INTERNAL`.
 - Cada ferramenta é uma **consulta** (`readOnly: true`, não altera estado) ou
   uma **ação**. `runtime_tools` devolve a marca e o `TOOL_CALLED` a registra.
 - Não existe lista de comandos proibidos nem confirmação oculta no runtime. O
-  gate de autonomia (Fase 9) ficará explicitamente na frente de `invoke`.
+  gate de autonomia (Fase 9, [ADR-0016](./adr/0016-autonomia-e-pause.md))
+  fica explicitamente na frente de `invoke`, só no caminho das IAs: é o
+  executor mais de fora das sessões, e a chamada que ele recusa é
+  registrada por ele mesmo como `TOOL_CALLED`. Em Acesso Irrestrito ele não
+  avalia nada. Referência: [`autonomy.md`](./autonomy.md).
 - As ferramentas das IAs que não são do runtime (`memory.*` e `decision.*`,
   ADR-0013; `agent.finish` e `agent.delegate`, ADR-0015) são somadas ao
   catálogo por fora, pelos crates `orchestrator-engine` e
@@ -403,5 +410,6 @@ com a mesma limpeza.
 **Limitação conhecida:** se o app for morto abruptamente (SIGKILL,
 `taskkill /F`, crash), processos iniciados por `process.start` podem
 sobreviver (terminais morrem junto, pois o PTY é fechado pelo SO). A solução
-robusta (Job Objects no Windows, supervisão de processos no Unix) está
-prevista junto dos controles globais (Fase 9).
+robusta (Job Objects no Windows, supervisão de processos no Unix) não é um
+controle do usuário sobre as IAs, e sim robustez do runtime contra quedas; a
+ADR-0016 a tirou da Fase 9 e a deixou para a Fase 11.

@@ -1,6 +1,6 @@
 [package]
 name = "orchestrator-engine"
-description = "Orchestrator engine: Context Builder, memory tools for AI agents and handoff between AIs (ADR-0013)."
+description = "Orchestrator engine: Context Builder, memory tools, handoff, tasks and the autonomy gate (ADR-0013, ADR-0014, ADR-0016)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -17,7 +17,8 @@ parking_lot.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["rt", "sync"] }
+tokio = { workspace = true, features = ["rt", "sync", "macros"] }
+tokio-util.workspace = true
 
 [dev-dependencies]
 orchestrator-runtime.workspace = true

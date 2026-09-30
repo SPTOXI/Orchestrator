@@ -28,6 +28,8 @@ interface Props {
   onOpenSession: (id: string) => void;
   onOpenContext: (request: ContextTabRequest) => void;
   onOpenHandoff: (sessionId: string) => void;
+  /** Tool calls waiting for the user's authorization (ADR-0016). */
+  waitingCalls?: ReadonlySet<string>;
 }
 
 function compactJson(value: unknown, max = 160): string {
@@ -46,12 +48,15 @@ function Item({
   providerName,
   sessionTitle,
   onOpenSession,
+  waiting,
 }: {
   item: TranscriptItem;
   sessionId: string;
   providerName: string;
   sessionTitle: (id: string) => string | null;
   onOpenSession: (id: string) => void;
+  /** The call waits for the user's authorization. */
+  waiting: boolean;
 }) {
   switch (item.kind) {
     case "user":
@@ -103,7 +108,11 @@ function Item({
               {item.args === null ? "" : compactJson(item.args)}
             </span>
             <span className="meta">
-              {!result ? "executando…" : `${result.ok ? "ok" : "falhou"} · ${formatDuration(result.durationMs)}`}
+              {!result
+                ? waiting
+                  ? "esperando sua autorização"
+                  : "executando…"
+                : `${result.ok ? "ok" : "falhou"} · ${formatDuration(result.durationMs)}`}
             </span>
           </div>
           {result?.error && (
@@ -282,6 +291,7 @@ export function SessionView({
   onOpenSession,
   onOpenContext,
   onOpenHandoff,
+  waitingCalls,
 }: Props) {
   const { transcript, error: syncError } = useSessionTranscript(sessionId, ready);
   const [input, setInput] = useState("");
@@ -471,6 +481,7 @@ export function SessionView({
             providerName={providerName}
             sessionTitle={sessionTitle}
             onOpenSession={onOpenSession}
+            waiting={item.kind === "tool" && (waitingCalls?.has(item.callId) ?? false)}
           />
         ))}
         {running && <div className="meta typing">{providerName} está trabalhando…</div>}

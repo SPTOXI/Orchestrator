@@ -166,20 +166,48 @@ O Agent Manager e as travas de arquivo. Referência:
 | ------- | ---------- | ------- | --------- |
 | `agents_list` | `projectId?` (padrão: o projeto aberto) | `AgentView[]`, em ordem do painel | — |
 | `agent_get` | `id` | `AgentView \| null` | — |
-| `agent_start` | `request: { taskId, provider?, model?, maxTurns? }` | `Agent` em `QUEUED`; recusa task encerrada, bloqueada, não liberada ou que já tem agente | `AGENT_STARTED` quando ele começa |
+| `agent_start` | `request: { taskId, provider?, model?, maxTurns?, autonomy? }` | `Agent` em `QUEUED`; recusa task encerrada, bloqueada, não liberada ou que já tem agente | `AGENT_STARTED` quando ele começa |
 | `agent_stop` | `id` | `Agent` | `AGENT_FINISHED` |
 | `agents_stop_all` | `projectId?` | quantos foram parados | `AGENT_FINISHED` de cada um |
 | `agent_locks` | `projectId?` | `FileLock[]` (arquivos em uso agora) | — |
 | `agent_settings_get` | — | `AgentSettings` | — |
 | `agent_settings_save` | `settings` | `AgentSettings`; recusa fora da faixa | — |
 
+| `agent_pause` / `agent_resume` | `id` | `AgentView`; só um agente em execução pode ser pausado | `EXECUTION_PAUSED` / `EXECUTION_RESUMED` |
+
 `AgentView` é o agente mais o que o serviço calcula: `waiting` (por que
-está na fila), `taskTitle` e `taskStatus`.
+está na fila), `taskTitle`, `taskStatus`, `paused`, `approval` (o que ele
+espera você autorizar) e `mode` (o modo de autonomia das chamadas dele).
+`agent_start` aceita `autonomy` (o modo só para o agente e os subagentes
+dele; ausente, o do projeto).
 
 As IAs conduzidas por um agente recebem duas ferramentas a mais,
 `agent.finish` e `agent.delegate`, pelo mesmo caminho auditado das outras
 (`TOOL_CALLED`). Escritas em arquivo travado por outro agente voltam como
 `ok: false` com `kind: "LOCKED"`.
+
+### Autonomia (Fase 9, ADR-0016)
+
+Referência: [`docs/autonomy.md`](./autonomy.md). Todos agem como o usuário;
+nenhuma ferramenta de IA chega a eles.
+
+| Comando | Argumentos | Retorno | Histórico |
+| ------- | ---------- | ------- | --------- |
+| `autonomy_get` | `projectId?` | `AutonomyOverview` (modo, modo do projeto, padrão, regras, regras do Assistido e padrão, pausa, pedidos, liberações, aviso) | — |
+| `autonomy_set_mode` | `projectId?`, `mode?` | `AutonomyOverview`; `mode` nulo volta ao padrão; sem projeto, muda o padrão | `AUTONOMY_CHANGED` |
+| `autonomy_set_default` | `projectId?`, `mode` | `AutonomyOverview` | `AUTONOMY_CHANGED` |
+| `autonomy_save_rules` | `projectId?`, `rules` | `AutonomyOverview`; recusa regra inválida dizendo qual | `AUTONOMY_CHANGED` |
+| `autonomy_reset_rules` | `projectId?` | `AutonomyOverview` | `AUTONOMY_CHANGED` |
+| `autonomy_try` | `projectId?`, `mode?`, `rules?`, `tool`, `args?` | `Trial` (decisão, regra, motivo, cada alvo) | — |
+| `approvals_pending` | — | `ApprovalView[]`, do mais antigo ao mais novo | — |
+| `approval_answer` | `id`, `answer` (`approve`, `approveSession`, `deny`), `note?` | — | `APPROVAL_DECIDED` |
+| `autonomy_revoke` | `grantId` | se havia a liberação | — |
+| `execution_pause` / `execution_resume` | — | se mudou | `EXECUTION_PAUSED` / `EXECUTION_RESUMED` |
+
+Chamadas das IAs que o gate recusa voltam como `ok: false` com
+`kind: "DENIED"` (o usuário ou uma regra negou; a mensagem diz quem e por
+quê) ou `kind: "CANCELLED"` (o turno foi cancelado enquanto esperava), e
+ficam no histórico como `TOOL_CALLED`.
 
 ## Eventos
 

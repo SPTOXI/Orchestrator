@@ -83,7 +83,10 @@ Regras de `call_tool`:
   e o `TOOL_CALLED` é gravado mesmo assim;
 - depois do cancelamento nenhuma ferramenta nova é iniciada: o resultado é
   `CANCELLED` (sem `TOOL_CALLED`, porque nada foi executado);
-- não há gate de autonomia na Fase 3; ele entra na Fase 9 neste mesmo ponto.
+- o gate de autonomia (Fase 9, [autonomy.md](./autonomy.md)) está neste
+  mesmo ponto: é o executor mais de fora, e recebe o token do turno por
+  `ToolExecutor::execute_with` para que um pedido de autorização ou uma
+  pausa possam ser cancelados junto com o turno.
 
 ## Provider Registry
 

@@ -34,8 +34,10 @@ cada fase em [`docs/phases/`](./docs/phases).
 | 6 | SQLite, memória L1/L2/L3, histórico e decisões | ✅ concluída |
 | 7 | Context Builder e Handoff entre IAs | ✅ concluída |
 | 8a | Task Manager e painel TASKS | ✅ concluída |
-| 8b | Agentes, subagentes e File Locks | ⏳ próxima |
-| 9–11 | autonomia, GitHub, otimização | planejadas |
+| 8b | Agentes, subagentes e File Locks | ✅ concluída |
+| 9 | Autonomia: Assistido, Autônomo, Acesso Irrestrito e Pause | ✅ concluída |
+| 10 | GitHub, pull requests e operações remotas | ⏳ próxima |
+| 11 | Otimização de tokens, cache, compactação, agent scheduling | planejada |
 
 A ordem das Fases 4–5 foi redefinida na
 [ADR-0010](./docs/adr/0010-providers-por-api-com-cadastro-livre.md):
@@ -112,6 +114,31 @@ pnpm check            # typecheck + cargo fmt --check + cargo clippy -D warnings
 
 ## O que já funciona
 
+### Fase 9 — autonomia e pausa
+
+- **Você decide o que as IAs fazem sozinhas**, por projeto (chip
+  `Autonomia` na barra superior e aba Autonomia) ou por agente, ao pô-lo
+  para executar a task:
+  - **Assistido** (o padrão): consultas rodam; toda ação pede a sua
+    autorização, e também ler fora do projeto ou arquivos `.env*`;
+  - **Autônomo:** as suas regras decidem — permitir, perguntar ou negar —
+    por ferramenta, tipo, comando, caminho e dentro/fora do projeto; as
+    regras padrão perguntam pelo que é destrutivo ou remoto;
+  - **Acesso Irrestrito:** o Orchestrator não impõe nada. Sem confirmações,
+    sem comandos proibidos.
+- **Pedidos de autorização** aparecem numa faixa sob a barra superior, em
+  qualquer tela: Permitir, Permitir nesta sessão ou Negar com um motivo que
+  a IA recebe. Cancelar o turno ou parar o agente cancela o pedido.
+- **Pausar:** as IAs todas ou um agente só. Nada age até você retomar, e o
+  agente não perde a vaga nem os arquivos.
+- **"Experimentar"** mostra qual regra decide uma chamada antes de salvar.
+- **Tudo continua no histórico**, inclusive as chamadas negadas: quem pediu,
+  quem autorizou, em quanto tempo e o que foi executado.
+
+![A aba Autonomia com um pedido de autorização](./docs/assets/fase-9-autonomia.png)
+
+Referência: [`docs/autonomy.md`](./docs/autonomy.md).
+
 ### Fase 8b — agentes, subagentes e travas de arquivo
 
 - **Um agente executa a task sozinho:** ele abre a sessão com o contexto da
@@ -132,9 +159,8 @@ pnpm check            # typecheck + cargo fmt --check + cargo clippy -D warnings
   provider, estado e progresso; painel AGENTS com "Parar" e "Parar todos".
 - A barra superior passa a mostrar o **agente atual**.
 
-> O que limita um agente hoje são os tetos (turnos e paralelismo), as travas
-> e os botões de parar. O gate de autonomia (Assistido, Autônomo, Acesso
-> Irrestrito) é a Fase 9.
+> O que um agente pode fazer sem perguntar é o modo de autonomia (Fase 9);
+> quanto ele roda são os tetos de turnos e de paralelismo.
 
 ![O Agent Board e um agente trabalhando](./docs/assets/fase-8b-board.png)
 

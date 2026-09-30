@@ -28,6 +28,7 @@ function agent(id: string, status: AgentStatus, extra: Partial<AgentView> = {}):
     result: "",
     error: null,
     handoff: null,
+    autonomy: null,
     createdAt: "2026-09-30T00:00:00Z",
     updatedAt: "2026-09-30T00:00:00Z",
     startedAt: null,
@@ -35,6 +36,9 @@ function agent(id: string, status: AgentStatus, extra: Partial<AgentView> = {}):
     waiting: null,
     taskTitle: id,
     taskStatus: "IN_PROGRESS",
+    paused: false,
+    approval: null,
+    mode: "assisted",
     ...extra,
   };
 }
@@ -64,6 +68,13 @@ describe("agent helpers", () => {
     expect(
       agentProgress(agent("x", "RUNNING", { turns: 3, files: ["a.ts", "b.ts"] })),
     ).toBe("3 de 12 turnos · 2 arquivos");
+    // Waiting for the user, or paused (ADR-0016).
+    expect(
+      agentProgress(agent("x", "RUNNING", { turns: 1, approval: "Executar `npm test`" })),
+    ).toBe("esperando sua autorização: Executar `npm test`");
+    expect(agentProgress(agent("x", "RUNNING", { turns: 2, paused: true }))).toBe(
+      "pausado · 2 de 12 turnos",
+    );
     // Ended agents keep the count, not the files (they let them go).
     expect(agentProgress(agent("x", "FAILED", { turns: 12 }))).toBe("12 de 12 turnos");
   });

@@ -1,12 +1,13 @@
 //! Orchestrator desktop shell.
 //!
 //! This crate is only an IPC bridge (ADR-0001, ADR-0003, ADR-0009,
-//! ADR-0011, ADR-0013, ADR-0015): it turns Tauri commands into
-//! `ToolRuntime` / `SessionManager` / `RouterService` / engine / agent
-//! calls and runtime events into Tauri events. It contains no domain
-//! logic.
+//! ADR-0011, ADR-0013, ADR-0015, ADR-0016): it turns Tauri commands into
+//! `ToolRuntime` / `SessionManager` / `RouterService` / engine / agent /
+//! autonomy calls and runtime events into Tauri events. It contains no
+//! domain logic.
 
 mod agent_commands;
+mod autonomy_commands;
 mod commands;
 mod context_commands;
 mod memory_commands;
@@ -16,10 +17,11 @@ mod router_commands;
 mod task_commands;
 mod vault;
 
-use orchestrator_agents::{AgentService, AgentSlot, AgentTools, LockManager};
+use orchestrator_agents::{AgentDeps, AgentService, AgentSlot, AgentTools, LockManager};
 use orchestrator_core::{AuditEvent, EventSink, StreamEvent};
 use orchestrator_engine::{
-    ContextBuilder, EngineTools, HandoffService, StoreSessions, TaskService,
+    AutonomyGate, AutonomyService, ContextBuilder, EngineTools, HandoffService, StoreSessions,
+    TaskService,
 };
 use orchestrator_memory::{HistoryQuery, MemoryStore};
 use orchestrator_provider_api::ConnectionManager;
@@ -105,6 +107,10 @@ pub struct AppState {
     pub agents: AgentService,
     /// Problem loading `agents.json`, if any.
     pub agents_warning: Option<String>,
+    /// Autonomy modes, rules, requests and pause (ADR-0016).
+    pub autonomy: AutonomyService,
+    /// Problem loading `autonomy.json`, if any.
+    pub autonomy_warning: Option<String>,
     pub sink: Arc<DesktopSink>,
     pub data_dir: PathBuf,
 }
@@ -201,19 +207,34 @@ pub fn run() {
             }
             // AI agents get the runtime's tools, plus the memory tools
             // (ADR-0013) and the agent tools with the file locks
-            // (ADR-0015); every session gets the project context on its
-            // first turn.
+            // (ADR-0015), all behind the autonomy gate (ADR-0016), which
+            // is the outermost: nothing an AI asks for skips it. Every
+            // session gets the project context on its first turn.
+            let (autonomy, autonomy_warning) = AutonomyService::new(
+                store.clone(),
+                sink.clone(),
+                Some(data_dir.join("autonomy.json")),
+            );
+            if let Some(warning) = &autonomy_warning {
+                eprintln!("[orchestrator] {warning}");
+            }
+            let base = runtime.clone();
+            autonomy.set_workdir(Arc::new(move || base.base_dir()));
             let locks = Arc::new(LockManager::new(store.clone()));
             let agent_slot = AgentSlot::new();
-            let tools = AgentTools::new(
-                Arc::new(EngineTools::new(
-                    Arc::new(RuntimeTools(runtime.clone())),
+            let tools = AutonomyGate::new(
+                Arc::new(AgentTools::new(
+                    Arc::new(EngineTools::new(
+                        Arc::new(RuntimeTools(runtime.clone())),
+                        store.clone(),
+                        sink.clone(),
+                    )),
                     store.clone(),
+                    locks.clone(),
+                    agent_slot.clone(),
                     sink.clone(),
                 )),
-                store.clone(),
-                locks.clone(),
-                agent_slot.clone(),
+                autonomy.clone(),
             );
             let sessions = SessionManager::with_store(
                 registry,
@@ -242,17 +263,20 @@ pub fn run() {
                 sink.clone(),
             );
             let (agents, agents_warning) = AgentService::new(
-                sessions.clone(),
-                store.clone(),
-                tasks.clone(),
-                HandoffService::new(
-                    sessions.clone(),
-                    store.clone(),
-                    builder.clone(),
-                    sink.clone(),
-                ),
-                locks,
-                sink.clone(),
+                AgentDeps {
+                    sessions: sessions.clone(),
+                    store: store.clone(),
+                    tasks: tasks.clone(),
+                    handoffs: HandoffService::new(
+                        sessions.clone(),
+                        store.clone(),
+                        builder.clone(),
+                        sink.clone(),
+                    ),
+                    locks,
+                    autonomy: autonomy.clone(),
+                    sink: sink.clone(),
+                },
                 Some(data_dir.join("agents.json")),
             );
             if let Some(warning) = &agents_warning {
@@ -279,6 +303,8 @@ pub fn run() {
                 tasks,
                 agents,
                 agents_warning,
+                autonomy,
+                autonomy_warning,
                 sink,
                 data_dir,
             });
@@ -346,6 +372,19 @@ pub fn run() {
             agent_commands::agent_locks,
             agent_commands::agent_settings_get,
             agent_commands::agent_settings_save,
+            agent_commands::agent_pause,
+            agent_commands::agent_resume,
+            autonomy_commands::autonomy_get,
+            autonomy_commands::autonomy_set_mode,
+            autonomy_commands::autonomy_set_default,
+            autonomy_commands::autonomy_save_rules,
+            autonomy_commands::autonomy_reset_rules,
+            autonomy_commands::autonomy_try,
+            autonomy_commands::approvals_pending,
+            autonomy_commands::approval_answer,
+            autonomy_commands::autonomy_revoke,
+            autonomy_commands::execution_pause,
+            autonomy_commands::execution_resume,
             task_commands::tasks_list,
             task_commands::task_get,
             task_commands::task_save,

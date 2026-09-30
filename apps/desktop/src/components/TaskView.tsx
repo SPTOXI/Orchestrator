@@ -4,11 +4,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { AGENT_STATUS_LABELS, agentProgress, isLive } from "../lib/agents";
+import { MODE_LABELS, MODE_ORDER } from "../lib/autonomy";
 import { formatTime } from "../lib/format";
 import { agentApi, councilApi, errorMessage, taskApi } from "../lib/runtime";
 import { TASK_PRIORITY_LABELS, TASK_STATUS_LABELS, taskActionLabel, taskText } from "../lib/tasks";
 import type {
   AgentView,
+  AutonomyMode,
   ProviderInfo,
   TaskPriority,
   TaskStatus,
@@ -27,6 +29,9 @@ interface Props {
   tasks: TaskViewData[];
   /** Agents of the project (ADR-0015). */
   agents: AgentView[];
+  /** Mode of the project, what an agent gets unless given another
+   * (ADR-0016). */
+  projectMode: AutonomyMode | null;
   providers: ProviderInfo[];
   onSaved: (id: string) => void;
   onAgentChanged: () => void;
@@ -41,6 +46,7 @@ export function TaskView({
   nonce,
   tasks,
   agents,
+  projectMode,
   providers,
   onSaved,
   onAgentChanged,
@@ -57,6 +63,7 @@ export function TaskView({
   const [model, setModel] = useState("");
   const [dependencies, setDependencies] = useState<string[]>([]);
   const [suggestion, setSuggestion] = useState<string | null>(null);
+  const [agentMode, setAgentMode] = useState<"" | AutonomyMode>("");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -190,9 +197,17 @@ export function TaskView({
         taskId,
         provider: provider || null,
         model: model || null,
+        autonomy: agentMode || null,
       });
       onAgentChanged();
       onSaved(taskId);
+    });
+
+  const pauseAgent = (agent: AgentView) =>
+    run(`pause:${agent.id}`, async () => {
+      if (agent.paused) await agentApi.resume(agent.id);
+      else await agentApi.pause(agent.id);
+      onAgentChanged();
     });
 
   const stopAgent = (id: string) =>
@@ -410,6 +425,21 @@ export function TaskView({
               >
                 {busy === "session" ? "Abrindo…" : "Abrir sessão para esta task"}
               </button>
+              <select
+                className="mode-select"
+                value={agentMode}
+                onChange={(e) => setAgentMode(e.target.value as "" | AutonomyMode)}
+                title="Modo de autonomia deste agente: o que ele pode fazer sem perguntar. Os subagentes dele herdam o mesmo modo."
+              >
+                <option value="">
+                  {projectMode ? `do projeto: ${MODE_LABELS[projectMode]}` : "modo do projeto"}
+                </option>
+                {MODE_ORDER.map((mode) => (
+                  <option key={mode} value={mode}>
+                    {MODE_LABELS[mode]}
+                  </option>
+                ))}
+              </select>
               <button
                 className="button small primary"
                 disabled={!ready || busy !== null || waiting || ended || liveAgent !== null}
@@ -454,8 +484,13 @@ export function TaskView({
                       <span className={`agent-status ${agent.status.toLowerCase()}`}>
                         {AGENT_STATUS_LABELS[agent.status]}
                       </span>
-                      <span className="ellipsis">
-                        {[agent.provider, agent.model, agentProgress(agent)]
+                      <span className={`ellipsis${agent.approval ? " waiting-approval" : ""}`}>
+                        {[
+                          agent.provider,
+                          agent.model,
+                          agent.autonomy ? MODE_LABELS[agent.autonomy] : null,
+                          agentProgress(agent),
+                        ]
                           .filter(Boolean)
                           .join(" · ")}
                       </span>
@@ -471,6 +506,15 @@ export function TaskView({
                   {agent.session && (
                     <button className="subagent-link" onClick={() => onOpenSession(agent.session as string)}>
                       Ver a sessão
+                    </button>
+                  )}
+                  {agent.status === "RUNNING" && (
+                    <button
+                      className="button small"
+                      disabled={!ready || busy !== null}
+                      onClick={() => void pauseAgent(agent)}
+                    >
+                      {busy === `pause:${agent.id}` ? "…" : agent.paused ? "Retomar" : "Pausar"}
                     </button>
                   )}
                   {isLive(agent) && (

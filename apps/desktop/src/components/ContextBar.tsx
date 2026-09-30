@@ -8,6 +8,9 @@ interface Chip {
   value: string;
   hint: string;
   pending?: boolean;
+  /** Needs the user's attention (a request waiting, the AIs paused). */
+  warn?: boolean;
+  onClick?: () => void;
 }
 
 interface Props {
@@ -30,6 +33,9 @@ interface Props {
   agent: { title: string; status: AgentStatus } | null;
   /** How the project's agents are doing, when none is in focus. */
   agentSummary: string;
+  /** The autonomy mode, the pause and the requests waiting (ADR-0016). */
+  autonomy: { value: string; hint: string; warn: boolean };
+  onOpenAutonomy: () => void;
 }
 
 export function ContextBar({
@@ -45,6 +51,8 @@ export function ContextBar({
   openTasks,
   agent,
   agentSummary,
+  autonomy,
+  onOpenAutonomy,
 }: Props) {
   const openTerminals = terminals.filter((t) => t.alive).length;
   const running = processes.filter((p) => p.status === "running").length;
@@ -83,7 +91,13 @@ export function ContextBar({
           : "Agentes deste projeto (painel AGENTS)",
       pending: !agent && agentSummary === "—",
     },
-    { label: "Autonomia", value: "—", hint: "Assistido / Autônomo / Acesso Irrestrito: Fase 9", pending: true },
+    {
+      label: "Autonomia",
+      value: autonomy.value,
+      hint: autonomy.hint,
+      warn: autonomy.warn,
+      onClick: onOpenAutonomy,
+    },
     {
       label: "Branch",
       value: branch
@@ -106,12 +120,24 @@ export function ContextBar({
         {projectName && <span className="brand-project">/ {projectName}</span>}
       </div>
       <div className="chips">
-        {chips.map((chip) => (
-          <div key={chip.label} className={`chip ${chip.pending ? "pending" : ""}`} title={chip.hint}>
-            <span className="chip-label">{chip.label}</span>
-            <span className="chip-value">{chip.value}</span>
-          </div>
-        ))}
+        {chips.map((chip) => {
+          const className = `chip${chip.pending ? " pending" : ""}${chip.warn ? " warn" : ""}`;
+          const content = (
+            <>
+              <span className="chip-label">{chip.label}</span>
+              <span className="chip-value">{chip.value}</span>
+            </>
+          );
+          return chip.onClick ? (
+            <button key={chip.label} className={`${className} clickable`} title={chip.hint} onClick={chip.onClick}>
+              {content}
+            </button>
+          ) : (
+            <div key={chip.label} className={className} title={chip.hint}>
+              {content}
+            </div>
+          );
+        })}
       </div>
     </header>
   );

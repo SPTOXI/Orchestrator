@@ -27,6 +27,12 @@ const RELEVANT = new Set([
   "TASK_UPDATED",
   // A lock is taken in the middle of a turn: a tool call is the only sign.
   "TOOL_CALLED",
+  // Waiting for the user, or paused (ADR-0016).
+  "APPROVAL_REQUESTED",
+  "APPROVAL_DECIDED",
+  "EXECUTION_PAUSED",
+  "EXECUTION_RESUMED",
+  "AUTONOMY_CHANGED",
 ]);
 
 export function useAgents(enabled: boolean, projectId: string | null): Agents {

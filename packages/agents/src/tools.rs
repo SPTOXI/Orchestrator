@@ -2,17 +2,20 @@
 //! file locks, checked on the one path every tool call takes.
 //!
 //! `AgentTools` wraps the executor the app gives the sessions
-//! (`RuntimeTools` → `EngineTools` → this), so no tool escapes the check
-//! and the Tool Runtime does not need to know that agents exist.
+//! (`RuntimeTools` → `EngineTools` → this, under the autonomy gate), so no
+//! tool escapes the check and the Tool Runtime does not need to know that
+//! agents exist. What it answers itself — its own tools and the writes the
+//! locks refuse — never reaches the runtime, so it records them.
 
 use crate::locks::LockManager;
 use crate::service::AgentService;
 use async_trait::async_trait;
 use chrono::Utc;
 use orchestrator_core::{
-    Agent, AgentStatus, CallOrigin, SessionId, ToolCall, ToolDefinition, ToolError, ToolErrorKind,
-    ToolResult,
+    Agent, AgentStatus, AuditEvent, CallOrigin, EventKind, EventSink, SessionId, ToolCall,
+    ToolDefinition, ToolError, ToolErrorKind, ToolResult,
 };
+use orchestrator_engine::{audit_args, clip};
 use orchestrator_memory::MemoryStore;
 use orchestrator_providers::ToolExecutor;
 use parking_lot::RwLock;
@@ -129,6 +132,7 @@ pub struct AgentTools {
     store: Arc<MemoryStore>,
     locks: Arc<LockManager>,
     service: Arc<AgentSlot>,
+    sink: Arc<dyn EventSink>,
 }
 
 impl AgentTools {
@@ -137,13 +141,40 @@ impl AgentTools {
         store: Arc<MemoryStore>,
         locks: Arc<LockManager>,
         service: Arc<AgentSlot>,
+        sink: Arc<dyn EventSink>,
     ) -> Self {
         Self {
             inner,
             store,
             locks,
             service,
+            sink,
         }
+    }
+
+    /// `TOOL_CALLED` for what this layer answered itself, in the shape the
+    /// runtime uses.
+    fn record(&self, call: &ToolCall, result: &ToolResult, read_only: bool) {
+        let summary = match &result.error {
+            None => call.tool.clone(),
+            Some(err) => format!("{} failed: {}", call.tool, clip(&err.message, 200)),
+        };
+        self.sink.audit(
+            AuditEvent::new(
+                EventKind::ToolCalled,
+                call.origin.clone(),
+                summary,
+                json!({
+                    "tool": call.tool,
+                    "readOnly": read_only,
+                    "args": audit_args(&call.args),
+                    "ok": result.ok,
+                    "error": result.error,
+                    "durationMs": result.duration_ms,
+                }),
+            )
+            .with_call(call.id.clone()),
+        );
     }
 
     /// The agent behind a call, when an agent is driving the session. A
@@ -303,10 +334,14 @@ impl ToolExecutor for AgentTools {
         let started = Utc::now();
         if is_agent_tool(&call.tool) {
             let outcome = self.run(&call);
-            return result_of(call, outcome, started);
+            let result = result_of(call.clone(), outcome, started);
+            self.record(&call, &result, false);
+            return result;
         }
         if let Err(denied) = self.guard(&call) {
-            return result_of(call, Err(denied), started);
+            let result = result_of(call.clone(), Err(denied), started);
+            self.record(&call, &result, false);
+            return result;
         }
         self.inner.execute(call).await
     }

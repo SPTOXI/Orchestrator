@@ -18,7 +18,9 @@ mod settings;
 mod tools;
 
 pub use locks::{normalize as normalize_path, LockManager};
-pub use service::{AgentService, AgentView, StartAgent, MAX_DEPTH, MAX_RESULT, MAX_SUBAGENTS};
+pub use service::{
+    AgentDeps, AgentService, AgentView, StartAgent, MAX_DEPTH, MAX_RESULT, MAX_SUBAGENTS,
+};
 pub use settings::{
     load as load_settings, save as save_settings, AgentSettings, DEFAULT_PARALLEL, DEFAULT_TURNS,
     MAX_PARALLEL, MAX_TURNS,

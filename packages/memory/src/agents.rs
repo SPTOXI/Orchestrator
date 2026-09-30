@@ -263,6 +263,7 @@ mod tests {
             result: String::new(),
             error: None,
             handoff: None,
+            autonomy: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
             started_at: None,

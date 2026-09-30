@@ -1,7 +1,9 @@
 // AGENTS panel (sidebar): who is executing the project's tasks right now,
-// what they hold and the two limits around them (ADR-0015).
+// what they hold and the two limits around them (ADR-0015); pause and
+// resume, for one agent or for every AI (ADR-0016).
 
 import { useState } from "react";
+import { MODE_LABELS } from "../lib/autonomy";
 import {
   AGENT_STATUS_LABELS,
   agentProgress,
@@ -25,6 +27,13 @@ interface Props {
   onStop: (id: string) => Promise<void>;
   onStopAll: () => Promise<void>;
   onSaveSettings: (settings: AgentSettings) => Promise<void>;
+  /** Every AI is paused (ADR-0016). */
+  pausedAll: boolean;
+  onPause: (id: string) => Promise<void>;
+  onResume: (id: string) => Promise<void>;
+  onPauseAll: () => Promise<void>;
+  onResumeAll: () => Promise<void>;
+  onOpenAutonomy: () => void;
 }
 
 export function AgentsPanel({
@@ -40,6 +49,12 @@ export function AgentsPanel({
   onStop,
   onStopAll,
   onSaveSettings,
+  pausedAll,
+  onPause,
+  onResume,
+  onPauseAll,
+  onResumeAll,
+  onOpenAutonomy,
 }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -84,6 +99,18 @@ export function AgentsPanel({
                 Agent Board
               </button>
               <button
+                className={`button${pausedAll ? " primary" : ""}`}
+                disabled={!ready || busy !== null}
+                onClick={() => void run("pauseAll", pausedAll ? onResumeAll : onPauseAll)}
+                title={
+                  pausedAll
+                    ? "As IAs voltam a agir; a fila anda"
+                    : "Toda chamada de ferramenta de qualquer IA espera; nenhum agente começa turno novo"
+                }
+              >
+                {busy === "pauseAll" ? "…" : pausedAll ? "Retomar IAs" : "Pausar IAs"}
+              </button>
+              <button
                 className="button danger"
                 disabled={!ready || live === 0 || busy !== null}
                 onClick={() => void run("stopAll", onStopAll)}
@@ -119,8 +146,14 @@ export function AgentsPanel({
                           <div className="grow">
                             <div className="title ellipsis">{agent.taskTitle}</div>
                             <div className="meta task-meta">
-                              <span className="ellipsis">
-                                {[agent.provider, agentProgress(agent)].filter(Boolean).join(" · ")}
+                              <span className={agent.approval ? "waiting-approval" : "ellipsis"}>
+                                {[
+                                  agent.provider,
+                                  agent.autonomy ? MODE_LABELS[agent.autonomy] : null,
+                                  agentProgress(agent),
+                                ]
+                                  .filter(Boolean)
+                                  .join(" · ")}
                               </span>
                             </div>
                             {held.length > 0 && (
@@ -128,19 +161,40 @@ export function AgentsPanel({
                                 🔒 {held.map((lock) => lock.path).join(", ")}
                               </div>
                             )}
+                            {isLive(agent) && (
+                              <div className="row tight agent-actions">
+                                {agent.status === "RUNNING" && (
+                                  <button
+                                    className="button small"
+                                    disabled={!ready || busy !== null}
+                                    title={
+                                      agent.paused
+                                        ? "Volta a trabalhar"
+                                        : "Para na próxima chamada de ferramenta ou no próximo turno, sem perder a vaga nem os arquivos"
+                                    }
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      void run(`pause:${agent.id}`, () =>
+                                        agent.paused ? onResume(agent.id) : onPause(agent.id),
+                                      );
+                                    }}
+                                  >
+                                    {busy === `pause:${agent.id}` ? "…" : agent.paused ? "Retomar" : "Pausar"}
+                                  </button>
+                                )}
+                                <button
+                                  className="button small danger"
+                                  disabled={!ready || busy !== null}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void run(agent.id, () => onStop(agent.id));
+                                  }}
+                                >
+                                  {busy === agent.id ? "…" : "Parar"}
+                                </button>
+                              </div>
+                            )}
                           </div>
-                          {isLive(agent) && (
-                            <button
-                              className="button small danger"
-                              disabled={!ready || busy !== null}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                void run(agent.id, () => onStop(agent.id));
-                              }}
-                            >
-                              {busy === agent.id ? "…" : "Parar"}
-                            </button>
-                          )}
                         </li>
                       );
                     })}
@@ -175,9 +229,12 @@ export function AgentsPanel({
                     />
                   </label>
                   <p className="meta">
-                    O teto de turnos é o que impede um agente de trabalhar para sempre enquanto o
-                    gate de autonomia (Fase 9) não existe.
+                    Os limites dizem quanto um agente roda (custo). O que ele pode fazer sem
+                    perguntar é o modo de autonomia.
                   </p>
+                  <button className="button small" onClick={onOpenAutonomy}>
+                    Autonomia
+                  </button>
                 </div>
               </section>
             )}

@@ -20,5 +20,6 @@ adiciona algo fora dela, é registrada aqui **antes** de ser implementada.
 | [0013](./0013-context-builder-e-handoff.md) | Context Builder e Handoff entre IAs | Aceita |
 | [0014](./0014-task-manager.md) | Task Manager | Aceita |
 | [0015](./0015-agentes-subagentes-e-file-locks.md) | Agentes, subagentes e File Locks | Aceita |
+| [0016](./0016-autonomia-e-pause.md) | Autonomia: Assistido, Autônomo, Acesso Irrestrito e Pause | Aceita |
 
 Formato: Contexto → Decisão → Consequências.

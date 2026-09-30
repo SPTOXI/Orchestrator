@@ -61,9 +61,14 @@ Campos da seção 14 do documento mestre:
 7. **Soltar.** Em qualquer saída as travas caem e a fila anda.
 
 **O agente não conclui a task.** `agent.finish` grava o resultado na task e
-a leva para `REVIEW`; quem marca `DONE` é o usuário. Enquanto não existe o
-gate de autonomia (Fase 9), o trabalho de uma IA passa pelos olhos de
-alguém.
+a leva para `REVIEW`; quem marca `DONE` é o usuário: o trabalho de uma IA
+passa pelos olhos de alguém em qualquer modo de autonomia.
+
+**O que o agente pode fazer é o modo de autonomia** (Fase 9,
+[autonomy.md](./autonomy.md)): o do projeto, ou o que o usuário deu a ele
+ao pô-lo para executar a task (`autonomy`, herdado pelos subagentes). Em
+Assistido, cada ação dele espera a sua autorização e o painel diz
+"esperando sua autorização".
 
 **Parou no meio, sai handoff.** `FAILED` (erro ou teto) e `STOPPED`
 (usuário) geram um handoff montado pelos fatos da sessão, sem gastar turno
@@ -120,11 +125,14 @@ aba da task:
   deixa handoff.
 - **Parar todos** (`Stop All Agents`): o mesmo para todos os agentes vivos
   do projeto, inclusive os da fila.
-- `Pause` fica para a Fase 9, com o gate de autonomia.
+- **Pausar / Retomar** um agente (`Pause`, Fase 9): ele para na próxima
+  chamada de ferramenta ou no próximo turno, mantendo a vaga e as travas.
+- **Pausar IAs / Retomar IAs:** o mesmo para todas as IAs, e a fila não
+  inicia ninguém enquanto isso.
 
-O teto de turnos **não é política de permissão**: é o que impede um agente
-de rodar para sempre enquanto o gate da Fase 9 não existe. Ele é visível,
-configurável e sai do caminho quando o usuário o aumenta.
+O teto de turnos **não é política de permissão**: diz quanto um agente
+roda, não o que ele pode fazer (isso é o modo de autonomia). É visível,
+configurável e igual em todos os modos.
 
 ## Eventos
 
@@ -177,13 +185,12 @@ Ver também [ipc.md](./ipc.md#agentes-fase-8b-adr-0015) e
 
 ## Limitações
 
-- **Sem gate de autonomia:** um agente usa as ferramentas do Tool Runtime
-  como o usuário usaria. O que existe hoje são os tetos, as travas e os
-  botões de parar; políticas por ferramenta são a Fase 9.
 - **Custo é real:** cada turno é uma chamada paga ao provider. O teto de
   turnos protege, mas um agente caro continua caro.
-- **`Pause` não existe** (Fase 9): hoje é parar, e recomeçar com outro
-  agente a partir do handoff.
+- **Um pedido de autorização sem resposta segura o agente** (e a vaga) até
+  o usuário decidir.
+- **Pausar não interrompe o modelo:** a resposta que ele já estava gerando
+  termina; o que ele pedir para fazer espera.
 - **A trava protege os arquivos, não o repositório:** dois agentes ainda
   podem rodar comandos que mexem no mesmo estado (`git`, builds). Nada
   serializa comandos.

@@ -17,8 +17,11 @@
 //!   (ADR-0014).
 //! - [`Agent`] / [`FileLock`]: who executes a task, and the files it holds
 //!   while it does (ADR-0015).
+//! - [`AutonomyMode`] / [`PolicyRule`] / [`ApprovalRequest`]: what an AI
+//!   may do on its own, and what the user is asked (ADR-0016).
 
 pub mod agent;
+pub mod autonomy;
 pub mod context;
 pub mod event;
 pub mod handoff;
@@ -29,14 +32,17 @@ pub mod task;
 pub mod tool;
 
 pub use agent::{Agent, AgentStatus, FileLock};
+pub use autonomy::{
+    ApprovalAnswer, ApprovalRequest, AutonomyMode, Decision, PolicyRule, RuleAccess, RuleWhere,
+};
 pub use context::{ContextSectionSummary, ContextSummary};
 pub use event::{
     AuditEvent, EventKind, EventSink, MemorySink, NullSink, OutputStream, StreamEvent,
 };
 pub use handoff::{Handoff, HandoffEnd, HandoffPacket, HandoffStatus};
 pub use ids::{
-    AgentId, DeliberationId, EventId, HandoffId, ProcessId, ProviderId, SessionId, TaskId,
-    TerminalId, ToolCallId, TurnId,
+    AgentId, ApprovalId, DeliberationId, EventId, HandoffId, ProcessId, ProviderId, SessionId,
+    TaskId, TerminalId, ToolCallId, TurnId,
 };
 pub use project::{
     DockerInfo, GitRemote, GitSummary, ProjectCandidate, ProjectProfile, RuntimeRequirement,

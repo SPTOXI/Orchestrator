@@ -107,6 +107,9 @@ pub enum ToolErrorKind {
     /// Another agent holds the file this call would change (ADR-0015).
     /// Never returned to the user, who is not locked out of the project.
     Locked,
+    /// The user, or one of the user's rules, refused the call (ADR-0016).
+    /// The message always says who and why.
+    Denied,
     /// Unexpected internal failure.
     Internal,
 }

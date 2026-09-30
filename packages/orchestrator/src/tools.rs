@@ -385,7 +385,8 @@ fn run(store: &MemoryStore, call: &ToolCall) -> Outcome {
 }
 
 /// Copy of the arguments with long strings cut, as the runtime records them.
-fn audit_args(value: &Value) -> Value {
+/// Arguments as the history keeps them: long strings cut.
+pub fn audit_args(value: &Value) -> Value {
     match value {
         Value::String(s) if s.chars().count() > AUDIT_MAX_STRING => {
             Value::String(clip(s, AUDIT_MAX_STRING))

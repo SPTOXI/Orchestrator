@@ -64,9 +64,9 @@ Regras do Full:
   válida, vale a recomendação do roteador e o usuário decide.
 - Com um único candidato elegível, o Conselho não é consultado e a decisão é
   aplicada (não há escolha a fazer).
-- Escolher o modelo **não** dá permissão para operações. O gate de
-  autonomia (Assistido / Autônomo / Acesso Irrestrito) chega na Fase 9, e
-  nas Fases 8–9 o mesmo serviço escolhe o modelo de tasks e agentes.
+- Escolher o modelo **não** dá permissão para operações: as ferramentas que
+  a sessão aberta pelo Full pedir passam pelo gate de autonomia (Assistido /
+  Autônomo / Acesso Irrestrito, Fase 9, [autonomy.md](./autonomy.md)).
 - A sessão aberta pelo Full recebe o contexto do projeto no primeiro turno,
   como qualquer sessão (Fase 7, [context.md](./context.md)). Os membros do
   Conselho continuam sem contexto, arquivos e ferramentas.
