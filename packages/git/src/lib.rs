@@ -410,6 +410,27 @@ impl Git {
             .map(Output::into_command_output)
     }
 
+    /// `git fetch [--prune] [remote]`: updates remote-tracking references
+    /// without touching the working tree (ADR-0017).
+    pub fn fetch(
+        &self,
+        dir: &Path,
+        remote: Option<&str>,
+        prune: bool,
+        timeout: Option<Duration>,
+    ) -> Result<CommandOutput> {
+        let mut args = vec!["fetch"];
+        if prune {
+            args.push("--prune");
+        }
+        if let Some(remote) = remote {
+            check_ref(remote)?;
+            args.push(remote);
+        }
+        self.run_ok(Some(dir), &args, Access::Mutate, timeout)
+            .map(Output::into_command_output)
+    }
+
     pub fn push(&self, dir: &Path, options: &PushOptions) -> Result<CommandOutput> {
         let mut args = vec!["push"];
         if options.set_upstream {

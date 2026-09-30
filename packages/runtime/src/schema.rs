@@ -4,7 +4,10 @@
 //! so what an AI model is told matches what the runtime accepts.
 
 use crate::CATALOG;
-use crate::{filesystem, git_tools, package, process, project, shell, terminal, Empty, OpenArgs};
+use crate::{
+    filesystem, git_tools, github_tools, package, process, project, shell, terminal, Empty,
+    OpenArgs,
+};
 use orchestrator_core::ToolDefinition;
 use schemars::generate::SchemaSettings;
 use schemars::JsonSchema;
@@ -63,6 +66,17 @@ pub fn parameters(tool: &str) -> Option<Value> {
         "git.push" => schema::<git_tools::PushArgs>(),
         "git.stash" => schema::<git_tools::StashArgs>(),
         "git.reset" => schema::<git_tools::ResetArgs>(),
+        "git.remotes" => schema::<github_tools::RemotesArgs>(),
+        "git.fetch" => schema::<github_tools::FetchArgs>(),
+        "github.status" => schema::<github_tools::StatusArgs>(),
+        "github.pr.list" => schema::<github_tools::PrListArgs>(),
+        "github.pr.get" | "github.issue.get" => schema::<github_tools::NumberArgs>(),
+        "github.checks" => schema::<github_tools::ChecksArgs>(),
+        "github.pr.create" => schema::<github_tools::PrCreateArgs>(),
+        "github.pr.comment" | "github.issue.comment" => schema::<github_tools::CommentArgs>(),
+        "github.pr.merge" => schema::<github_tools::PrMergeArgs>(),
+        "github.issue.list" => schema::<github_tools::IssueListArgs>(),
+        "github.issue.create" => schema::<github_tools::IssueCreateArgs>(),
         "package.install" => schema::<package::InstallArgs>(),
         "package.run" => schema::<package::RunArgs>(),
         "shell.list" | "terminal.list" | "process.list" | "runtime.node" | "runtime.python"

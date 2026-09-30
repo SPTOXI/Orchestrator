@@ -14,6 +14,7 @@
 mod catalog;
 pub mod filesystem;
 pub mod git_tools;
+pub mod github_tools;
 pub mod output;
 pub mod package;
 pub mod platform;
@@ -31,6 +32,7 @@ use orchestrator_core::{
     AuditEvent, CallOrigin, EventKind, EventSink, TerminalId, ToolCall, ToolDefinition, ToolError,
     ToolErrorKind, ToolResult, ToolSpec,
 };
+use orchestrator_git::github::{GitHubSettings, Secret};
 use orchestrator_git::{DiffOptions, Git, PullOptions, PushOptions, ResetMode};
 use parking_lot::RwLock;
 use platform::{resolve_cwd, resolve_path};
@@ -72,6 +74,8 @@ struct Inner {
     shells: ShellRegistry,
     terminals: terminal::TerminalManager,
     processes: process::ProcessManager,
+    /// GitHub settings and token (ADR-0017).
+    github: github_tools::GitHubState,
 }
 
 /// Executes tool calls. Cheap to clone (shared state).
@@ -117,8 +121,24 @@ impl ToolRuntime {
                 processes: process::ProcessManager::new(sink.clone()),
                 sink,
                 shells,
+                github: github_tools::GitHubState::default(),
             }),
         }
+    }
+
+    /// Which GitHub the `github.*` tools talk to (`github.json`).
+    pub fn github_settings(&self) -> GitHubSettings {
+        self.inner.github.settings()
+    }
+
+    pub fn set_github_settings(&self, settings: GitHubSettings) {
+        self.inner.github.set_settings(settings);
+    }
+
+    /// The token saved in the OS vault, handed in by the app; it wins over
+    /// `GH_TOKEN`/`GITHUB_TOKEN` and the GitHub CLI (ADR-0017).
+    pub fn set_github_token(&self, token: Option<Secret>) {
+        self.inner.github.set_vault(token);
     }
 
     pub fn catalog() -> &'static [ToolSpec] {
@@ -535,6 +555,26 @@ impl ToolRuntime {
                 );
                 Dispatched::with_events(&out, vec![event])
             }
+            "git.remotes" => {
+                let args: github_tools::RemotesArgs = parse(&call.args)?;
+                Dispatched::new(&self.git_remotes(base, args).await?)
+            }
+            "git.fetch" => {
+                let args: github_tools::FetchArgs = parse(&call.args)?;
+                let dir = resolve_cwd(base, args.path.as_deref())?;
+                let git = self.git()?;
+                let out = blocking(move || {
+                    let timeout = args.timeout_ms.map(Duration::from_millis);
+                    let output = git
+                        .fetch(&dir, args.remote.as_deref(), args.prune, timeout)
+                        .map_err(git_tools::map_error)?;
+                    let status = git.status(&dir).map_err(git_tools::map_error)?;
+                    Ok(git_tools::ChangedOutput { output, status })
+                })
+                .await?;
+                Dispatched::new(&out)
+            }
+            name if name.starts_with("github.") => self.github_dispatch(call, base).await,
             "git.stash" => {
                 let args: git_tools::StashArgs = parse(&call.args)?;
                 let dir = resolve_cwd(base, args.path.as_deref())?;
@@ -805,11 +845,15 @@ fn fmt_opt<T: std::fmt::Display>(value: Option<T>) -> String {
 
 /// One-line description of a call for the history panel.
 fn tool_summary(call: &ToolCall, error: Option<&ToolError>) -> String {
-    let target = ["path", "from", "command", "id"]
+    let mut target = ["path", "from", "command", "id", "title", "repo"]
         .iter()
         .find_map(|key| call.args.get(key).and_then(Value::as_str))
         .map(|value| format!(" {}", truncate(value, 120)))
         .unwrap_or_default();
+    // Pull requests and issues (ADR-0017).
+    if let Some(number) = call.args.get("number").and_then(Value::as_u64) {
+        target = format!(" #{number}{target}");
+    }
     match error {
         None => format!("{}{target}", call.tool),
         Some(err) => format!(

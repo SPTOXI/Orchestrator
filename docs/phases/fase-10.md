@@ -17,7 +17,7 @@ próximo passo é o primeiro sem ✅.
 3. ✅ `orchestrator-git`, módulo `github`: remotos → repositório, token
    (cofre/ambiente/`gh`), cliente REST, tipos, erros; testes com servidor
    HTTP falso.
-4. Runtime: `github.*` e `git.fetch`/`git.remotes` no catálogo, schemas,
+4. ✅ Runtime: `github.*` e `git.fetch`/`git.remotes` no catálogo, schemas,
    eventos; testes.
 5. Motor: regra padrão do Autônomo para `github.*` e resumo dos pedidos;
    testes.

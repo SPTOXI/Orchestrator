@@ -346,6 +346,9 @@ impl GitHubClient {
             )
             .await?;
         let mut result = MergeResult {
+            number: pull_number,
+            title: text(&pull, "/title"),
+            url: text(&pull, "/html_url"),
             merged: v.get("merged").and_then(Value::as_bool).unwrap_or(true),
             sha: text(&v, "/sha"),
             message: text(&v, "/message"),

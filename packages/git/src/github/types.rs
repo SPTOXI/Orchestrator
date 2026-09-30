@@ -117,6 +117,9 @@ pub struct PullDetail {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MergeResult {
+    pub number: u64,
+    pub title: String,
+    pub url: String,
     pub merged: bool,
     pub sha: String,
     pub message: String,

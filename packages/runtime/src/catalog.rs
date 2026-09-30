@@ -174,6 +174,71 @@ pub const CATALOG: &[ToolSpec] = &[
         "git",
         "Reset HEAD or unstage files: { path?, mode?: soft|mixed|hard, target?, files? } -> { output, status }.",
     ),
+    query(
+        "git.remotes",
+        "git",
+        "Remotes of the repository: { path? } -> { remotes[]: { name, url, github? } } (github: the GitHub repository it is).",
+    ),
+    action(
+        "git.fetch",
+        "git",
+        "Update remote-tracking references without touching files: { path?, remote?, prune?, timeoutMs? } -> { output, status }.",
+    ),
+    query(
+        "github.status",
+        "github",
+        "GitHub account, repository of the project and the open pull request of the current branch with its CI: { path?, repo? } -> { authenticated, tokenSource, account, repo, branch, ahead, behind, pull, checks, *Error }.",
+    ),
+    query(
+        "github.pr.list",
+        "github",
+        "Pull requests: { path?, repo?, state?: open|closed|all, head?, base?, limit? } -> { repo, pulls[] }.",
+    ),
+    query(
+        "github.pr.get",
+        "github",
+        "One pull request with CI, reviews and recent comments: { path?, repo?, number } -> { number, title, state, head, base, body, mergeable, mergeableState, checks, reviews[], comments[] }.",
+    ),
+    query(
+        "github.checks",
+        "github",
+        "CI of a commit or branch (default: the current branch as pushed): { path?, repo?, ref? } -> { ref, checks: { state: success|failure|pending|none, items[] } }.",
+    ),
+    query(
+        "github.issue.list",
+        "github",
+        "Issues (without pull requests): { path?, repo?, state?, labels?, limit? } -> { repo, issues[] }.",
+    ),
+    query(
+        "github.issue.get",
+        "github",
+        "One issue with recent comments: { path?, repo?, number } -> { number, title, state, body, labels, comments[] }.",
+    ),
+    action(
+        "github.pr.create",
+        "github",
+        "Open a pull request from the current branch (it must be pushed) or head: { path?, repo?, title, body?, base? (default branch), head?, draft? } -> pull request.",
+    ),
+    action(
+        "github.pr.comment",
+        "github",
+        "Comment on a pull request: { path?, repo?, number, body } -> comment.",
+    ),
+    action(
+        "github.pr.merge",
+        "github",
+        "Merge a pull request: { path?, repo?, number, method?: merge|squash|rebase, commitTitle?, deleteBranch? } -> { merged, sha, branchDeleted }.",
+    ),
+    action(
+        "github.issue.create",
+        "github",
+        "Open an issue: { path?, repo?, title, body?, labels? } -> issue.",
+    ),
+    action(
+        "github.issue.comment",
+        "github",
+        "Comment on an issue: { path?, repo?, number, body } -> comment.",
+    ),
     action(
         "package.install",
         "package",
