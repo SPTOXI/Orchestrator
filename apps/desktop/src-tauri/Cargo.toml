@@ -20,6 +20,7 @@ keyring.workspace = true
 orchestrator-agents.workspace = true
 orchestrator-core.workspace = true
 orchestrator-engine.workspace = true
+orchestrator-git.workspace = true
 orchestrator-memory.workspace = true
 orchestrator-provider-api.workspace = true
 orchestrator-providers.workspace = true

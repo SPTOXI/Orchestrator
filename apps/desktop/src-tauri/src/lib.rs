@@ -10,6 +10,7 @@ mod agent_commands;
 mod autonomy_commands;
 mod commands;
 mod context_commands;
+mod github_commands;
 mod memory_commands;
 mod persistence;
 mod provider_commands;
@@ -111,6 +112,9 @@ pub struct AppState {
     pub autonomy: AutonomyService,
     /// Problem loading `autonomy.json`, if any.
     pub autonomy_warning: Option<String>,
+    /// Problem loading `github.json` or reading the token, if any
+    /// (ADR-0017).
+    pub github_warning: Option<String>,
     pub sink: Arc<DesktopSink>,
     pub data_dir: PathBuf,
 }
@@ -182,6 +186,21 @@ pub fn run() {
                 store: store.clone(),
             });
             let runtime = ToolRuntime::new(RuntimeConfig::default(), sink.clone());
+            // GitHub (ADR-0017): which server, and the token saved in the
+            // vault (the environment and the GitHub CLI are read by the
+            // runtime itself).
+            let (github_settings, mut github_warning) =
+                github_commands::load_settings(&github_commands::settings_path(&data_dir));
+            runtime.set_github_settings(github_settings);
+            match github_commands::vault_token() {
+                Ok(token) => runtime.set_github_token(token),
+                Err(err) => {
+                    github_warning.get_or_insert(format!("token do GitHub no cofre: {err}"));
+                }
+            }
+            if let Some(warning) = &github_warning {
+                eprintln!("[orchestrator] {warning}");
+            }
             let registry = provider_registry(sink.clone());
             let (connections, connection_warnings) = match ConnectionManager::open(
                 &data_dir.join("connections.json"),
@@ -305,6 +324,7 @@ pub fn run() {
                 agents_warning,
                 autonomy,
                 autonomy_warning,
+                github_warning,
                 sink,
                 data_dir,
             });
@@ -385,6 +405,10 @@ pub fn run() {
             autonomy_commands::autonomy_revoke,
             autonomy_commands::execution_pause,
             autonomy_commands::execution_resume,
+            github_commands::github_settings_get,
+            github_commands::github_settings_save,
+            github_commands::github_token_save,
+            github_commands::github_token_clear,
             task_commands::tasks_list,
             task_commands::task_get,
             task_commands::task_save,

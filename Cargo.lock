@@ -2743,6 +2743,7 @@ dependencies = [
  "orchestrator-agents",
  "orchestrator-core",
  "orchestrator-engine",
+ "orchestrator-git",
  "orchestrator-memory",
  "orchestrator-provider-api",
  "orchestrator-providers",
