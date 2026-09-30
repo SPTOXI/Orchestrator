@@ -51,7 +51,9 @@ export function GitHubView({ active, ready, repo, onChanged }: Props) {
       setSetup(await work());
       const nextStatus = await githubApi.status(repo);
       setStatus(nextStatus);
-      setNotice(nextStatus.authenticated ? `${done} Conectado como @${nextStatus.account?.login}.` : done);
+      if (nextStatus.authenticated) setNotice(`${done} Conectado como @${nextStatus.account?.login}.`);
+      else if (label === "token") setError(`${done} Mas: ${nextStatus.accountError ?? "o GitHub não aceitou."}`);
+      else setNotice(done);
       onChanged();
     } catch (e) {
       setError(errorMessage(e));

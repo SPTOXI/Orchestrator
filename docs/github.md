@@ -62,7 +62,7 @@ remoto de outro host (GitLab, pasta local) não é GitHub.
 | ---------- | ---- | --- |
 | `git.remotes` | consulta | remotos, com o repositório do GitHub que cada um é |
 | `git.fetch` | ação | `git fetch [--prune] [remoto]`: referências remotas, sem tocar nos arquivos |
-| `github.status` | consulta | conta, fonte do token, repositório, branch (↑↓), PR aberto da branch e a CI dele; problemas vão em `accountError`/`repoError` |
+| `github.status` | consulta | conta, fonte do token, repositório, branch (↑↓), o PR mais recente da branch (aberto, integrado ou fechado) e a CI dele; problemas vão em `accountError`/`repoError` |
 | `github.pr.list` | consulta | PRs (`state`, `head`, `base`, `limit`) |
 | `github.pr.get` | consulta | um PR: descrição, `mergeable`/`mergeableState`, CI do último commit, a última revisão decisiva de cada revisor, os 20 comentários mais recentes |
 | `github.checks` | consulta | CI de um commit/branch/tag (padrão: a branch atual como está no GitHub) |
@@ -139,9 +139,10 @@ Os três entram na busca do projeto (L3). Comentários ficam só no
 ## UI
 
 - **Painel GIT:** botão **Fetch**; seção **GitHub** com o repositório (abre
-  no navegador), a conta, o PR da branch atual com a CI (✓ ✗ ●), "Criar
-  pull request" (com o aviso quando a branch não está no GitHub), os PRs e
-  as issues abertos. Sem token: "Conectar ao GitHub".
+  no navegador), a conta, o PR da branch atual com a CI (✓ ✗ ●) — ou o
+  último, marcado "integrado"/"fechado" —, "Criar pull request" (com o
+  aviso quando a branch não está no GitHub), os PRs e as issues abertos.
+  Sem token: "Conectar ao GitHub".
 - **Aba do PR:** título, estado, `head → base`, commits e arquivos,
   descrição, CI com "detalhes", revisões, comentários e caixa para
   comentar, merge (método, apagar a branch, confirmação e o motivo quando

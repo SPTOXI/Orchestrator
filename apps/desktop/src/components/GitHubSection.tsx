@@ -4,7 +4,7 @@
 // the branch moves and when the user presses "Atualizar"; nothing polls.
 
 import { useCallback, useEffect, useState } from "react";
-import { CHECK_LABELS, CHECK_MARKS, pushState } from "../lib/github";
+import { CHECK_LABELS, CHECK_MARKS, PULL_STATE_LABELS, pushState } from "../lib/github";
 import { errorMessage, githubApi } from "../lib/runtime";
 import type { GitHubStatus, IssueSummary, PullSummary } from "../lib/types";
 import { RefreshIcon } from "./icons";
@@ -99,10 +99,17 @@ export function GitHubSection({ repo, branchKey, onOpenPull, onOpenSetup }: Prop
               >
                 <span className="mono">#{status.pull.number}</span>
                 <span className="grow ellipsis">{status.pull.title}</span>
-                {checks && <span className={`check-mark ${checks.state}`}>{CHECK_MARKS[checks.state]}</span>}
+                {status.pull.state !== "open" ? (
+                  <span className={`pr-state ${status.pull.state}`}>{PULL_STATE_LABELS[status.pull.state]}</span>
+                ) : (
+                  checks && <span className={`check-mark ${checks.state}`}>{CHECK_MARKS[checks.state]}</span>
+                )}
               </button>
             )}
-            {status.repo && !status.pull && status.branch && status.branch !== status.repo.defaultBranch && (
+            {status.repo &&
+              status.pull?.state !== "open" &&
+              status.branch &&
+              status.branch !== status.repo.defaultBranch && (
               <>
                 <button className="button small primary" onClick={() => onOpenPull(null)}>
                   Criar pull request

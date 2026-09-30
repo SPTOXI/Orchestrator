@@ -187,7 +187,7 @@ pub const CATALOG: &[ToolSpec] = &[
     query(
         "github.status",
         "github",
-        "GitHub account, repository of the project and the open pull request of the current branch with its CI: { path?, repo? } -> { authenticated, tokenSource, account, repo, branch, ahead, behind, pull, checks, *Error }.",
+        "GitHub account, repository of the project and the latest pull request of the current branch with its CI: { path?, repo? } -> { authenticated, tokenSource, account, repo, branch, ahead, behind, pull, checks, *Error }.",
     ),
     query(
         "github.pr.list",

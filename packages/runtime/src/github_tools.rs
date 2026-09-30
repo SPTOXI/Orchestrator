@@ -321,7 +321,8 @@ pub struct StatusOutput {
     pub upstream: Option<String>,
     pub ahead: u32,
     pub behind: u32,
-    /// Open pull request of the current branch.
+    /// Most recent pull request of the current branch (open, merged or
+    /// closed).
     pub pull: Option<PullSummary>,
     /// CI of that pull request.
     pub checks: Option<Checks>,
@@ -702,8 +703,10 @@ impl ToolRuntime {
             }
         }
         if let Some(head) = target.status.as_ref().and_then(pushed_branch) {
+            // The most recent pull request of the branch, open or not: after
+            // a merge the section says so instead of offering a new one.
             let filter = PullFilter {
-                state: Some("open".into()),
+                state: Some("all".into()),
                 head: Some(head_for(&target, &head)),
                 base: None,
                 limit: Some(1),
