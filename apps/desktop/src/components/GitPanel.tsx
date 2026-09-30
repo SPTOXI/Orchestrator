@@ -1,10 +1,12 @@
-// GIT panel: branch, changes, commit, pull/push and recent commits.
+// GIT panel: branch, changes, commit, fetch/pull/push, recent commits and
+// the GitHub section (ADR-0017).
 
 import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useState } from "react";
 import { formatTime } from "../lib/format";
 import { errorMessage, gitApi } from "../lib/runtime";
 import type { ChangeKind, FileChange, GitBranch, GitCommit } from "../lib/types";
 import type { GitState } from "../lib/useGitStatus";
+import { GitHubSection } from "./GitHubSection";
 import { PlusIcon, RefreshIcon } from "./icons";
 
 const LETTER: Record<ChangeKind, string> = {
@@ -35,6 +37,11 @@ interface Props {
   git: GitState;
   onOpenDiff: (file: string, staged: boolean) => void;
   onOpenFile: (absolutePath: string) => void;
+  /** A pull request tab; `null` is the form of a new one (ADR-0017). */
+  onOpenPull: (number: number | null) => void;
+  onOpenGitHub: () => void;
+  /** Changes after a GitHub action elsewhere, so the section asks again. */
+  githubNonce: number;
 }
 
 function joinRepo(root: string, file: string): string {
@@ -42,7 +49,16 @@ function joinRepo(root: string, file: string): string {
   return `${root.replace(/[\\/]+$/, "")}${sep}${sep === "\\" ? file.replace(/\//g, "\\") : file}`;
 }
 
-export function GitPanel({ ready, projectPath, git, onOpenDiff, onOpenFile }: Props) {
+export function GitPanel({
+  ready,
+  projectPath,
+  git,
+  onOpenDiff,
+  onOpenFile,
+  onOpenPull,
+  onOpenGitHub,
+  githubNonce,
+}: Props) {
   const { status, notRepo, error: statusError, refresh } = git;
   const [message, setMessage] = useState("");
   const [amend, setAmend] = useState(false);
@@ -263,6 +279,14 @@ export function GitPanel({ ready, projectPath, git, onOpenDiff, onOpenFile }: Pr
           )}
         </div>
         <div className="row tight">
+          <button
+            className="button small"
+            disabled={busy !== null || !firstRemote}
+            title="Atualizar as referências remotas sem mexer nos arquivos (git fetch --prune)"
+            onClick={() => void run("fetch", () => gitApi.fetch({ path: repo }), "Fetch concluído.")}
+          >
+            Fetch
+          </button>
           <button className="button small" disabled={busy !== null || !status?.upstream} onClick={() => void run("pull", () => gitApi.pull({ path: repo }), "Pull concluído.")}>
             ↓ Pull
           </button>
@@ -306,6 +330,14 @@ export function GitPanel({ ready, projectPath, git, onOpenDiff, onOpenFile }: Pr
       {notice && <div className="inline-notice ok">{notice}</div>}
 
       <div className="scroll">
+        {status && (
+          <GitHubSection
+            repo={repo}
+            branchKey={`${branch}|${status.upstream}|${status.ahead}|${head}|${githubNonce}`}
+            onOpenPull={onOpenPull}
+            onOpenSetup={onOpenGitHub}
+          />
+        )}
         {conflicts.length > 0 && (
           <>
             <div className="section-title">Conflitos ({conflicts.length})</div>

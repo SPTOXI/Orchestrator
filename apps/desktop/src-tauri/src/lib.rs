@@ -409,6 +409,7 @@ pub fn run() {
             github_commands::github_settings_save,
             github_commands::github_token_save,
             github_commands::github_token_clear,
+            github_commands::open_url,
             task_commands::tasks_list,
             task_commands::task_get,
             task_commands::task_save,

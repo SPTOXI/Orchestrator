@@ -2730,3 +2730,120 @@ input.narrow {
   color: var(--text-dim);
   font-style: italic;
 }
+
+/* GitHub (ADR-0017): the section of the GIT panel, the pull request tab
+   and the connection tab. */
+.github-section {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+  margin-bottom: 4px;
+}
+
+.github-pull {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.github-pull:hover {
+  border-color: var(--accent);
+}
+
+.github-pull.check-failure {
+  border-left: 3px solid var(--err);
+}
+
+.github-pull.check-success {
+  border-left: 3px solid var(--ok);
+}
+
+.github-pull.check-pending {
+  border-left: 3px solid var(--warn);
+}
+
+.check-mark {
+  font-weight: 600;
+}
+
+.check-mark.success {
+  color: var(--ok);
+}
+
+.check-mark.failure {
+  color: var(--err);
+}
+
+.check-mark.pending {
+  color: var(--warn);
+}
+
+.check-mark.none {
+  color: var(--text-dim);
+}
+
+.pr-state {
+  color: var(--text-dim);
+}
+
+.pr-state.open {
+  color: var(--ok);
+}
+
+.pr-state.merged {
+  color: #a371f7;
+}
+
+.pr-state.closed {
+  color: var(--err);
+}
+
+.pr-title {
+  margin: 0 0 4px;
+  font-size: 16px;
+}
+
+.pr-body,
+.pr-comment {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12.5px;
+  margin-top: 6px;
+}
+
+.pr-body {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev);
+}
+
+.review-state {
+  color: var(--text-dim);
+}
+
+.review-state.approved {
+  color: var(--ok);
+}
+
+.review-state.changes_requested {
+  color: var(--err);
+}
+
+.pr-view textarea,
+.github-view textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.pr-view h3 .check-mark {
+  font-size: 13px;
+}

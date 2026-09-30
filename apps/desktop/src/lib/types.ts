@@ -97,7 +97,10 @@ export type EventKind =
   | "APPROVAL_REQUESTED"
   | "APPROVAL_DECIDED"
   | "EXECUTION_PAUSED"
-  | "EXECUTION_RESUMED";
+  | "EXECUTION_RESUMED"
+  | "GITHUB_PR_CREATED"
+  | "GITHUB_PR_MERGED"
+  | "GITHUB_ISSUE_CREATED";
 
 export interface AuditEvent {
   id: string;
@@ -1376,4 +1379,146 @@ export interface Trial {
   targets: TrialTarget[];
   opaque: boolean;
   unknownTool: boolean;
+}
+
+/** GitHub (ADR-0017). */
+export interface GitHubAccount {
+  login: string;
+  name: string | null;
+  url: string;
+  scopes: string[];
+}
+
+export interface GitHubRepoRef {
+  host: string;
+  owner: string;
+  name: string;
+}
+
+export interface GitHubRepo {
+  owner: string;
+  name: string;
+  fullName: string;
+  url: string;
+  defaultBranch: string;
+  private: boolean;
+  description: string | null;
+}
+
+export type CheckState = "success" | "failure" | "pending" | "none";
+
+export interface CheckItem {
+  name: string;
+  state: "success" | "failure" | "pending" | "skipped";
+  kind: "check" | "status";
+  url: string | null;
+  description: string | null;
+}
+
+export interface Checks {
+  state: CheckState;
+  total: number;
+  passed: number;
+  failed: number;
+  pending: number;
+  items: CheckItem[];
+}
+
+export interface PullSummary {
+  number: number;
+  title: string;
+  state: "open" | "closed" | "merged";
+  draft: boolean;
+  author: string;
+  head: string;
+  headSha: string;
+  base: string;
+  url: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PullReview {
+  author: string;
+  state: "approved" | "changes_requested" | "commented" | "dismissed";
+  body: string;
+  submittedAt: string | null;
+}
+
+export interface GitHubComment {
+  author: string;
+  body: string;
+  url: string;
+  createdAt: string;
+}
+
+export interface PullDetail extends PullSummary {
+  body: string;
+  merged: boolean;
+  mergedAt: string | null;
+  mergeable: boolean | null;
+  mergeableState: string | null;
+  commits: number;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  checks: Checks;
+  reviews: PullReview[];
+  comments: GitHubComment[];
+}
+
+export interface MergeResult {
+  number: number;
+  title: string;
+  url: string;
+  merged: boolean;
+  sha: string;
+  message: string;
+  branchDeleted: boolean;
+  branchError: string | null;
+}
+
+export interface IssueSummary {
+  number: number;
+  title: string;
+  state: "open" | "closed";
+  author: string;
+  labels: string[];
+  commentCount: number;
+  url: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GitHubStatus {
+  host: string;
+  apiUrl: string;
+  authenticated: boolean;
+  tokenSource: string | null;
+  account: GitHubAccount | null;
+  accountError: string | null;
+  repo: GitHubRepo | null;
+  repoRef: GitHubRepoRef | null;
+  remote: string | null;
+  repoError: string | null;
+  branch: string | null;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  pull: PullSummary | null;
+  checks: Checks | null;
+}
+
+export type MergeMethod = "merge" | "squash" | "rebase";
+
+/** What the GitHub tab shows about the connection (never the token). */
+export interface GitHubSetup {
+  host: string;
+  apiUrl: string | null;
+  apiBase: string;
+  vaultToken: boolean;
+  vault: string;
+  envToken: string | null;
+  ghInstalled: boolean;
+  warning: string | null;
 }

@@ -92,6 +92,14 @@ import type {
   AgentView,
   ApprovalAnswer,
   ApprovalView,
+  GitHubComment,
+  GitHubSetup,
+  GitHubStatus,
+  IssueSummary,
+  MergeMethod,
+  MergeResult,
+  PullDetail,
+  PullSummary,
   AutonomyMode,
   AutonomyOverview,
   PolicyRule,
@@ -228,6 +236,8 @@ export const gitApi = {
     callTool<GitCommitResult>("git.commit", args),
   pull: (args: RepoArgs & { remote?: string; branch?: string; mode?: "merge" | "rebase" | "ffOnly" } = {}) =>
     callTool<GitChangedOutput>("git.pull", args),
+  fetch: (args: RepoArgs & { remote?: string; prune?: boolean } = {}) =>
+    callTool<GitChangedOutput>("git.fetch", { prune: true, ...args }),
   push: (args: RepoArgs & { remote?: string; branch?: string; setUpstream?: boolean; force?: boolean } = {}) =>
     callTool<GitChangedOutput>("git.push", args),
   stash: (
@@ -372,6 +382,30 @@ export const agentApi = {
   /** Pause: the agent stops at its next tool call or turn (ADR-0016). */
   pause: (id: string) => callProvider<AgentView>("agent_pause", { id }),
   resume: (id: string) => callProvider<AgentView>("agent_resume", { id }),
+};
+
+/** GitHub (ADR-0017): tools through the runtime; settings and token
+ * through their own commands (the token never comes back). */
+export const githubApi = {
+  status: (path?: string) => callTool<GitHubStatus>("github.status", { path }),
+  pulls: (args: { path?: string; state?: "open" | "closed" | "all"; head?: string; limit?: number } = {}) =>
+    callTool<{ repo: string; pulls: PullSummary[] }>("github.pr.list", args),
+  pull: (number: number, path?: string) => callTool<PullDetail>("github.pr.get", { number, path }),
+  createPull: (args: { path?: string; title: string; body?: string; base?: string; draft?: boolean }) =>
+    callTool<PullSummary>("github.pr.create", args),
+  comment: (number: number, body: string, path?: string) =>
+    callTool<GitHubComment>("github.pr.comment", { number, body, path }),
+  merge: (args: { path?: string; number: number; method: MergeMethod; deleteBranch: boolean }) =>
+    callTool<MergeResult>("github.pr.merge", args),
+  issues: (args: { path?: string; limit?: number } = {}) =>
+    callTool<{ repo: string; issues: IssueSummary[] }>("github.issue.list", args),
+  setup: () => invoke<GitHubSetup>("github_settings_get"),
+  saveSettings: (settings: { host: string; apiUrl: string | null }) =>
+    invoke<GitHubSetup>("github_settings_save", { settings }),
+  saveToken: (token: string) => invoke<GitHubSetup>("github_token_save", { token }),
+  clearToken: () => invoke<GitHubSetup>("github_token_clear"),
+  /** Opens a page in the system browser. */
+  openUrl: (url: string) => invoke<void>("open_url", { url }),
 };
 
 /** Autonomy: modes, rules, requests for authorization and pause (ADR-0016). */

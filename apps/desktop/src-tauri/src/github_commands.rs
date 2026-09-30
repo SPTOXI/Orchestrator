@@ -165,6 +165,37 @@ pub fn github_token_clear(state: State<'_, AppState>) -> Result<GitHubSetup, Str
     Ok(setup(&state, None))
 }
 
+/// Opens a web page (a pull request, an issue, CI) in the system browser.
+/// Only `http(s)` URLs: this is the user's click, not a way to run things.
+#[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    let url = url.trim();
+    if !(url.starts_with("https://") || url.starts_with("http://"))
+        || url.contains(char::is_whitespace)
+    {
+        return Err(format!("endereço inválido: {url}"));
+    }
+    let mut cmd = if cfg!(target_os = "windows") {
+        let mut cmd = std::process::Command::new("rundll32");
+        cmd.args(["url.dll,FileProtocolHandler", url]);
+        cmd
+    } else if cfg!(target_os = "macos") {
+        let mut cmd = std::process::Command::new("open");
+        cmd.arg(url);
+        cmd
+    } else {
+        let mut cmd = std::process::Command::new("xdg-open");
+        cmd.arg(url);
+        cmd
+    };
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("não foi possível abrir o navegador: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

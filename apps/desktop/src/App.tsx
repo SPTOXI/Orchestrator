@@ -29,6 +29,8 @@ import { AgentsPanel } from "./components/AgentsPanel";
 import { BoardView } from "./components/BoardView";
 import { ApprovalBar } from "./components/ApprovalBar";
 import { AutonomyView } from "./components/AutonomyView";
+import { GitHubView } from "./components/GitHubView";
+import { PullRequestView } from "./components/PullRequestView";
 import { ProcessesPanel } from "./components/ProcessesPanel";
 import { ProfileView } from "./components/ProfileView";
 import { ProjectPanel, RecentList } from "./components/ProjectPanel";
@@ -78,7 +80,11 @@ type Tab =
   /** Agent Board: the tasks of the project in columns (ADR-0015). */
   | { id: "board"; kind: "board" }
   /** Mode, requests, rules and pause (ADR-0016). */
-  | { id: "autonomy"; kind: "autonomy" };
+  | { id: "autonomy"; kind: "autonomy" }
+  /** A pull request; `number` null is the form of a new one (ADR-0017). */
+  | { id: string; kind: "pr"; number: number | null; nonce: number }
+  /** GitHub connection: token and server (ADR-0017). */
+  | { id: "github"; kind: "github" };
 
 const ACTIVITIES: Array<{ id: PanelId; label: string; icon: () => ReactNode }> = [
   { id: "project", label: "PROJECT", icon: FolderIcon },
@@ -138,6 +144,10 @@ function tabTitle(tab: Tab, sessions: Map<string, SessionInfo>, connections: Con
       return "Agent Board";
     case "autonomy":
       return "Autonomia";
+    case "pr":
+      return tab.number === null ? "Novo pull request" : `PR #${tab.number}`;
+    case "github":
+      return "GitHub";
     case "connection":
       if (!tab.connectionId) return "Nova API";
       return `API · ${connections?.connections.find((c) => c.connection.id === tab.connectionId)?.connection.name ?? tab.connectionId}`;
@@ -171,6 +181,8 @@ export function App() {
   const tasks = useTasks(ready, projectId);
   const agents = useAgents(ready, projectId);
   const autonomy = useAutonomy(ready, projectId);
+  /** Changes after a GitHub action, so the GIT panel asks GitHub again. */
+  const [githubNonce, setGithubNonce] = useState(0);
   /** Tool calls waiting for the user, so a transcript can say so. */
   const waitingCalls = useMemo(
     () => new Set(autonomy.pending.map((request) => request.callId)),
@@ -283,6 +295,10 @@ export function App() {
   const openBoard = () => showTab({ id: "board", kind: "board" });
   /** The autonomy tab is a single tab (ADR-0016). */
   const openAutonomy = () => showTab({ id: "autonomy", kind: "autonomy" });
+  /** One tab per pull request; the new-PR form has its own (ADR-0017). */
+  const openPull = (number: number | null) =>
+    showTab({ id: number === null ? "pr:new" : `pr:${number}`, kind: "pr", number, nonce: Date.now() });
+  const openGitHub = () => showTab({ id: "github", kind: "github" });
   const pauseAgent = async (id: string, paused: boolean) => {
     if (paused) await agentApi.resume(id);
     else await agentApi.pause(id);
@@ -484,6 +500,9 @@ export function App() {
             git={git}
             onOpenDiff={openDiff}
             onOpenFile={openFile}
+            onOpenPull={openPull}
+            onOpenGitHub={openGitHub}
+            githubNonce={githubNonce}
           />
         );
       case "memory":
@@ -746,6 +765,36 @@ export function App() {
                       onOpenSession={openSession}
                       onPause={(id) => void pauseAgent(id, false)}
                       onResume={(id) => void pauseAgent(id, true)}
+                    />
+                  );
+                case "pr":
+                  return (
+                    <PullRequestView
+                      key={tab.id}
+                      active={active}
+                      ready={ready}
+                      repo={profile?.path ?? undefined}
+                      number={tab.number}
+                      nonce={tab.nonce}
+                      tasks={tasks.list}
+                      onCreated={(number) => {
+                        closeTab(tab.id);
+                        openPull(number);
+                      }}
+                      onChanged={() => {
+                        setGithubNonce(Date.now());
+                        git.refresh();
+                      }}
+                    />
+                  );
+                case "github":
+                  return (
+                    <GitHubView
+                      key={tab.id}
+                      active={active}
+                      ready={ready}
+                      repo={profile?.path ?? undefined}
+                      onChanged={() => setGithubNonce(Date.now())}
                     />
                   );
                 case "autonomy":

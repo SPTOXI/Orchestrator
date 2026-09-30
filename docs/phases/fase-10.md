@@ -22,7 +22,7 @@ próximo passo é o primeiro sem ✅.
 5. ✅ Motor: regra padrão do Autônomo para `github.*` e resumo dos pedidos;
    testes.
 6. ✅ Desktop: `github.json`, token no cofre, comandos, ligação com o runtime.
-7. UI: seção GitHub no painel GIT, aba do PR (detalhes e novo PR), aba
+7. ✅ UI: seção GitHub no painel GIT, aba do PR (detalhes e novo PR), aba
    GitHub (conexão), filtros do HISTORY; testes do frontend.
 8. Validação no app real com uma API do GitHub simulada; relatório final
    neste arquivo; README, ARCHITECTURE e docs; PR #1 e CI.

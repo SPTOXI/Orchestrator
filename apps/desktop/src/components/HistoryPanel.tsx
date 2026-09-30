@@ -71,6 +71,9 @@ const KIND_FILTERS: Array<{ value: EventKind | ""; label: string }> = [
   { value: "APPROVAL_DECIDED", label: "APPROVAL_DECIDED" },
   { value: "EXECUTION_PAUSED", label: "EXECUTION_PAUSED" },
   { value: "EXECUTION_RESUMED", label: "EXECUTION_RESUMED" },
+  { value: "GITHUB_PR_CREATED", label: "GITHUB_PR_CREATED" },
+  { value: "GITHUB_PR_MERGED", label: "GITHUB_PR_MERGED" },
+  { value: "GITHUB_ISSUE_CREATED", label: "GITHUB_ISSUE_CREATED" },
 ];
 
 const PAGE = 500;
