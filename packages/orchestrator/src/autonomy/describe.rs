@@ -51,6 +51,20 @@ fn quoted(text: &str) -> String {
 }
 
 /// One line: "Executar `npm test`", "Escrever src/app.ts (2,1 KB)".
+/// ` em dono/nome` when the call names the repository (ADR-0017).
+fn github_repo(call: &ToolCall) -> String {
+    arg(call, "repo")
+        .map(|r| format!(" em {r}"))
+        .unwrap_or_default()
+}
+
+fn number(call: &ToolCall) -> String {
+    call.args
+        .get("number")
+        .and_then(Value::as_u64)
+        .map_or_else(|| "?".to_owned(), |n| n.to_string())
+}
+
 pub fn summary(call: &ToolCall) -> String {
     let path = arg(call, "path").unwrap_or(".");
     match call.tool.as_str() {
@@ -109,6 +123,55 @@ pub fn summary(call: &ToolCall) -> String {
             }
         }
         "git.pull" => "Trazer do remoto (git pull)".to_owned(),
+        "git.fetch" => match arg(call, "remote") {
+            Some(remote) => format!("Buscar do remoto {remote} (git fetch)"),
+            None => "Buscar do remoto (git fetch)".to_owned(),
+        },
+        "github.pr.create" => {
+            format!(
+                "Abrir o pull request \"{}\"{}{}",
+                line(arg(call, "title").unwrap_or(""), 100),
+                match (arg(call, "head"), arg(call, "base")) {
+                    (Some(head), Some(base)) => format!(" ({head} → {base})"),
+                    (None, Some(base)) => format!(" (→ {base})"),
+                    (Some(head), None) => format!(" ({head} →)"),
+                    (None, None) => String::new(),
+                },
+                github_repo(call)
+            ) + if flag(call, "draft") {
+                " como rascunho"
+            } else {
+                ""
+            }
+        }
+        "github.pr.merge" => format!(
+            "Fazer merge ({}) do PR #{}{}{}",
+            arg(call, "method").unwrap_or("merge"),
+            number(call),
+            github_repo(call),
+            if flag(call, "deleteBranch") {
+                " e apagar a branch"
+            } else {
+                ""
+            }
+        ),
+        "github.pr.comment" => format!(
+            "Comentar no PR #{}{}: \"{}\"",
+            number(call),
+            github_repo(call),
+            line(arg(call, "body").unwrap_or(""), 80)
+        ),
+        "github.issue.create" => format!(
+            "Abrir a issue \"{}\"{}",
+            line(arg(call, "title").unwrap_or(""), 100),
+            github_repo(call)
+        ),
+        "github.issue.comment" => format!(
+            "Comentar na issue #{}{}: \"{}\"",
+            number(call),
+            github_repo(call),
+            line(arg(call, "body").unwrap_or(""), 80)
+        ),
         "git.checkout" => format!("Trocar para {}", arg(call, "target").unwrap_or("?")),
         "git.branch" => match (arg(call, "create"), arg(call, "delete")) {
             (Some(name), _) => format!("Criar a branch {name}"),
@@ -220,6 +283,32 @@ mod tests {
             "Criar um subagente: Testes"
         );
         assert_eq!(summary(&call("x.y", json!({}))), "x.y");
+        // GitHub (ADR-0017).
+        assert_eq!(
+            summary(&call(
+                "github.pr.create",
+                json!({"title": "Retentativas", "base": "main", "draft": true})
+            )),
+            "Abrir o pull request \"Retentativas\" (→ main) como rascunho"
+        );
+        assert_eq!(
+            summary(&call(
+                "github.pr.merge",
+                json!({"number": 12, "method": "squash", "repo": "time/app", "deleteBranch": true})
+            )),
+            "Fazer merge (squash) do PR #12 em time/app e apagar a branch"
+        );
+        assert_eq!(
+            summary(&call(
+                "github.issue.comment",
+                json!({"number": 3, "body": "Resolvido\nem main"})
+            )),
+            "Comentar na issue #3: \"Resolvido em main\""
+        );
+        assert_eq!(
+            summary(&call("git.fetch", json!({}))),
+            "Buscar do remoto (git fetch)"
+        );
     }
 
     #[test]

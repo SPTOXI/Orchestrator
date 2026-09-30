@@ -81,6 +81,9 @@ pub fn default_rules() -> Vec<PolicyRule> {
             .with_note("envia para o remoto"),
         PolicyRule::tools(&["terminal.write"], Decision::Ask)
             .with_note("o que se digita num terminal não se analisa inteiro"),
+        PolicyRule::tools(&["github.*"], Decision::Ask)
+            .with_access(RuleAccess::Write)
+            .with_note("publica no GitHub em nome da sua conta"),
         PolicyRule::tools(&[], Decision::Allow).with_note("o resto o agente faz sozinho"),
     ]
 }
@@ -905,6 +908,23 @@ mod tests {
             decide("agent.delegate", false, json!({"title": "x"})),
             Decision::Allow
         );
+        // GitHub (ADR-0017): reading is routine, publishing asks.
+        assert_eq!(decide("github.pr.list", true, json!({})), Decision::Allow);
+        assert_eq!(decide("github.checks", true, json!({})), Decision::Allow);
+        let create = evaluate(
+            &rules,
+            "github.pr.create",
+            false,
+            &json!({"title": "x"}),
+            &scope,
+        );
+        // Index 10: "regra 11" on screen.
+        assert_eq!((create.decision, create.rule), (Decision::Ask, Some(10)));
+        assert_eq!(
+            decide("github.pr.merge", false, json!({"number": 3})),
+            Decision::Ask
+        );
+        assert_eq!(decide("git.fetch", false, json!({})), Decision::Allow);
     }
 
     #[test]

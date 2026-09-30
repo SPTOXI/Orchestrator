@@ -19,7 +19,7 @@ próximo passo é o primeiro sem ✅.
    HTTP falso.
 4. ✅ Runtime: `github.*` e `git.fetch`/`git.remotes` no catálogo, schemas,
    eventos; testes.
-5. Motor: regra padrão do Autônomo para `github.*` e resumo dos pedidos;
+5. ✅ Motor: regra padrão do Autônomo para `github.*` e resumo dos pedidos;
    testes.
 6. Desktop: `github.json`, token no cofre, comandos, ligação com o runtime.
 7. UI: seção GitHub no painel GIT, aba do PR (detalhes e novo PR), aba
