@@ -86,7 +86,8 @@ pub(crate) fn index_message(
     )
 }
 
-/// Events worth finding later: commits, commands and failures.
+/// Events worth finding later: commits, commands, pull requests and issues
+/// (ADR-0017), and failures.
 pub(crate) fn index_event(
     conn: &Connection,
     event: &AuditEvent,
@@ -96,6 +97,14 @@ pub(crate) fn index_event(
     let detail = match event.kind {
         EventKind::GitCommit | EventKind::GitPush | EventKind::CommandExecuted => {
             Some(String::new())
+        }
+        EventKind::GithubPrCreated | EventKind::GithubPrMerged | EventKind::GithubIssueCreated => {
+            Some(
+                data.get("url")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            )
         }
         EventKind::ToolCalled if data.get("ok") == Some(&Value::Bool(false)) => Some(
             data.pointer("/error/message")

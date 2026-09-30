@@ -84,6 +84,12 @@ pub enum EventKind {
     ExecutionPaused,
     /// The AIs, or one agent, were resumed (ADR-0016).
     ExecutionResumed,
+    /// A pull request was opened on GitHub (ADR-0017).
+    GithubPrCreated,
+    /// A pull request was merged on GitHub (ADR-0017).
+    GithubPrMerged,
+    /// An issue was opened on GitHub (ADR-0017).
+    GithubIssueCreated,
 }
 
 /// A durable, provider-independent history entry.
