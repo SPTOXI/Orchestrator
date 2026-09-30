@@ -14,7 +14,7 @@ próximo passo é o primeiro sem ✅.
 1. ✅ ADR-0017 e este arquivo.
 2. ✅ Core: eventos `GITHUB_PR_CREATED`, `GITHUB_PR_MERGED`,
    `GITHUB_ISSUE_CREATED` (e indexados na busca do projeto).
-3. `orchestrator-git`, módulo `github`: remotos → repositório, token
+3. ✅ `orchestrator-git`, módulo `github`: remotos → repositório, token
    (cofre/ambiente/`gh`), cliente REST, tipos, erros; testes com servidor
    HTTP falso.
 4. Runtime: `github.*` e `git.fetch`/`git.remotes` no catálogo, schemas,

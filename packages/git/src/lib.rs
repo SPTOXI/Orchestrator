@@ -8,7 +8,10 @@
 //! instead of waiting for a terminal that does not exist) and
 //! `core.quotepath=false`; queries also set `GIT_OPTIONAL_LOCKS=0` so a
 //! background status never competes with the user for `index.lock`.
+//!
+//! The [`github`] module talks to GitHub over its REST API (ADR-0017).
 
+pub mod github;
 pub mod parse;
 pub mod types;
 

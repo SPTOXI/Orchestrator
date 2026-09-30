@@ -2782,9 +2782,14 @@ dependencies = [
 name = "orchestrator-git"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "parking_lot",
+ "reqwest 0.12.28",
  "schemars 1.2.2",
  "serde",
+ "serde_json",
  "tempfile",
+ "tokio",
  "which",
 ]
 
