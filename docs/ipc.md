@@ -157,6 +157,30 @@ as escritas têm origem `user`. Referência: [`tasks.md`](./tasks.md).
 `TaskView` é a task mais o que o motor calcula: `waitingFor`, `subtasks` e
 `can` (os estados válidos agora) — a UI só oferece o que o motor aceitaria.
 
+### Agentes (Fase 8b, ADR-0015)
+
+O Agent Manager e as travas de arquivo. Referência:
+[`agents.md`](./agents.md).
+
+| Comando | Argumentos | Retorno | Histórico |
+| ------- | ---------- | ------- | --------- |
+| `agents_list` | `projectId?` (padrão: o projeto aberto) | `AgentView[]`, em ordem do painel | — |
+| `agent_get` | `id` | `AgentView \| null` | — |
+| `agent_start` | `request: { taskId, provider?, model?, maxTurns? }` | `Agent` em `QUEUED`; recusa task encerrada, bloqueada, não liberada ou que já tem agente | `AGENT_STARTED` quando ele começa |
+| `agent_stop` | `id` | `Agent` | `AGENT_FINISHED` |
+| `agents_stop_all` | `projectId?` | quantos foram parados | `AGENT_FINISHED` de cada um |
+| `agent_locks` | `projectId?` | `FileLock[]` (arquivos em uso agora) | — |
+| `agent_settings_get` | — | `AgentSettings` | — |
+| `agent_settings_save` | `settings` | `AgentSettings`; recusa fora da faixa | — |
+
+`AgentView` é o agente mais o que o serviço calcula: `waiting` (por que
+está na fila), `taskTitle` e `taskStatus`.
+
+As IAs conduzidas por um agente recebem duas ferramentas a mais,
+`agent.finish` e `agent.delegate`, pelo mesmo caminho auditado das outras
+(`TOOL_CALLED`). Escritas em arquivo travado por outro agente voltam como
+`ok: false` com `kind: "LOCKED"`.
+
 ## Eventos
 
 | Evento | Payload | Uso |
@@ -211,6 +235,9 @@ entrada "Stack" da memória) seguem o mesmo caminho
   deliberações do Conselho e handoffs também ficam no banco.
 - A configuração do contexto fica em `<app-data>/context.json`.
 - As tasks do projeto ficam no banco (migração 3, ADR-0014).
+- Agentes e as travas de arquivo ficam no banco (migração 4, ADR-0015), e a
+  configuração deles em `<app-data>/agents.json`. Ao abrir o app, agentes
+  que ficaram em execução são encerrados e as travas, liberadas.
 - Se o arquivo não abrir, o app usa um banco em memória e avisa
   (`app_info.databaseWarning`, na barra de status; o rodapé do HISTORY
   mostra `banco: (memória)`).

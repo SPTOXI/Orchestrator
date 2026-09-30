@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "packages/agents",
     "packages/core",
     "packages/git",
     "packages/memory",
@@ -19,6 +20,7 @@ rust-version = "1.90"
 publish = false
 
 [workspace.dependencies]
+orchestrator-agents = { path = "packages/agents" }
 orchestrator-core = { path = "packages/core" }
 orchestrator-engine = { path = "packages/orchestrator" }
 orchestrator-git = { path = "packages/git" }

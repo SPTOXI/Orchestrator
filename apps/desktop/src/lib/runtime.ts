@@ -87,6 +87,11 @@ import type {
   TaskInput,
   TaskStatus,
   TaskView,
+  Agent,
+  AgentSettings,
+  AgentView,
+  FileLock,
+  StartAgent,
 } from "./types";
 
 /** True when running inside the Tauri desktop app (not a plain browser). */
@@ -341,6 +346,23 @@ export const taskApi = {
     callProvider<StartedTask>("task_start_session", { request }),
   /** What a session opened for this task would receive. */
   context: (id: string) => callProvider<ContextPack>("task_context", { id }),
+};
+
+/** Agents, their file locks and the limits around them (ADR-0015). */
+export const agentApi = {
+  /** Agents of a project (the open one by default), in board order. */
+  list: (projectId?: string) => callProvider<AgentView[]>("agents_list", { projectId }),
+  get: (id: string) => callProvider<AgentView | null>("agent_get", { id }),
+  /** Queues an agent for a task. */
+  start: (request: StartAgent) => callProvider<Agent>("agent_start", { request }),
+  stop: (id: string) => callProvider<Agent>("agent_stop", { id }),
+  /** Stop All Agents; returns how many were asked to stop. */
+  stopAll: (projectId?: string) => callProvider<number>("agents_stop_all", { projectId }),
+  /** Files held by agents right now. */
+  locks: (projectId?: string) => callProvider<FileLock[]>("agent_locks", { projectId }),
+  settings: () => callProvider<AgentSettings>("agent_settings_get"),
+  saveSettings: (settings: AgentSettings) =>
+    callProvider<AgentSettings>("agent_settings_save", { settings }),
 };
 
 /** History, projects and project memory in the local database (ADR-0012). */

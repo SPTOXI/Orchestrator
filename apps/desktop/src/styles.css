@@ -2377,3 +2377,72 @@ input.narrow {
 .task-deps .check {
   max-width: 100%;
 }
+
+/* Agents (ADR-0015): the panel lists who is working; the board shows the
+   project's work in columns (section 25 of the master document). */
+.agent-status {
+  color: var(--text-dim);
+}
+
+.agent-status.running {
+  color: var(--accent);
+}
+
+.agent-status.queued {
+  color: var(--warn);
+}
+
+.agent-status.done {
+  color: var(--ok);
+}
+
+.agent-status.failed,
+.agent-status.stopped {
+  color: var(--err);
+}
+
+.board-view .board {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  overflow: auto;
+  padding: 12px 16px;
+}
+
+.board-column {
+  flex: 1 1 0;
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.board-column h3 {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.board-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  cursor: pointer;
+  background: var(--bg-elev);
+}
+
+.board-card:hover {
+  border-color: var(--accent);
+}
+
+.board-agent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}

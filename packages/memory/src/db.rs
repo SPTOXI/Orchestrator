@@ -5,12 +5,12 @@ use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 
 /// Schema version this build writes.
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// Every migration, in order; `MIGRATIONS[n]` takes the schema from `n` to
-/// `n + 1`. Tables of later phases (tasks, agents, file locks…) come with
-/// their own migrations (ADR-0012).
-const MIGRATIONS: [&str; 3] = [
+/// `n + 1`. Tables of later phases come with their own migrations
+/// (ADR-0012).
+const MIGRATIONS: [&str; 4] = [
     r#"
 CREATE TABLE projects (
     id              TEXT PRIMARY KEY,
@@ -160,6 +160,36 @@ CREATE TABLE task_dependencies (
     PRIMARY KEY (task_id, depends_on)
 );
 CREATE INDEX task_dependencies_depends ON task_dependencies(depends_on);
+"#,
+    // 3 → 4 (ADR-0015): agents and the files they hold.
+    r#"
+CREATE TABLE agents (
+    id            TEXT PRIMARY KEY,
+    project_id    TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    task          TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    session       TEXT,
+    parent_agent  TEXT REFERENCES agents(id) ON DELETE SET NULL,
+    status        TEXT NOT NULL,        -- QUEUED, RUNNING, DONE, FAILED, STOPPED
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    data          TEXT NOT NULL         -- JSON Agent
+);
+CREATE INDEX agents_project ON agents(project_id, status, created_at);
+CREATE INDEX agents_task ON agents(task, created_at);
+CREATE INDEX agents_session ON agents(session);
+
+-- One owner per file: the key is what makes the lock exclusive. Taking a
+-- lock is an INSERT that either writes or names who already has it.
+CREATE TABLE file_locks (
+    project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    path        TEXT NOT NULL,
+    agent_id    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    task        TEXT NOT NULL,
+    at          TEXT NOT NULL,
+    data        TEXT NOT NULL,          -- JSON FileLock
+    PRIMARY KEY (project_id, path)
+);
+CREATE INDEX file_locks_agent ON file_locks(agent_id);
 "#,
 ];
 
@@ -330,6 +360,48 @@ mod tests {
             .query_row("SELECT count(*) FROM tasks", [], |r| r.get(0))
             .unwrap();
         assert_eq!((projects, tasks), (1, 0));
+    }
+
+    #[test]
+    fn upgrades_a_phase_8a_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("orchestrator.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(&format!(
+                "BEGIN;\n{}\n{}\n{}\nPRAGMA user_version = 3;\nCOMMIT;",
+                MIGRATIONS[0], MIGRATIONS[1], MIGRATIONS[2]
+            ))
+            .unwrap();
+            conn.execute(
+                "INSERT INTO projects (id, path, name, created_at, last_opened_at) VALUES ('p', '/x', 'x', 'a', 'a')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO tasks (id, project_id, status, priority, created_at, updated_at, data)
+                 VALUES ('t', 'p', 'TODO', 1, 'a', 'a', '{}')",
+                [],
+            )
+            .unwrap();
+        }
+        let db = Database::open(&path).unwrap();
+        let conn = db.conn.lock();
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+        // The tasks of Phase 8a are still there, now with agents beside them.
+        let tasks: i64 = conn
+            .query_row("SELECT count(*) FROM tasks", [], |r| r.get(0))
+            .unwrap();
+        let agents: i64 = conn
+            .query_row("SELECT count(*) FROM agents", [], |r| r.get(0))
+            .unwrap();
+        let locks: i64 = conn
+            .query_row("SELECT count(*) FROM file_locks", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!((tasks, agents, locks), (1, 0, 0));
     }
 
     #[test]

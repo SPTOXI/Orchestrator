@@ -26,7 +26,7 @@ Campos da seção 12 do documento mestre:
 | `status` | `TODO`, `IN_PROGRESS`, `BLOCKED`, `REVIEW`, `DONE`, `CANCELLED` |
 | `priority` | `LOW`, `NORMAL`, `HIGH`, `URGENT` |
 | `provider` / `model` | a IA escolhida (pelo usuário ou pelo roteador) |
-| `agent` | quem executa; vazio até a Fase 8b |
+| `agent` | quem executa; o Agent Manager (ADR-0015) põe o agente aqui |
 | `parentTask` | subtask de outra task |
 | `dependencies` | tasks que precisam terminar antes (até 20) |
 | `files` | caminhos relevantes (até 30) |
@@ -65,7 +65,10 @@ Campos da seção 12 do documento mestre:
 - **`IN_PROGRESS` exige task liberada:** todas as dependências em `DONE`.
   Tentar antes é recusado com o nome do que falta.
 - **`BLOCKED` é sempre do usuário**, para impedimento externo ("esperando
-  a chave da API"). Nada desbloqueia sozinho.
+  a chave da API"). Nada desbloqueia sozinho, e um agente não é posto numa
+  task bloqueada.
+- **`REVIEW` é onde um agente deixa a task** ao chamar `agent.finish`
+  (ADR-0015): quem marca `DONE` é o usuário.
 - **Reabrir** limpa `finishedAt`. Vindo de `IN_PROGRESS`, voltar para
   `TODO` é "voltar para a fila", não reabrir.
 
@@ -90,6 +93,9 @@ Campos da seção 12 do documento mestre:
   contexto, envia a task como primeira mensagem, guarda a sessão na task e
   a leva para `IN_PROGRESS`. Os arquivos da task entram em
   `RELEVANT FILES` por serem citados no texto.
+- **Agentes** ([agents.md](./agents.md)): "Executar com um agente" põe uma
+  IA para conduzir a task sozinha. Uma task aceita um agente vivo por vez, e
+  os arquivos dela são travados enquanto ele trabalha.
 - **Roteador** ([router.md](./router.md)): "Sugerir com o roteador"
   recomenda provider e modelo pelo texto da task, sem gastar tokens.
 - **Busca (L3)** ([memory.md](./memory.md)): as tasks entram no índice
@@ -129,8 +135,8 @@ abrir, sem perder nada.
 - **Aba da task:** título, descrição, prioridade, os botões dos estados
   válidos, arquivos, dependências, quem assume (com o roteador), as
   sessões e o resultado. "Ver contexto" mostra o que a IA receberia.
-- **Agent Board** (seção 25 do documento mestre) fica para a Fase 8b: sem
-  agentes, as colunas seriam as mesmas do painel.
+- **Agent Board** (seção 25 do documento mestre): as tasks em colunas, com
+  o agente de cada uma ([agents.md](./agents.md)).
 
 ## IPC
 
@@ -150,11 +156,10 @@ Ver também [ipc.md](./ipc.md#tasks-fase-8a-adr-0014).
 
 ## Limitações
 
-- **Execução é manual:** iniciar uma task abre uma sessão; quem conduz é o
-  usuário. Agente, fila e paralelismo são da Fase 8b.
-- **A task depende de quem a atualiza:** enquanto não há agente, um estado
-  desatualizado é um estado errado.
+- **Sem agente, a task depende de quem a atualiza:** abrir a sessão pela
+  task deixa a condução com o usuário, e um estado desatualizado é um
+  estado errado. Com agente, o estado anda sozinho (ADR-0015).
 - **Dependência protege só o começo:** ela impede iniciar cedo, não impede
-  mexer nos arquivos por fora. Coordenação de verdade é o File Lock
-  Manager da Fase 8b.
-- Sem quadro por agente, sem estimativa e sem prazo.
+  mexer nos arquivos por fora. Quem coordena arquivos é o File Lock
+  Manager, e só entre agentes.
+- Sem estimativa e sem prazo.

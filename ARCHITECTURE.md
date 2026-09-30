@@ -85,7 +85,8 @@ apenas apresentação.
 | Context Builder, Handoff, ferramentas de memória das IAs | `packages/orchestrator` (`orchestrator-engine`) | Rust | 7 | ✅ contexto por seções com orçamento de tokens, `HandoffPacket` com rascunho por fatos e pela IA, `memory.*`/`decision.*` para as IAs (ADR-0013) |
 | SQLite: tasks | `packages/memory` | Rust | 8a | ✅ migração 3: `tasks` e `task_dependencies` (ADR-0014) |
 | Task Manager | `packages/orchestrator` (`orchestrator-engine`) | Rust | 8a | ✅ tasks com estados, dependências, subtasks e prioridade; contexto e sessão a partir da task (ADR-0014) |
-| Agent Manager, Subagents, File Locks | `packages/orchestrator` + `packages/agents` | Rust | 8b | planejado |
+| SQLite: agentes e travas | `packages/memory` | Rust | 8b | ✅ migração 4: `agents` e `file_locks` (ADR-0015) |
+| Agent Manager, Subagents, File Locks | `packages/agents` | Rust | 8b | ✅ agentes executando tasks em paralelo, subagentes, travas por arquivo, handoff automático, Agent Board (ADR-0015) |
 | Autonomia (Assistido/Autônomo/Irrestrito) | `packages/orchestrator` | Rust | 9 | planejado |
 | GitHub | `packages/git` | Rust | 10 | planejado |
 | Otimização de tokens, cache, compactação, scheduling | `packages/orchestrator` | Rust | 11 | planejado |
@@ -237,6 +238,10 @@ a conter fora do gate explícito da Fase 9.
   `TASK_*` restantes já eram da seção 22).
 - `Task`, `TaskStatus`, `TaskPriority`, `TaskInput`, `TaskId` — contratos
   das tasks (Fase 8a).
+- `Agent`, `AgentStatus`, `AgentId`, `FileLock` — contratos dos agentes e
+  das travas de arquivo (Fase 8b, ADR-0015), e `ToolErrorKind::Locked` para
+  a escrita recusada por trava. `AGENT_STARTED` e `AGENT_FINISHED` já eram
+  da seção 22.
 - `HandoffPacket`, `Handoff`, `HandoffEnd`, `HandoffStatus`, `HandoffId`,
   `ContextSummary` e os eventos de sessão `contextAttached` e `handedOff`
   (Fase 7).
@@ -270,6 +275,7 @@ Detalhada em [`docs/ipc.md`](./docs/ipc.md) e
 | `context_preview`, `context_settings_get`, `context_settings_save` | prévia e configuração do contexto (Fase 7) |
 | `handoff_prepare`, `handoff_create`, `handoff_start`, `handoffs_list`, `handoff_get` | handoff entre IAs (Fase 7) |
 | `tasks_list`, `task_get`, `task_save`, `task_status`, `task_start_session`, `task_context` | tasks do projeto (Fase 8a) |
+| `agents_list`, `agent_get`, `agent_start`, `agent_stop`, `agents_stop_all`, `agent_locks`, `agent_settings_get`, `agent_settings_save` | agentes e travas de arquivo (Fase 8b) |
 
 | Evento Tauri | Payload |
 | ------------ | ------- |
@@ -295,9 +301,10 @@ projeto.
 | `search_index` | índice FTS5 da busca L3 |
 | `handoffs` | handoffs entre IAs, com o pacote (Fase 7, migração 2) |
 | `tasks`, `task_dependencies` | tasks do projeto e suas dependências (Fase 8a, migração 3) |
+| `agents`, `file_locks` | agentes e os arquivos que eles seguram enquanto trabalham (Fase 8b, migração 4) |
 
-As tabelas `agents`, `artifacts`, `file_locks` e `git_operations` entram com
-as migrações das Fases 8b–10. Configuração
+As tabelas `artifacts` e `git_operations` entram com as migrações das
+Fases 9–10. Configuração
 (`connections.json`, `council.json`, `context.json`) continua em arquivos, e
 segredos só no cofre do SO.
 
@@ -360,7 +367,29 @@ Implementado em `packages/orchestrator` e `packages/memory`
 - **A task alimenta o resto**: o Context Builder monta o contexto a partir
   dela (*task-scoped context*), o roteador sugere o modelo pelo texto dela
   e a busca L3 a encontra.
-- Agentes executando tasks, em paralelo e com File Locks, são a Fase 8b.
+## 8.2 Agentes e travas de arquivo (Fase 8b)
+
+Implementado em `packages/agents`
+([ADR-0015](./docs/adr/0015-agentes-subagentes-e-file-locks.md), referência
+em [`docs/agents.md`](./docs/agents.md)):
+
+- **Agente**: uma task, uma sessão e um desfecho (`QUEUED`, `RUNNING`,
+  `DONE`, `FAILED`, `STOPPED`). Ele abre a sessão da task, conduz os turnos
+  e encerra chamando `agent.finish`; o resultado vai para a task, que fica
+  **em revisão** — quem conclui é o usuário.
+- **Fila e paralelismo**: começa quando há vaga (`maxParallel`, padrão 2) e
+  os arquivos da task estão livres; o painel diz o que está no caminho.
+- **Subagentes**: `agent.delegate` cria uma subtask e enfileira um
+  subagente (profundidade 2, até 5 por agente).
+- **File Lock Manager**: um dono por arquivo, tomado ao iniciar e ao
+  escrever, solto quando o agente termina. Escrita em arquivo de outro
+  agente é recusada com `LOCKED` e o motivo; leitura nunca trava e o
+  usuário nunca é bloqueado.
+- **Parou no meio, sai handoff** montado pelos fatos da sessão, sem gastar
+  turno de IA.
+- **Controles** da seção 11: Parar e Parar todos. `Pause` e o gate de
+  autonomia são a Fase 9; até lá, o que limita um agente é o teto de turnos
+  (padrão 12), o teto de paralelismo e as travas.
 
 ## 9. Providers (Fases 3–7)
 

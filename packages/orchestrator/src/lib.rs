@@ -31,8 +31,8 @@ pub use handoff::{
 pub use persistence::StoreSessions;
 pub use settings::{ContextSettings, DEFAULT_BUDGET, MAX_BUDGET, MIN_BUDGET};
 pub use task::{
-    next_states, StartTaskSession, StartedTask, SubtaskProgress, TaskRef, TaskService, TaskView,
-    MAX_DEPENDENCIES, MAX_FILES, MAX_TEXT, MAX_TITLE,
+    as_task_text, next_states, OpenedTask, StartTaskSession, StartedTask, SubtaskProgress, TaskRef,
+    TaskService, TaskView, MAX_DEPENDENCIES, MAX_FILES, MAX_TEXT, MAX_TITLE,
 };
-pub use text::estimate_tokens;
+pub use text::{clip, estimate_tokens};
 pub use tools::{definitions as memory_tool_definitions, EngineTools};

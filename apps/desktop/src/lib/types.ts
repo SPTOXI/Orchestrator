@@ -23,6 +23,7 @@ export type ToolErrorKind =
   | "NOT_RUNNING"
   | "COMMAND_FAILED"
   | "CANCELLED"
+  | "LOCKED"
   | "INTERNAL";
 
 export interface ToolError {
@@ -1208,4 +1209,69 @@ export interface StartedTask {
   session: SessionInfo;
   turnId: string | null;
   sendError: string | null;
+}
+
+/** Agents executing tasks (ADR-0015). */
+export type AgentStatus = "QUEUED" | "RUNNING" | "DONE" | "FAILED" | "STOPPED";
+
+export interface Agent {
+  id: string;
+  projectId: string;
+  /** Task it executes. */
+  task: string;
+  title: string;
+  provider: string;
+  model: string | null;
+  /** Session it works in; null while it is queued. */
+  session: string | null;
+  parentAgent: string | null;
+  status: AgentStatus;
+  /** Tools offered to it when it started. */
+  tools: string[];
+  /** Project context it received on its first turn. */
+  context: ContextSummary | null;
+  turns: number;
+  maxTurns: number;
+  /** Paths it holds while it works. */
+  files: string[];
+  result: string;
+  error: string | null;
+  /** Handoff created when it stopped before finishing. */
+  handoff: string | null;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+/** An agent with what the panel and the board show. */
+export interface AgentView extends Agent {
+  /** Why a queued agent has not started yet. */
+  waiting: string | null;
+  taskTitle: string;
+  taskStatus: TaskStatus;
+}
+
+/** A file held by an agent while it works. */
+export interface FileLock {
+  projectId: string;
+  path: string;
+  agentId: string;
+  agentTitle: string;
+  task: string;
+  at: string;
+}
+
+export interface StartAgent {
+  taskId: string;
+  provider?: string | null;
+  model?: string | null;
+  maxTurns?: number | null;
+}
+
+export interface AgentSettings {
+  /** Agents running at the same time (1–8). */
+  maxParallel: number;
+  /** Turns an agent may spend before it stops on its own (1–50). */
+  maxTurns: number;
 }

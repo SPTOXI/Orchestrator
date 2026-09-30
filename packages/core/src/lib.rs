@@ -15,7 +15,10 @@
 //!   project context sent to them (ADR-0013).
 //! - [`Task`]: a piece of work of the project, with state and dependencies
 //!   (ADR-0014).
+//! - [`Agent`] / [`FileLock`]: who executes a task, and the files it holds
+//!   while it does (ADR-0015).
 
+pub mod agent;
 pub mod context;
 pub mod event;
 pub mod handoff;
@@ -25,14 +28,15 @@ pub mod session;
 pub mod task;
 pub mod tool;
 
+pub use agent::{Agent, AgentStatus, FileLock};
 pub use context::{ContextSectionSummary, ContextSummary};
 pub use event::{
     AuditEvent, EventKind, EventSink, MemorySink, NullSink, OutputStream, StreamEvent,
 };
 pub use handoff::{Handoff, HandoffEnd, HandoffPacket, HandoffStatus};
 pub use ids::{
-    DeliberationId, EventId, HandoffId, ProcessId, ProviderId, SessionId, TaskId, TerminalId,
-    ToolCallId, TurnId,
+    AgentId, DeliberationId, EventId, HandoffId, ProcessId, ProviderId, SessionId, TaskId,
+    TerminalId, ToolCallId, TurnId,
 };
 pub use project::{
     DockerInfo, GitRemote, GitSummary, ProjectCandidate, ProjectProfile, RuntimeRequirement,

@@ -54,7 +54,7 @@ orchestrator/
 │   │                       #        projeto, git, package managers, runtimes
 │   ├── orchestrator/       # [Rust] Orchestrator Engine: Context Builder, Handoff,
 │   │                       #        ferramentas de memória das IAs, Task Manager
-│   ├── agents/             # (Fase 8) Agent Manager, subagentes, File Lock Manager
+│   ├── agents/             # [Rust] Agent Manager, subagentes, File Lock Manager
 │   ├── memory/             # [Rust] banco local (SQLite): histórico, projetos, sessões,
 │   │                       #        memória L1/L2/L3, decisões, deliberações
 │   ├── git/                # [Rust] Git local via `git` do sistema (GitHub na Fase 10)
@@ -103,7 +103,7 @@ pnpm build            # gera o executável/instalador de produção
 ## Como testar
 
 ```bash
-pnpm test             # testes Rust (core, git, runtime, providers, router, memory, engine, desktop) e do frontend
+pnpm test             # testes Rust (core, git, runtime, providers, router, memory, engine, agents, desktop) e do frontend
 pnpm test:rust        # somente cargo test --workspace
 pnpm test:web         # somente vitest
 pnpm typecheck        # checagem de tipos TypeScript
@@ -111,6 +111,34 @@ pnpm check            # typecheck + cargo fmt --check + cargo clippy -D warnings
 ```
 
 ## O que já funciona
+
+### Fase 8b — agentes, subagentes e travas de arquivo
+
+- **Um agente executa a task sozinho:** ele abre a sessão com o contexto da
+  task, conduz os turnos, usa as ferramentas e encerra chamando
+  `agent.finish`. O resultado vai para a task, que fica **em revisão** —
+  quem conclui é você.
+- **Mais de uma task ao mesmo tempo**, quando não há conflito: a fila
+  respeita o limite de agentes em paralelo (padrão 2) e espera os arquivos
+  ficarem livres, dizendo o que está no caminho.
+- **Dois agentes nunca alteram o mesmo arquivo.** A trava é do banco, por
+  arquivo: escrever num arquivo de outro agente é recusado com o motivo.
+  Leitura nunca trava, e **você nunca é bloqueado no seu próprio projeto**.
+- **Subagentes:** um agente divide o trabalho com `agent.delegate`, que cria
+  a subtask e enfileira quem vai fazê-la.
+- **Quem para no meio deixa handoff** com os fatos da sessão, para outra IA
+  continuar de onde parou.
+- **Agent Board** (a fazer / em andamento / em revisão) com task, agente,
+  provider, estado e progresso; painel AGENTS com "Parar" e "Parar todos".
+- A barra superior passa a mostrar o **agente atual**.
+
+> O que limita um agente hoje são os tetos (turnos e paralelismo), as travas
+> e os botões de parar. O gate de autonomia (Assistido, Autônomo, Acesso
+> Irrestrito) é a Fase 9.
+
+![O Agent Board e um agente trabalhando](./docs/assets/fase-8b-board.png)
+
+Referência: [`docs/agents.md`](./docs/agents.md).
 
 ### Fase 8a — tasks
 

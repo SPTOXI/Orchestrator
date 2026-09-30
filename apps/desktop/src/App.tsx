@@ -25,7 +25,8 @@ import {
   TasksIcon,
   TerminalIcon,
 } from "./components/icons";
-import { PhasePlaceholder } from "./components/PhasePlaceholder";
+import { AgentsPanel } from "./components/AgentsPanel";
+import { BoardView } from "./components/BoardView";
 import { ProcessesPanel } from "./components/ProcessesPanel";
 import { ProfileView } from "./components/ProfileView";
 import { ProjectPanel, RecentList } from "./components/ProjectPanel";
@@ -37,11 +38,13 @@ import { StatusBar } from "./components/StatusBar";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { baseName, joinPath } from "./lib/format";
 import type { RecentProject } from "./lib/recent";
-import { appApi, errorMessage, isTauri, projectApi, sessionApi, shellApi } from "./lib/runtime";
+import { agentApi, appApi, errorMessage, isTauri, projectApi, sessionApi, shellApi } from "./lib/runtime";
 import type { AppInfo, ConnectionsView, Deliberation, ProjectProfile, SessionInfo, ShellList } from "./lib/types";
 import { useConnections } from "./lib/useConnections";
 import { useCouncil } from "./lib/useCouncil";
 import { useMemory } from "./lib/useMemory";
+import { agentChip, agentOfTask } from "./lib/agents";
+import { useAgents } from "./lib/useAgents";
 import { useTasks } from "./lib/useTasks";
 import { useProjects } from "./lib/useProjects";
 import { useGitStatus } from "./lib/useGitStatus";
@@ -67,7 +70,9 @@ type Tab =
   | { id: "context"; kind: "context"; request: ContextTabRequest; nonce: number }
   | { id: string; kind: "handoff"; sessionId: string | null; handoffId: string | null }
   /** One task; `taskId` null is the form of a new one. */
-  | { id: string; kind: "task"; taskId: string | null; nonce: number };
+  | { id: string; kind: "task"; taskId: string | null; nonce: number }
+  /** Agent Board: the tasks of the project in columns (ADR-0015). */
+  | { id: "board"; kind: "board" };
 
 const ACTIVITIES: Array<{ id: PanelId; label: string; icon: () => ReactNode }> = [
   { id: "project", label: "PROJECT", icon: FolderIcon },
@@ -123,6 +128,8 @@ function tabTitle(tab: Tab, sessions: Map<string, SessionInfo>, connections: Con
       return "Handoff";
     case "task":
       return tab.taskId ? "Task" : "Nova task";
+    case "board":
+      return "Agent Board";
     case "connection":
       if (!tab.connectionId) return "Nova API";
       return `API · ${connections?.connections.find((c) => c.connection.id === tab.connectionId)?.connection.name ?? tab.connectionId}`;
@@ -154,12 +161,19 @@ export function App() {
   const projectId = profile && projects.current?.path === profile.path ? projects.current.id : null;
   const memory = useMemory(ready, projectId);
   const tasks = useTasks(ready, projectId);
+  const agents = useAgents(ready, projectId);
+  const openSessionId = activeTab?.startsWith("session:") ? activeTab.slice("session:".length) : null;
   /** What the top bar shows as the current task: the one of the open
    * session, else the task being worked on now (ADR-0014). */
   const currentTask =
-    tasks.list.find(
-      (task) => activeTab?.startsWith("session:") && task.sessions.includes(activeTab.slice("session:".length)),
-    ) ?? tasks.list.find((task) => task.status === "IN_PROGRESS") ?? null;
+    tasks.list.find((task) => openSessionId !== null && task.sessions.includes(openSessionId)) ??
+    tasks.list.find((task) => task.status === "IN_PROGRESS") ??
+    null;
+  /** The agent of the open session, else the one working on the current
+   * task (ADR-0015). */
+  const currentAgent =
+    agents.list.find((agent) => agent.session !== null && agent.session === openSessionId) ??
+    agentOfTask(agents.list, currentTask?.id ?? null);
   const sessionsById = new Map(providers.sessions.map((s) => [s.id, s]));
   const activeProvider = providers.view?.providers.find((p) => p.active) ?? null;
   const runningSessions = providers.sessions.filter((s) => s.status === "running").length;
@@ -251,6 +265,8 @@ export function App() {
     setTabs((all) => (all.some((t) => t.id === "context") ? all.map((t) => (t.id === "context" ? tab : t)) : [...all, tab]));
     setActiveTab("context");
   };
+  /** The Agent Board is a single tab (section 25). */
+  const openBoard = () => showTab({ id: "board", kind: "board" });
   /** One tab per task; the new-task form has its own. */
   const openTask = (taskId: string | null) => {
     const id = taskId ? `task:${taskId}` : "task:new";
@@ -397,15 +413,25 @@ export function App() {
         );
       case "agents":
         return (
-          <PhasePlaceholder
-            title="Agents"
-            phase="Fase 8b"
-            description="Agentes são temporários; o conhecimento fica no projeto."
-            items={[
-              "Agent Manager e subagentes executando as tasks",
-              "File Lock Manager para trabalho em paralelo",
-              "Agent Board e handoff automático ao fim de um agente",
-            ]}
+          <AgentsPanel
+            ready={ready}
+            agents={agents.list}
+            locks={agents.locks}
+            settings={agents.settings}
+            error={agents.error}
+            projectName={profile?.name ?? null}
+            activeAgentId={currentAgent?.id ?? null}
+            onOpenBoard={openBoard}
+            onOpenTask={openTask}
+            onStop={async (id) => {
+              await agentApi.stop(id);
+              await agents.refresh();
+            }}
+            onStopAll={async () => {
+              await agentApi.stopAll(projectId ?? undefined);
+              await agents.refresh();
+            }}
+            onSaveSettings={agents.saveSettings}
           />
         );
       case "terminal":
@@ -462,6 +488,8 @@ export function App() {
         runningSessions={runningSessions}
         task={currentTask ? { title: currentTask.title, status: currentTask.status } : null}
         openTasks={tasks.list.filter((t) => t.status !== "DONE" && t.status !== "CANCELLED").length}
+        agent={currentAgent ? { title: currentAgent.taskTitle, status: currentAgent.status } : null}
+        agentSummary={agentChip(agents.list, openSessionId)}
       />
       <div className="workbench">
         <nav className="activity-bar">
@@ -653,7 +681,9 @@ export function App() {
                       taskId={tab.taskId}
                       nonce={tab.nonce}
                       tasks={tasks.list}
+                      agents={agents.list}
                       providers={providers.view?.providers ?? []}
+                      onAgentChanged={() => void agents.refresh()}
                       onSaved={(id) => {
                         void tasks.refresh();
                         if (!tab.taskId) {
@@ -663,6 +693,17 @@ export function App() {
                       }}
                       onOpenSession={openSession}
                       onOpenContext={(taskId) => openContext({ taskId })}
+                    />
+                  );
+                case "board":
+                  return (
+                    <BoardView
+                      key={tab.id}
+                      active={active}
+                      tasks={tasks.list}
+                      agents={agents.list}
+                      onOpenTask={openTask}
+                      onOpenSession={openSession}
                     />
                   );
                 case "handoff":
@@ -829,6 +870,14 @@ function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenPr
                   tokens, as IAs consultam e registram memória, e uma IA passa o trabalho para outra sem a conversa.
                 </li>
                 <li>
+                  <strong>TASKS</strong>: todo trabalho relevante é uma task, com estado, prioridade,
+                  dependências e subtasks; a task vira o contexto da IA que trabalha nela.
+                </li>
+                <li>
+                  <strong>AGENTS</strong>: um agente executa a task sozinho e a deixa em revisão; mais de um
+                  ao mesmo tempo quando não há conflito, com travas por arquivo, subagentes e Agent Board.
+                </li>
+                <li>
                   <strong>HISTORY</strong>: toda chamada de ferramenta é auditada, inclusive as feitas por IAs.
                 </li>
               </ul>
@@ -838,7 +887,6 @@ function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenPr
         <div>
           <h2>Próximas fases</h2>
           <ul>
-            <li>8 — Tasks, agentes, subagentes e File Locks</li>
             <li>9 — Autonomia (Assistido, Autônomo, Irrestrito)</li>
             <li>10–11 — GitHub, otimização de tokens</li>
           </ul>

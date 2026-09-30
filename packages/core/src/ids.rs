@@ -87,6 +87,10 @@ define_id!(
     /// Identifies one task of a project (ADR-0014).
     TaskId
 );
+define_id!(
+    /// Identifies one agent executing a task (ADR-0015).
+    AgentId
+);
 
 /// Stable, human-chosen identifier of a registered AI provider, e.g.
 /// `openai-codex` or `claude-code`. Not generated: it names an adapter.

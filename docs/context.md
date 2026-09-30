@@ -91,6 +91,10 @@ tarefa do contexto, e a mesma mensagem abre a conversa. É o *task-scoped
 context* da seção 23 do documento mestre: o contexto passa a seguir o
 trabalho planejado, não só a frase que o usuário digitou.
 
+Um agente (Fase 8b, [agents.md](./agents.md)) abre essa mesma sessão e
+recebe esse mesmo contexto — uma vez, no primeiro turno. Os turnos
+seguintes só levam uma continuação curta: o contexto já foi.
+
 ### Configuração
 
 `<app-data>/context.json`, editável na aba "Contexto do projeto":
@@ -270,6 +274,7 @@ Ver [ipc.md](./ipc.md#contexto-e-handoff-fase-7-adr-0013).
 - **Instruções maiores:** o contexto vai em todas as requisições da
   sessão. Cache de prompt e compactação ficam para a Fase 11.
 - **Narrativa custa um turno;** os fatos não custam nada.
-- **Handoff manual:** o handoff automático ao fim de um agente é da Fase 8.
+- **Handoff manual na conversa:** quem o pede é o usuário. O automático
+  existe só quando um agente para no meio (Fase 8b).
 - **Conselho:** os membros continuam sem contexto, arquivos e ferramentas
   (ADR-0011); só a sessão que o modo Full abre recebe o contexto.

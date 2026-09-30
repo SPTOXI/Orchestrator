@@ -127,6 +127,15 @@ pub fn as_task_text(task: &Task) -> String {
     out
 }
 
+/// A session opened for a task, before anything is sent to it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OpenedTask {
+    pub task: Task,
+    pub session: SessionInfo,
+    /// What the session must be told first.
+    pub first_message: String,
+}
+
 /// First message of a session opened for a task.
 fn first_message(task: &Task) -> String {
     format!(
@@ -362,6 +371,31 @@ impl TaskService {
         request: StartTaskSession,
         origin: CallOrigin,
     ) -> Result<StartedTask, ProviderError> {
+        let opened = self.open_session(request, origin.clone()).await?;
+        let (turn_id, send_error) = match self
+            .sessions
+            .send(&opened.session.id, opened.first_message, origin)
+            .await
+        {
+            Ok(turn) => (Some(turn), None),
+            Err(err) => (None, Some(err.message)),
+        };
+        Ok(StartedTask {
+            task: opened.task,
+            session: self.sessions.info(&opened.session.id)?,
+            turn_id,
+            send_error,
+        })
+    }
+
+    /// The session of a task, opened but with nothing sent yet: what
+    /// [`Self::start_session`] does before the first message, and what an
+    /// agent needs in order to drive the turns itself (ADR-0015).
+    pub async fn open_session(
+        &self,
+        request: StartTaskSession,
+        origin: CallOrigin,
+    ) -> Result<OpenedTask, ProviderError> {
         let task = self
             .store
             .task(request.task_id.as_str())
@@ -418,22 +452,12 @@ impl TaskService {
             &task,
             format!("sessão aberta para a task · {}", session.provider),
             json!({"sessionId": session.id}),
-            origin.clone(),
+            origin,
         );
-
-        let (turn_id, send_error) = match self
-            .sessions
-            .send(&session.id, first_message(&task), origin)
-            .await
-        {
-            Ok(turn) => (Some(turn), None),
-            Err(err) => (None, Some(err.message)),
-        };
-        Ok(StartedTask {
+        Ok(OpenedTask {
+            first_message: first_message(&task),
             task,
-            session: self.sessions.info(&session.id)?,
-            turn_id,
-            send_error,
+            session,
         })
     }
 

@@ -327,6 +327,18 @@ impl SessionManager {
         }
     }
 
+    /// Names of the tools offered to the sessions of this manager, in
+    /// catalog order. Recorded by the Agent Manager when an agent starts
+    /// (ADR-0015).
+    pub fn tool_names(&self) -> Vec<String> {
+        self.inner
+            .tools
+            .tools()
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect()
+    }
+
     pub fn registry(&self) -> &Arc<ProviderRegistry> {
         &self.inner.registry
     }

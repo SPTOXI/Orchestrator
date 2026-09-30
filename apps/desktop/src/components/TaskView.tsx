@@ -3,10 +3,17 @@
 // session that works on it — which starts with the task as its context.
 
 import { useCallback, useEffect, useState } from "react";
+import { AGENT_STATUS_LABELS, agentProgress, isLive } from "../lib/agents";
 import { formatTime } from "../lib/format";
-import { councilApi, errorMessage, taskApi } from "../lib/runtime";
+import { agentApi, councilApi, errorMessage, taskApi } from "../lib/runtime";
 import { TASK_PRIORITY_LABELS, TASK_STATUS_LABELS, taskActionLabel, taskText } from "../lib/tasks";
-import type { ProviderInfo, TaskPriority, TaskStatus, TaskView as TaskViewData } from "../lib/types";
+import type {
+  AgentView,
+  ProviderInfo,
+  TaskPriority,
+  TaskStatus,
+  TaskView as TaskViewData,
+} from "../lib/types";
 
 const PRIORITIES: TaskPriority[] = ["LOW", "NORMAL", "HIGH", "URGENT"];
 
@@ -18,8 +25,11 @@ interface Props {
   /** Changes when the tab is reopened. */
   nonce: number;
   tasks: TaskViewData[];
+  /** Agents of the project (ADR-0015). */
+  agents: AgentView[];
   providers: ProviderInfo[];
   onSaved: (id: string) => void;
+  onAgentChanged: () => void;
   onOpenSession: (id: string) => void;
   onOpenContext: (taskId: string) => void;
 }
@@ -30,8 +40,10 @@ export function TaskView({
   taskId,
   nonce,
   tasks,
+  agents,
   providers,
   onSaved,
+  onAgentChanged,
   onOpenSession,
   onOpenContext,
 }: Props) {
@@ -76,17 +88,39 @@ export function TaskView({
   }, [ready, taskId, nonce, fill]);
 
   // The task may move without this tab asking: a session opened for it, a
-  // dependency finished elsewhere, or (Fase 8b) an agent working on it.
-  // Follow the panel's copy for everything the engine computes, and leave
-  // the fields the user is editing alone.
+  // dependency finished elsewhere, or an agent working on it (ADR-0015).
+  // Follow the panel's copy for everything the engine computes, and bring
+  // in what changed in the fields the user has not touched — an agent
+  // writes the result while this tab is open.
   useEffect(() => {
     if (!taskId) return;
     const fresh = tasks.find((t) => t.id === taskId);
     if (!fresh) return;
-    const state = (t: TaskViewData) =>
-      JSON.stringify([t.updatedAt, t.status, t.waitingFor, t.subtasks, t.can, t.sessions]);
-    setTask((current) => (current && state(current) === state(fresh) ? current : fresh));
-  }, [tasks, taskId]);
+    setTask((current) => {
+      if (!current) return fresh;
+      const state = (t: TaskViewData) =>
+        JSON.stringify([t.updatedAt, t.status, t.waitingFor, t.subtasks, t.can, t.sessions]);
+      if (state(current) === state(fresh)) return current;
+      // Untouched means "still equal to what was loaded".
+      const keep = <T,>(mine: T, was: T, now: T, set: (value: T) => void) => {
+        if (mine === was && was !== now) set(now);
+      };
+      keep(title, current.title, fresh.title, setTitle);
+      keep(description, current.description, fresh.description, setDescription);
+      keep(result, current.result, fresh.result, setResult);
+      keep(priority, current.priority, fresh.priority, setPriority);
+      keep(provider, current.provider ?? "", fresh.provider ?? "", setProvider);
+      keep(model, current.model ?? "", fresh.model ?? "", setModel);
+      keep(files, current.files.join("\n"), fresh.files.join("\n"), setFiles);
+      if (
+        dependencies.join(",") === current.dependencies.join(",") &&
+        current.dependencies.join(",") !== fresh.dependencies.join(",")
+      ) {
+        setDependencies(fresh.dependencies);
+      }
+      return fresh;
+    });
+  }, [tasks, taskId, title, description, result, priority, provider, model, files, dependencies]);
 
   const target = providers.find((p) => p.id === provider) ?? null;
   const models = target?.capabilities.models ?? [];
@@ -149,6 +183,25 @@ export function TaskView({
       onOpenSession(started.session.id);
     });
 
+  const runAgent = () =>
+    run("agent", async () => {
+      if (!taskId) return;
+      await agentApi.start({
+        taskId,
+        provider: provider || null,
+        model: model || null,
+      });
+      onAgentChanged();
+      onSaved(taskId);
+    });
+
+  const stopAgent = (id: string) =>
+    run(`stop:${id}`, async () => {
+      await agentApi.stop(id);
+      onAgentChanged();
+      if (taskId) onSaved(taskId);
+    });
+
   const suggest = () =>
     run("suggest", async () => {
       const recommendation = await councilApi.recommend({ task: taskText({ title, description }) });
@@ -169,6 +222,9 @@ export function TaskView({
 
   /** While something it depends on is open, the engine refuses to start it. */
   const waiting = (task?.waitingFor.length ?? 0) > 0;
+  const taskAgents = agents.filter((agent) => agent.task === taskId);
+  const liveAgent = taskAgents.find(isLive) ?? null;
+  const ended = task?.status === "DONE" || task?.status === "CANCELLED";
   const changed =
     task !== null &&
     (title !== task.title ||
@@ -313,8 +369,8 @@ export function TaskView({
           <section className="task-step">
             <h3>Quem trabalha nesta task</h3>
             <p className="meta">
-              A sessão recebe o contexto do projeto montado a partir desta task e começa por ela. A
-              execução por agente entra na Fase 8b.
+              A sessão recebe o contexto do projeto montado a partir desta task e começa por ela. Um
+              agente faz isso sozinho: ele conduz os turnos e deixa a task em revisão ao terminar.
             </p>
             <div className="row wrap">
               <select
@@ -347,14 +403,26 @@ export function TaskView({
                 Sugerir com o roteador
               </button>
               <button
-                className="button small primary"
-                disabled={
-                  !ready || busy !== null || waiting || task.status === "DONE" || task.status === "CANCELLED"
-                }
+                className="button small"
+                disabled={!ready || busy !== null || waiting || ended}
                 title={waiting ? "Esta task espera outra terminar" : undefined}
                 onClick={() => void startSession()}
               >
                 {busy === "session" ? "Abrindo…" : "Abrir sessão para esta task"}
+              </button>
+              <button
+                className="button small primary"
+                disabled={!ready || busy !== null || waiting || ended || liveAgent !== null}
+                title={
+                  liveAgent
+                    ? "Esta task já tem um agente"
+                    : waiting
+                      ? "Esta task espera outra terminar"
+                      : "O agente abre a sessão, trabalha sozinho e deixa a task em revisão"
+                }
+                onClick={() => void runAgent()}
+              >
+                {busy === "agent" ? "Enfileirando…" : "Executar com um agente"}
               </button>
             </div>
             {suggestion && <div className="meta">{suggestion}</div>}
@@ -369,6 +437,54 @@ export function TaskView({
                 ))}
               </ul>
             )}
+          </section>
+        )}
+
+        {task && taskAgents.length > 0 && (
+          <section className="task-step">
+            <h3>Agentes</h3>
+            <p className="meta">
+              Agentes são temporários: o que eles entregam fica na task, na memória e no histórico.
+            </p>
+            <ul className="plain-list">
+              {taskAgents.map((agent) => (
+                <li key={agent.id} className="list-item">
+                  <div className="grow">
+                    <div className="meta task-meta">
+                      <span className={`agent-status ${agent.status.toLowerCase()}`}>
+                        {AGENT_STATUS_LABELS[agent.status]}
+                      </span>
+                      <span className="ellipsis">
+                        {[agent.provider, agent.model, agentProgress(agent)]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </span>
+                    </div>
+                    {agent.error && <div className="meta">{agent.error}</div>}
+                    {agent.files.length > 0 && (
+                      <div className="meta ellipsis">🔒 {agent.files.join(", ")}</div>
+                    )}
+                    {agent.handoff && (
+                      <div className="meta">Handoff criado para outra IA continuar.</div>
+                    )}
+                  </div>
+                  {agent.session && (
+                    <button className="subagent-link" onClick={() => onOpenSession(agent.session as string)}>
+                      Ver a sessão
+                    </button>
+                  )}
+                  {isLive(agent) && (
+                    <button
+                      className="button small danger"
+                      disabled={!ready || busy !== null}
+                      onClick={() => void stopAgent(agent.id)}
+                    >
+                      {busy === `stop:${agent.id}` ? "…" : "Parar"}
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
           </section>
         )}
 

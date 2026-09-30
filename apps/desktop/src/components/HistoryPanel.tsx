@@ -64,6 +64,8 @@ const KIND_FILTERS: Array<{ value: EventKind | ""; label: string }> = [
   { value: "TASK_STARTED", label: "TASK_STARTED" },
   { value: "TASK_COMPLETED", label: "TASK_COMPLETED" },
   { value: "TASK_UPDATED", label: "TASK_UPDATED" },
+  { value: "AGENT_STARTED", label: "AGENT_STARTED" },
+  { value: "AGENT_FINISHED", label: "AGENT_FINISHED" },
 ];
 
 const PAGE = 500;

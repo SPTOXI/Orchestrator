@@ -1,6 +1,7 @@
 // Top bar: the execution context that must always be visible (section 24).
 
-import type { GitStatusWithRemotes, ProcessInfo, TerminalInfo } from "../lib/types";
+import { AGENT_STATUS_LABELS } from "../lib/agents";
+import type { AgentStatus, GitStatusWithRemotes, ProcessInfo, TerminalInfo } from "../lib/types";
 
 interface Chip {
   label: string;
@@ -25,6 +26,10 @@ interface Props {
   task: { title: string; status: string } | null;
   /** How many tasks are open (not done, not cancelled). */
   openTasks: number;
+  /** Agent of the open session, or the one on the current task (ADR-0015). */
+  agent: { title: string; status: AgentStatus } | null;
+  /** How the project's agents are doing, when none is in focus. */
+  agentSummary: string;
 }
 
 export function ContextBar({
@@ -38,6 +43,8 @@ export function ContextBar({
   runningSessions,
   task,
   openTasks,
+  agent,
+  agentSummary,
 }: Props) {
   const openTerminals = terminals.filter((t) => t.alive).length;
   const running = processes.filter((p) => p.status === "running").length;
@@ -66,7 +73,16 @@ export function ContextBar({
           : "Nenhuma task ainda: crie uma no painel TASKS",
       pending: !task,
     },
-    { label: "Agent", value: "—", hint: "Agent Manager: Fase 8b", pending: true },
+    {
+      label: "Agent",
+      value: agent ? agent.title : agentSummary,
+      hint: agent
+        ? `Agente ${AGENT_STATUS_LABELS[agent.status].toLowerCase()} (painel AGENTS)`
+        : agentSummary === "—"
+          ? "Nenhum agente em execução: abra uma task e use \"Executar com um agente\""
+          : "Agentes deste projeto (painel AGENTS)",
+      pending: !agent && agentSummary === "—",
+    },
     { label: "Autonomia", value: "—", hint: "Assistido / Autônomo / Acesso Irrestrito: Fase 9", pending: true },
     {
       label: "Branch",

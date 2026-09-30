@@ -15,11 +15,14 @@
 //! - **Council deliberations**, which also serve as its cache;
 //! - **handoffs** between AIs and the facts of a session they are built
 //!   from (ADR-0013);
-//! - **tasks** of the project, with their dependencies (ADR-0014).
+//! - **tasks** of the project, with their dependencies (ADR-0014);
+//! - **agents** executing tasks and the **file locks** they hold while
+//!   they do (ADR-0015).
 //!
 //! Depends only on `orchestrator-core`: the other crates see it through
 //! their own traits, wired by the app.
 
+mod agents;
 mod db;
 mod deliberations;
 mod handoffs;

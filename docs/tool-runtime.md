@@ -33,11 +33,18 @@ componente que executa operações no sistema operacional. Toda chamada entra po
   `ALREADY_EXISTS`, `PERMISSION_DENIED` (negado pelo SO), `IO`, `SPAWN`,
   `NOT_RUNNING`, `COMMAND_FAILED` (um comando externo, ex. `git`, falhou; a
   mensagem traz a saída dele), `CANCELLED` (pedido por um turno de IA já
-  cancelado; nada foi executado, ADR-0009), `INTERNAL`.
+  cancelado; nada foi executado, ADR-0009), `LOCKED` (outro agente está com
+  o arquivo; nunca acontece com o usuário, ADR-0015), `INTERNAL`.
 - Cada ferramenta é uma **consulta** (`readOnly: true`, não altera estado) ou
   uma **ação**. `runtime_tools` devolve a marca e o `TOOL_CALLED` a registra.
 - Não existe lista de comandos proibidos nem confirmação oculta no runtime. O
   gate de autonomia (Fase 9) ficará explicitamente na frente de `invoke`.
+- As ferramentas das IAs que não são do runtime (`memory.*` e `decision.*`,
+  ADR-0013; `agent.finish` e `agent.delegate`, ADR-0015) são somadas ao
+  catálogo por fora, pelos crates `orchestrator-engine` e
+  `orchestrator-agents`, e passam pelo mesmo `TOOL_CALLED`. É nesse mesmo
+  caminho que a trava de arquivo de um agente é verificada, antes de o
+  runtime receber a chamada.
 
 ### Schemas dos argumentos
 

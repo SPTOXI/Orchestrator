@@ -13,7 +13,7 @@ na Fase 8a, [ADR-0014](../../docs/adr/0014-task-manager.md)). Referências:
 | `tools.rs` | `EngineTools`: envolve o executor do app e oferece às IAs `memory.working`, `memory.search`, `memory.list`, `memory.save`, `decision.list` e `decision.save`, auditadas como as outras ferramentas |
 | `packet.rs` | `HandoffPacket`: limites, fatos do histórico, pedido e leitura tolerante da narrativa da IA, mistura, texto para a próxima IA e a primeira mensagem |
 | `handoff.rs` | `HandoffService` (`prepare`, `create`, `start`, `list`, `get`) e `ContextBuilder::preview` |
-| `task.rs` | `TaskService`: transições válidas, dependências sem ciclo, subtasks, contexto e sessão a partir da task |
+| `task.rs` | `TaskService`: transições válidas, dependências sem ciclo, subtasks, contexto e sessão a partir da task (`open_session`, que o Agent Manager usa para conduzir os turnos) |
 | `persistence.rs` | `StoreSessions`: o `SessionStore` dos providers sobre o banco local (movido do app) |
 | `text.rs` | estimativa de tokens (~4 caracteres por token), cortes, caminhos relativos e datas |
 
@@ -37,10 +37,13 @@ Regras:
   aceitaria (`TaskView.can`), e uma task só inicia quando o que ela espera
   está concluído.
 
+O Agent Manager e as travas de arquivo ficam no
+[`packages/agents`](../agents/README.md), que depende deste crate
+(ADR-0015).
+
 | Próximas responsabilidades | Fase |
 | -------------------------- | ---- |
-| Agent Manager, subagentes e File Locks, executando as tasks; handoff automático ao fim de um agente | 8b |
-| Gate de autonomia: Assistido, Autônomo, Acesso Irrestrito; Pause, Cancel, Stop All Agents | 9 |
+| Gate de autonomia: Assistido, Autônomo, Acesso Irrestrito; Pause | 9 |
 | Otimização de tokens, cache, compactação, agent scheduling | 11 |
 
 Testes: `cargo test -p orchestrator-engine`. Os unitários cobrem o corte

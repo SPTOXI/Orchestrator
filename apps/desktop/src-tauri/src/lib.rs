@@ -1,10 +1,12 @@
 //! Orchestrator desktop shell.
 //!
 //! This crate is only an IPC bridge (ADR-0001, ADR-0003, ADR-0009,
-//! ADR-0011, ADR-0013): it turns Tauri commands into `ToolRuntime` /
-//! `SessionManager` / `RouterService` / engine calls and runtime events into
-//! Tauri events. It contains no domain logic.
+//! ADR-0011, ADR-0013, ADR-0015): it turns Tauri commands into
+//! `ToolRuntime` / `SessionManager` / `RouterService` / engine / agent
+//! calls and runtime events into Tauri events. It contains no domain
+//! logic.
 
+mod agent_commands;
 mod commands;
 mod context_commands;
 mod memory_commands;
@@ -14,6 +16,7 @@ mod router_commands;
 mod task_commands;
 mod vault;
 
+use orchestrator_agents::{AgentService, AgentSlot, AgentTools, LockManager};
 use orchestrator_core::{AuditEvent, EventSink, StreamEvent};
 use orchestrator_engine::{
     ContextBuilder, EngineTools, HandoffService, StoreSessions, TaskService,
@@ -98,6 +101,10 @@ pub struct AppState {
     pub handoffs: HandoffService,
     /// Tasks of the project (ADR-0014).
     pub tasks: TaskService,
+    /// Agents executing tasks, and their file locks (ADR-0015).
+    pub agents: AgentService,
+    /// Problem loading `agents.json`, if any.
+    pub agents_warning: Option<String>,
     pub sink: Arc<DesktopSink>,
     pub data_dir: PathBuf,
 }
@@ -192,12 +199,21 @@ pub fn run() {
             if let Some(warning) = &router_warning {
                 eprintln!("[orchestrator] {warning}");
             }
-            // AI agents get the runtime's tools plus the memory tools; every
-            // session gets the project context on its first turn (ADR-0013).
-            let tools = EngineTools::new(
-                Arc::new(RuntimeTools(runtime.clone())),
+            // AI agents get the runtime's tools, plus the memory tools
+            // (ADR-0013) and the agent tools with the file locks
+            // (ADR-0015); every session gets the project context on its
+            // first turn.
+            let locks = Arc::new(LockManager::new(store.clone()));
+            let agent_slot = AgentSlot::new();
+            let tools = AgentTools::new(
+                Arc::new(EngineTools::new(
+                    Arc::new(RuntimeTools(runtime.clone())),
+                    store.clone(),
+                    sink.clone(),
+                )),
                 store.clone(),
-                sink.clone(),
+                locks.clone(),
+                agent_slot.clone(),
             );
             let sessions = SessionManager::with_store(
                 registry,
@@ -225,6 +241,29 @@ pub fn run() {
                 builder.clone(),
                 sink.clone(),
             );
+            let (agents, agents_warning) = AgentService::new(
+                sessions.clone(),
+                store.clone(),
+                tasks.clone(),
+                HandoffService::new(
+                    sessions.clone(),
+                    store.clone(),
+                    builder.clone(),
+                    sink.clone(),
+                ),
+                locks,
+                sink.clone(),
+                Some(data_dir.join("agents.json")),
+            );
+            if let Some(warning) = &agents_warning {
+                eprintln!("[orchestrator] {warning}");
+            }
+            // Tauri commands are not polled inside the async runtime, so
+            // the agents get its handle explicitly (ADR-0015).
+            agents.set_runtime(tauri::async_runtime::handle().inner().clone());
+            agent_slot.install(agents.clone());
+            // Nothing is running after a restart, so no file stays locked.
+            agents.recover();
             app.manage(AppState {
                 runtime,
                 sessions,
@@ -238,6 +277,8 @@ pub fn run() {
                 context_warning,
                 handoffs,
                 tasks,
+                agents,
+                agents_warning,
                 sink,
                 data_dir,
             });
@@ -297,6 +338,14 @@ pub fn run() {
             context_commands::handoff_start,
             context_commands::handoffs_list,
             context_commands::handoff_get,
+            agent_commands::agents_list,
+            agent_commands::agent_get,
+            agent_commands::agent_start,
+            agent_commands::agent_stop,
+            agent_commands::agents_stop_all,
+            agent_commands::agent_locks,
+            agent_commands::agent_settings_get,
+            agent_commands::agent_settings_save,
             task_commands::tasks_list,
             task_commands::task_get,
             task_commands::task_save,

@@ -20,8 +20,9 @@ use std::fmt;
 pub enum CallOrigin {
     /// The human user, through the desktop UI.
     User,
-    /// An AI agent. Until the Agent Manager (Phase 8) each provider session
-    /// acts as its own agent: `agent_id` is the session id (ADR-0009).
+    /// An AI agent. `agent_id` is the agent of the Agent Manager
+    /// (ADR-0015) when one is driving the session, and the session id
+    /// itself when the session is its own agent (ADR-0009).
     Agent {
         agent_id: String,
         /// Provider session that produced the call.
@@ -103,6 +104,9 @@ pub enum ToolErrorKind {
     /// Not executed: the agent turn that asked for it was cancelled
     /// (ADR-0009).
     Cancelled,
+    /// Another agent holds the file this call would change (ADR-0015).
+    /// Never returned to the user, who is not locked out of the project.
+    Locked,
     /// Unexpected internal failure.
     Internal,
 }
