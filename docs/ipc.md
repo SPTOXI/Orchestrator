@@ -209,6 +209,20 @@ Chamadas das IAs que o gate recusa voltam como `ok: false` com
 quê) ou `kind: "CANCELLED"` (o turno foi cancelado enquanto esperava), e
 ficam no histórico como `TOOL_CALLED`.
 
+### GitHub (Fase 10, ADR-0017)
+
+Referência: [`docs/github.md`](./github.md). As operações são ferramentas
+(`github.*`, `git.fetch`, `git.remotes`) pelo `runtime_invoke`; só a
+configuração e o token têm comandos próprios.
+
+| Comando | Argumentos | Retorno | Histórico |
+| ------- | ---------- | ------- | --------- |
+| `github_settings_get` | — | `GitHubSetup` (host, API, se há token no cofre, variável de ambiente, `gh`, aviso) | — |
+| `github_settings_save` | `settings: { host, apiUrl? }` | `GitHubSetup`; recusa valores inválidos | — |
+| `github_token_save` | `token` | `GitHubSetup` (o token não volta) | — |
+| `github_token_clear` | — | `GitHubSetup` | — |
+| `open_url` | `url` (só `http(s)`) | abre no navegador do sistema | — |
+
 ## Eventos
 
 | Evento | Payload | Uso |

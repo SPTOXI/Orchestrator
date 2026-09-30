@@ -88,7 +88,7 @@ apenas apresentação.
 | SQLite: agentes e travas | `packages/memory` | Rust | 8b | ✅ migração 4: `agents` e `file_locks` (ADR-0015) |
 | Agent Manager, Subagents, File Locks | `packages/agents` | Rust | 8b | ✅ agentes executando tasks em paralelo, subagentes, travas por arquivo, handoff automático, Agent Board (ADR-0015) |
 | Autonomia (Assistido/Autônomo/Irrestrito), pedidos de autorização e Pause | `packages/orchestrator` (`orchestrator-engine`, módulo `autonomy`) | Rust | 9 | ✅ gate na frente de toda chamada de IA, regras do usuário, pedidos com resposta, liberação por sessão, modo por projeto e por agente, pausa (ADR-0016) |
-| GitHub | `packages/git` | Rust | 10 | planejado |
+| GitHub, pull requests e operações remotas | `packages/git` (módulo `github`) + `packages/runtime` (`github.*`) | Rust | 10 | ✅ API REST v3, token do cofre/ambiente/`gh`, PRs com CI e revisões, merge, issues, `git.fetch`/`git.remotes` (ADR-0017) |
 | Otimização de tokens, cache, compactação, scheduling | `packages/orchestrator` | Rust | 11 | planejado |
 
 Alterações à estrutura original:
@@ -145,7 +145,10 @@ marca vai no evento `TOOL_CALLED` (ADR-0008). Extensões ao catálogo da seção
 ([ADR-0004](./docs/adr/0004-operacoes-auxiliares-do-tool-runtime.md)) e
 `project.*` ([ADR-0008](./docs/adr/0008-projeto-deteccao-e-diretorio-base.md)).
 
-Operações planejadas: `github.*` (Fase 10).
+`git.remotes`, `git.fetch` e `github.*` (status, PRs, CI, issues; criar PR,
+comentar, merge, abrir issue) vêm da Fase 10
+([ADR-0017](./docs/adr/0017-github-e-operacoes-remotas.md), referência em
+[`docs/github.md`](./docs/github.md)).
 
 ### 4.1 Terminal real
 
@@ -190,6 +193,17 @@ do usuário valem igual ao terminal) e lê formatos estáveis para máquinas
 interativos (`GIT_TERMINAL_PROMPT=0`); consultas não disputam o `index.lock`
 (`GIT_OPTIONAL_LOCKS=0`). `git.commit` emite `GIT_COMMIT`; `git.push`, `GIT_PUSH`.
 Falhas do Git viram `COMMAND_FAILED` com a saída do comando.
+
+**GitHub (Fase 10).** O módulo `github` do mesmo crate é um cliente da API
+REST v3; o repositório vem do remoto do projeto (o do *upstream* da branch,
+senão `origin`) ou de `repo: "dono/nome"`. O token vem do cofre do sistema,
+de `GH_TOKEN`/`GITHUB_TOKEN` ou do `gh`, e nunca aparece em argumentos,
+eventos ou saídas. `github.pr.create` só abre PR de uma branch que está no
+GitHub sem commits pendentes (não faz push sozinho); o merge não é
+bloqueado pelo Orchestrator — quem decide é a proteção de branch do
+repositório. Eventos: `GITHUB_PR_CREATED`, `GITHUB_PR_MERGED`,
+`GITHUB_ISSUE_CREATED`. Nas IAs, as ações `github.*` passam pelo gate como
+qualquer outra (no Autônomo padrão, perguntam).
 
 ### 4.5 Autonomia e o runtime (Fase 9)
 
@@ -258,6 +272,9 @@ TurnContext::call_tool → AutonomyGate → AgentTools → EngineTools → Runti
   `APPROVAL_REQUESTED`, `APPROVAL_DECIDED`, `EXECUTION_PAUSED` e
   `EXECUTION_RESUMED`. O agente ganhou o campo `autonomy` (o modo que o
   usuário deu a ele).
+- Eventos `GITHUB_PR_CREATED`, `GITHUB_PR_MERGED` e `GITHUB_ISSUE_CREATED`
+  (Fase 10, ADR-0017); os tipos do GitHub ficam em `orchestrator-git`, não
+  no `core`: são dados de uma ferramenta, não contratos entre módulos.
 - `HandoffPacket`, `Handoff`, `HandoffEnd`, `HandoffStatus`, `HandoffId`,
   `ContextSummary` e os eventos de sessão `contextAttached` e `handedOff`
   (Fase 7).

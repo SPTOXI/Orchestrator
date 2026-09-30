@@ -36,8 +36,8 @@ cada fase em [`docs/phases/`](./docs/phases).
 | 8a | Task Manager e painel TASKS | ✅ concluída |
 | 8b | Agentes, subagentes e File Locks | ✅ concluída |
 | 9 | Autonomia: Assistido, Autônomo, Acesso Irrestrito e Pause | ✅ concluída |
-| 10 | GitHub, pull requests e operações remotas | ⏳ próxima |
-| 11 | Otimização de tokens, cache, compactação, agent scheduling | planejada |
+| 10 | GitHub, pull requests e operações remotas | ✅ concluída |
+| 11 | Otimização de tokens, cache, compactação, agent scheduling | ⏳ próxima |
 
 A ordem das Fases 4–5 foi redefinida na
 [ADR-0010](./docs/adr/0010-providers-por-api-com-cadastro-livre.md):
@@ -59,7 +59,7 @@ orchestrator/
 │   ├── agents/             # [Rust] Agent Manager, subagentes, File Lock Manager
 │   ├── memory/             # [Rust] banco local (SQLite): histórico, projetos, sessões,
 │   │                       #        memória L1/L2/L3, decisões, deliberações
-│   ├── git/                # [Rust] Git local via `git` do sistema (GitHub na Fase 10)
+│   ├── git/                # [Rust] Git local via `git` do sistema e GitHub pela API REST
 │   ├── providers/          # [Rust] AIProvider, Provider Registry, Provider Sessions
 │   │   └── api/            # [Rust] conexões de API: OpenAI e compatíveis, Anthropic,
 │   │                       #        Gemini e perfil genérico (qualquer API HTTP/JSON)
@@ -113,6 +113,30 @@ pnpm check            # typecheck + cargo fmt --check + cargo clippy -D warnings
 ```
 
 ## O que já funciona
+
+### Fase 10 — GitHub e pull requests
+
+- **Do commit ao merge sem sair do Orchestrator:** a seção GitHub do painel
+  GIT mostra o repositório, a conta, o pull request da branch atual com a
+  CI (✓ ✗ ●), os PRs e as issues abertos; "Criar pull request" abre o
+  formulário, que pode vir de uma task (título, descrição, resultado e
+  arquivos) e avisa — e oferece o push — quando a branch ainda não está
+  no GitHub.
+- **Aba do PR:** descrição, CI com o link de cada verificação, a revisão
+  de cada revisor, comentários (e caixa para comentar) e o merge (merge,
+  squash ou rebase, apagando a branch), com o motivo quando o GitHub não
+  deixa. O Orchestrator não bloqueia nada que o repositório permita.
+- **Conexão:** o token vai para o cofre do sistema (aba GitHub); também
+  valem `GH_TOKEN`/`GITHUB_TOKEN` e o `gh auth login`. GitHub Enterprise
+  pelo host e pela URL da API.
+- **As IAs também usam o GitHub** (`github.*`), sob o modo de autonomia:
+  no Autônomo padrão, abrir PR, comentar e fazer merge perguntam antes.
+- **Fetch** no painel GIT; PRs e issues criados ou integrados entram no
+  histórico e na busca do projeto.
+
+![A seção GitHub e a aba de um pull request](./docs/assets/fase-10-pr.png)
+
+Referência: [`docs/github.md`](./docs/github.md).
 
 ### Fase 9 — autonomia e pausa
 

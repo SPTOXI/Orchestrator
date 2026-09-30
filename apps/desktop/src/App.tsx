@@ -984,6 +984,10 @@ function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenPr
                   agente; e pode pausar as IAs a qualquer momento.
                 </li>
                 <li>
+                  <strong>GitHub</strong>: pull requests com CI, revisões, comentários e merge, issues e fetch, pelo
+                  painel GIT ou pelas IAs — com o token no cofre do sistema.
+                </li>
+                <li>
                   <strong>HISTORY</strong>: toda chamada de ferramenta é auditada, inclusive as feitas por IAs.
                 </li>
               </ul>
@@ -993,7 +997,6 @@ function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenPr
         <div>
           <h2>Próximas fases</h2>
           <ul>
-            <li>10 — GitHub, pull requests e operações remotas</li>
             <li>11 — Otimização de tokens, cache, compactação de contexto</li>
           </ul>
         </div>

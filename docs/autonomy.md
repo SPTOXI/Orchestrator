@@ -86,7 +86,8 @@ Regras padrão (restauráveis na aba):
 | 8 | comando `sudo *` | perguntar |
 | 9 | comando `git push*` | perguntar |
 | 10 | `terminal.write` | perguntar |
-| 11 | qualquer outra | permitir |
+| 11 | `github.*` · ações | perguntar (publica no GitHub em nome da sua conta; Fase 10) |
+| 12 | qualquer outra | permitir |
 
 ### Como uma chamada é julgada
 
@@ -113,12 +114,13 @@ Exemplos com as regras padrão:
 
 | Chamada | Decisão |
 | ------- | ------- |
-| `shell.execute` `npm test` | permitir (regra 11) |
+| `shell.execute` `npm test` | permitir (regra 12) |
 | `shell.execute` `npm test && rm -rf dist` | perguntar (regra 7, pela segunda parte) |
-| `filesystem.write` `src/app.ts` | permitir (regra 11) |
+| `filesystem.write` `src/app.ts` | permitir (regra 12) |
 | `filesystem.write` `../outro/app.ts` | perguntar (regra 2) |
 | `filesystem.read` `.env.local` | perguntar (regra 1) |
-| `git.commit` | permitir (regra 11) |
+| `git.commit` | permitir (regra 12) |
+| `github.pr.create` | perguntar (regra 11) |
 | `git.push` | perguntar (regra 5) |
 
 A aba Autonomia tem **Experimentar**, que usa o mesmo código do gate e as

@@ -88,6 +88,9 @@ Eventos adicionais:
 | `PROJECT_OPENED` | `project.open` | `name`, `path`, `gitRoot`, `branch`, `languages`, `frameworks` |
 | `GIT_COMMIT` | `git.commit` | `repo`, `hash`, `branch`, `subject` |
 | `GIT_PUSH` | `git.push` | `repo`, `branch`, `upstream`, `forced` |
+| `GITHUB_PR_CREATED` | `github.pr.create` | `repo`, `number`, `title`, `url`, `head`, `base`, `draft` |
+| `GITHUB_PR_MERGED` | `github.pr.merge` | `repo`, `number`, `title`, `url`, `method`, `sha`, `branchDeleted` |
+| `GITHUB_ISSUE_CREATED` | `github.issue.create` | `repo`, `number`, `title`, `url` |
 
 Strings com mais de 512 bytes em `args` são resumidas no evento
 (`"…(+N bytes)"`). Eventos de streaming (`StreamEvent`) não são duráveis: veja
@@ -350,8 +353,37 @@ Fora de um repositório → `NOT_FOUND`; `git` ausente → `SPAWN`; o Git recuso
 | `git.stash` | ação | `action` (`push`/`pop`/`apply`/`drop`/`list`), `message?`, `includeUntracked?`, `index?` | `{ output, stashes }` |
 | `git.reset` | ação | `mode?` (`soft`/`mixed`/`hard`; padrão `mixed`), `target?`, `files?` (só `mixed`: tira do stage) | `{ output, status }` |
 
+| `git.remotes` | consulta | — | `{ remotes: [{ name, url, github? }] }` (`github`: o repositório `{ host, owner, name }` que o remoto é, no host configurado; Fase 10) |
+| `git.fetch` | ação | `remote?`, `prune?`, `timeoutMs?` | `{ output, status }` (Fase 10) |
+
 Nomes de ref que começam com `-` são rejeitados (`INVALID_ARGS`) para não
 virarem opções do Git. `branch` sem `remote` em pull/push → `INVALID_ARGS`.
+
+---
+
+## github (Fase 10)
+
+API REST v3 do GitHub ([ADR-0017](./adr/0017-github-e-operacoes-remotas.md),
+referência em [`github.md`](./github.md)). Todas aceitam `path?` (pasta do
+projeto) e `repo?` (`dono/nome`; padrão: o remoto do projeto). Sem token →
+`PERMISSION_DENIED`; 404 → `NOT_FOUND`; 422 → `INVALID_ARGS` com o motivo do
+GitHub; rede, 5xx e limite de requisições → `COMMAND_FAILED`.
+
+| Ferramenta | Tipo | Argumentos | Saída |
+| ---------- | ---- | ---------- | ----- |
+| `github.status` | consulta | — | `{ host, apiUrl, authenticated, tokenSource, account, accountError, repo, repoRef, remote, repoError, branch, upstream, ahead, behind, pull, checks }` |
+| `github.pr.list` | consulta | `state?` (`open`/`closed`/`all`), `head?`, `base?`, `limit?` (30, máx. 100) | `{ repo, pulls }` |
+| `github.pr.get` | consulta | `number` | PR com `body`, `mergeable`, `mergeableState`, `checks`, `reviews`, `comments` |
+| `github.checks` | consulta | `ref?` (padrão: a branch atual no GitHub) | `{ ref, checks: { state, total, passed, failed, pending, items } }` |
+| `github.issue.list` | consulta | `state?`, `labels?`, `limit?` | `{ repo, issues }` (sem PRs) |
+| `github.issue.get` | consulta | `number` | issue com `body` e `comments` |
+| `github.pr.create` | ação | `title`, `body?`, `base?` (branch padrão), `head?` (branch atual, que precisa estar no GitHub sem commits pendentes), `draft?` | PR + `GITHUB_PR_CREATED` |
+| `github.pr.comment` | ação | `number`, `body` | comentário |
+| `github.pr.merge` | ação | `number`, `method?` (`merge`/`squash`/`rebase`), `commitTitle?`, `deleteBranch?` | `{ number, title, url, merged, sha, branchDeleted, branchError }` + `GITHUB_PR_MERGED` |
+| `github.issue.create` | ação | `title`, `body?`, `labels?` | issue + `GITHUB_ISSUE_CREATED` |
+| `github.issue.comment` | ação | `number`, `body` | comentário |
+
+O token nunca aparece nos argumentos, no `TOOL_CALLED` nem nas saídas.
 
 ---
 
