@@ -17,3 +17,4 @@ Cada fase termina com um relatório no formato exigido pelo documento mestre
 | 8b | [fase-8b.md](./fase-8b.md) |
 | 9 | [fase-9.md](./fase-9.md) |
 | 10 | [fase-10.md](./fase-10.md) |
+| 11 | [fase-11.md](./fase-11.md) |
