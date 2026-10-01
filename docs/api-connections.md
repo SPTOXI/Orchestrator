@@ -149,6 +149,14 @@ com o JSON Schema dos argumentos de cada ferramenta
 
 - Nomes com ponto viram `grupo__acao` nos protocolos que não aceitam ponto
   (`filesystem.read` ↔ `filesystem__read`).
+- **O que o modelo pode fazer:** com ferramentas, as instruções de sistema
+  ganham um parágrafo montado a partir dos nomes delas (arquivos, comandos,
+  git, GitHub com a conta conectada, memória, subagentes). Ele diz ao
+  modelo para usar as ferramentas em vez de responder "não tenho acesso",
+  que não há navegador nem login em sites, e que, faltando um acesso, deve
+  dizer qual e como o usuário o habilita (no GitHub: painel GIT →
+  "Conectar ao GitHub"). O texto só depende das ferramentas, então não
+  muda dentro da sessão (o cache de prompt continua valendo).
 - Os blocos `<tool_call>` não aparecem no texto mostrado ao usuário.
 - **Loop do turno:** modelo → ferramentas pedidas (em ordem, pelo
   Orchestrator) → resultados → modelo… até uma resposta sem pedidos.

@@ -11,8 +11,8 @@ use crate::http::{FrameReader, HttpClient, Retry, RetryKind};
 use crate::protocol::{protocol, Delta, Reply, Request, Stop};
 use crate::secrets::SecretStore;
 use crate::tools::{
-    parse_prompt_calls, ping_tool, prompt_instructions, prompt_results, rejected, result_content,
-    MarkupFilter,
+    capabilities_note, parse_prompt_calls, ping_tool, prompt_instructions, prompt_results,
+    rejected, result_content, MarkupFilter,
 };
 use async_trait::async_trait;
 use chrono::Utc;
@@ -279,6 +279,12 @@ impl ApiProvider {
         tools: &[ToolDefinition],
     ) -> Option<String> {
         let mut system = base.unwrap_or("").to_owned();
+        if let Some(note) = capabilities_note(tools).filter(|_| mode != ToolMode::None) {
+            if !system.is_empty() {
+                system.push_str("\n\n");
+            }
+            system.push_str(&note);
+        }
         if mode == ToolMode::Prompt && !tools.is_empty() {
             if !system.is_empty() {
                 system.push_str("\n\n");

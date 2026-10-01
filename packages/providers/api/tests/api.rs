@@ -1123,7 +1123,9 @@ async fn the_project_context_joins_the_system_instructions_once() {
     };
     assert!(system(0).starts_with("You are an AI agent"));
     assert!(system(0)
-        .ends_with("## TASK\ncorrigir o checkout\n\n## GIT STATE\nbranch main\ntools: true"));
+        .contains("## TASK\ncorrigir o checkout\n\n## GIT STATE\nbranch main\ntools: true\n\n"));
+    // Then what the tools let the model do (no generic "I cannot").
+    assert!(system(0).ends_with("instead of a generic refusal."));
     assert_eq!(
         system(1),
         system(0),

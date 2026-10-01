@@ -78,6 +78,59 @@ pub fn ping_tool() -> ToolDefinition {
 pub const CALL_OPEN: &str = "<tool_call>";
 pub const CALL_CLOSE: &str = "</tool_call>";
 
+/// System prompt section that tells the model what it can do through the
+/// tools it has, so it does not answer with a generic "I cannot access
+/// that" when a tool does exactly that, and says what is missing when
+/// one does not. Built from the tool names only: stable for a session.
+pub fn capabilities_note(tools: &[ToolDefinition]) -> Option<String> {
+    let has = |prefixes: &[&str]| {
+        tools
+            .iter()
+            .any(|t| prefixes.iter().any(|p| t.name.starts_with(p)))
+    };
+    let mut can = Vec::new();
+    if has(&["filesystem."]) {
+        can.push("read, write, move and delete the project's files");
+    }
+    if has(&["shell.", "terminal.", "process.", "package.", "runtime."]) {
+        can.push("run commands and programs on the user's machine (shell, terminals, processes, packages)");
+    }
+    if has(&["git."]) {
+        can.push("use git in the project (status, diff, commit, branches, pull, push)");
+    }
+    if has(&["github."]) {
+        can.push("work on GitHub with the account the user connected in the Orchestrator (pull requests, CI checks, reviews, issues, merge)");
+    }
+    if has(&["memory.", "decision."]) {
+        can.push("read and save the project's memory and decisions");
+    }
+    if has(&["agent."]) {
+        can.push("delegate parts of a task to sub-agents");
+    }
+    if can.is_empty() {
+        return None;
+    }
+    let mut note = format!(
+        "What you can do here: you act only through your tools, which the Orchestrator runs on the user's \
+         machine. With them you can {}. Use them instead of saying you cannot: never claim you have no \
+         access to something a tool reaches, and never ask the user to do by hand what a tool does.",
+        can.join("; ")
+    );
+    if has(&["github."]) {
+        note.push_str(
+            " The github tools use the user's GitHub account through a token kept by the Orchestrator \
+             (you never see it). If a call says GitHub is not connected, tell the user to connect it in the \
+             GIT panel, GitHub section, \"Conectar ao GitHub\".",
+        );
+    }
+    note.push_str(
+        " You have no web browser and cannot sign in to websites or use the user's passwords. When a request \
+         needs an access you do not have, say exactly what is missing and how the user can provide it, \
+         instead of a generic refusal.",
+    );
+    Some(note)
+}
+
 /// System prompt section that teaches the tool protocol.
 pub fn prompt_instructions(tools: &[ToolDefinition]) -> String {
     let mut text = String::from(
@@ -325,6 +378,24 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use orchestrator_core::{ToolCallId, ToolError, ToolErrorKind};
+
+    #[test]
+    fn the_note_says_what_the_tools_reach() {
+        let tool = |name: &str| ToolDefinition {
+            name: name.into(),
+            ..ping_tool()
+        };
+        let note = capabilities_note(&[tool("filesystem.read"), tool("github.pr.list")]).unwrap();
+        assert!(
+            note.contains("project's files") && note.contains("GitHub"),
+            "{note}"
+        );
+        assert!(note.contains("Conectar ao GitHub") && note.contains("no web browser"));
+        assert!(!note.contains("run commands"), "{note}");
+        // The connection test's ping, or no tools: nothing to say.
+        assert_eq!(capabilities_note(&[ping_tool()]), None);
+        assert_eq!(capabilities_note(&[]), None);
+    }
 
     #[test]
     fn names_round_trip() {
