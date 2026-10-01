@@ -305,12 +305,15 @@ mod tests {
             .spawn()
             .unwrap();
         supervisor.adopt(&child, "ping", false);
+        // `ping -n 60` takes about a minute on its own.
+        tokio::time::sleep(Duration::from_millis(500)).await;
         assert!(child.try_wait().unwrap().is_none(), "running");
         drop(supervisor);
-        let status = tokio::time::timeout(Duration::from_secs(10), child.wait())
+        // Ending in seconds is the job's doing. Windows ends the processes
+        // of a closed job with exit code 0, so the code says nothing here.
+        tokio::time::timeout(Duration::from_secs(10), child.wait())
             .await
             .expect("ended with the job")
             .unwrap();
-        assert!(!status.success());
     }
 }
