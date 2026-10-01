@@ -3,6 +3,7 @@
 // provider and the sessions of the open project.
 
 import { useEffect, useState } from "react";
+import { activityLabel, type SessionActivity } from "../lib/activity";
 import { formatPrices } from "../lib/connections";
 import { memberLabel, MODE_LABELS } from "../lib/council";
 import { baseName } from "../lib/format";
@@ -11,6 +12,7 @@ import type { Connections } from "../lib/useConnections";
 import type { Council } from "../lib/useCouncil";
 import type { ProviderHealth, Providers } from "../lib/useProviders";
 import type { ConnectionView, ProviderCapabilities, ProviderInfo, SessionInfo, SessionStatus } from "../lib/types";
+import { Elapsed } from "./Activity";
 import { EditIcon, PlusIcon, RefreshIcon } from "./icons";
 
 interface Props {
@@ -29,6 +31,10 @@ interface Props {
   onOpenCouncil: () => void;
   /** Opens "Nova sessão com o Conselho". */
   onOpenRoute: () => void;
+  /** Turns in progress, by session (lib/activity.ts). */
+  activity?: Record<string, SessionActivity>;
+  /** Tool calls waiting for the user's authorization. */
+  waitingCalls?: ReadonlySet<string>;
 }
 
 const CAPABILITY_LABELS: Array<[keyof ProviderCapabilities, string]> = [
@@ -140,12 +146,18 @@ function NewSession({
   title,
   starting,
   onStart,
+  isConnection,
+  onConfigure,
 }: {
   providers: ProviderInfo[];
   disabled: boolean;
   title: string;
   starting: boolean;
   onStart: (provider: string, model: string | null) => void;
+  /** Whether a provider is one of the user's API connections. */
+  isConnection: (id: string) => boolean;
+  /** Opens a connection's settings. */
+  onConfigure: (id: string) => void;
 }) {
   const active = providers.find((p) => p.active) ?? providers[0] ?? null;
   const [providerId, setProviderId] = useState<string | null>(null);
@@ -153,6 +165,8 @@ function NewSession({
   const [model, setModel] = useState<string | null>(null);
   const models = provider?.capabilities.models ?? [];
   const chosen = models.some((m) => m.id === model) ? model : (provider?.capabilities.defaultModel ?? models[0]?.id ?? null);
+  /** An API connection with no model on: a session could not start. */
+  const noModel = provider !== null && isConnection(provider.id) && chosen === null;
 
   // Follow the active provider until the user picks one here.
   useEffect(() => {
@@ -160,47 +174,58 @@ function NewSession({
   }, [providers, providerId]);
 
   return (
-    <div className="new-session">
-      <select
-        value={provider?.id ?? ""}
-        disabled={providers.length === 0}
-        onChange={(e) => {
-          setProviderId(e.target.value);
-          setModel(null);
-        }}
-        title="Provider da sessão"
-      >
-        {providers.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.name}
-          </option>
-        ))}
-      </select>
-      <select
-        value={chosen ?? ""}
-        disabled={models.length === 0}
-        onChange={(e) => setModel(e.target.value)}
-        title={(() => {
-          const info = models.find((m) => m.id === chosen);
-          return info ? [info.name, formatPrices(info), info.tags.join(", ")].filter(Boolean).join(" · ") : "Modelo";
-        })()}
-      >
-        {models.length === 0 && <option value="">padrão</option>}
-        {models.map((m) => (
-          <option key={m.id} value={m.id}>
-            {m.id}
-          </option>
-        ))}
-      </select>
-      <button
-        className="button small primary"
-        disabled={disabled || !provider || starting}
-        title={title}
-        onClick={() => provider && onStart(provider.id, chosen)}
-      >
-        <PlusIcon /> {starting ? "Iniciando…" : "Nova sessão"}
-      </button>
-    </div>
+    <>
+      <div className="new-session">
+        <select
+          value={provider?.id ?? ""}
+          disabled={providers.length === 0}
+          onChange={(e) => {
+            setProviderId(e.target.value);
+            setModel(null);
+          }}
+          title="Provider da sessão"
+        >
+          {providers.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+        <select
+          value={chosen ?? ""}
+          disabled={models.length === 0}
+          onChange={(e) => setModel(e.target.value)}
+          title={(() => {
+            const info = models.find((m) => m.id === chosen);
+            return info ? [info.name, formatPrices(info), info.tags.join(", ")].filter(Boolean).join(" · ") : "Modelo";
+          })()}
+        >
+          {models.length === 0 && <option value="">padrão</option>}
+          {models.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.id}
+            </option>
+          ))}
+        </select>
+        <button
+          className="button small primary"
+          disabled={disabled || !provider || starting || noModel}
+          title={noModel ? "Esta conexão não tem nenhum modelo ligado" : title}
+          onClick={() => provider && onStart(provider.id, chosen)}
+        >
+          <PlusIcon /> {starting ? "Iniciando…" : "Nova sessão"}
+        </button>
+      </div>
+      {noModel && provider && (
+        <div className="inline-notice pad-x">
+          <strong>{provider.name}</strong> não tem nenhum modelo ligado. Abra a conexão, clique em "Buscar modelos" e
+          ligue pelo menos um.{" "}
+          <button className="link" onClick={() => onConfigure(provider.id)}>
+            Abrir a conexão
+          </button>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -223,6 +248,16 @@ function sessionTree(sessions: SessionInfo[]): Array<{ session: SessionInfo; dep
   return out;
 }
 
+/** What a session's AI is doing now, with its clock. */
+function Working({ activity, waitingCalls }: { activity: SessionActivity; waitingCalls?: ReadonlySet<string> }) {
+  const waiting = activity.callId !== null && (waitingCalls?.has(activity.callId) ?? false);
+  return (
+    <div className={`meta ellipsis working-text${waiting ? " waiting" : ""}`}>
+      {activityLabel(activity, waiting)} · <Elapsed since={activity.since} />
+    </div>
+  );
+}
+
 export function ProvidersPanel({
   ready,
   providers,
@@ -236,6 +271,8 @@ export function ProvidersPanel({
   council,
   onOpenCouncil,
   onOpenRoute,
+  activity = {},
+  waitingCalls,
 }: Props) {
   const list = providers.view?.providers ?? [];
   const byId = new Map((connections.view?.connections ?? []).map((c) => [c.connection.id, c]));
@@ -362,6 +399,8 @@ export function ProvidersPanel({
             disabled={!ready || !projectPath}
             title={!projectPath ? "Abra um projeto: sessões pertencem ao projeto" : "Iniciar sessão com o provider e o modelo escolhidos"}
             onStart={onNewSession}
+            isConnection={(id) => byId.has(id)}
+            onConfigure={onEditConnection}
           />
         )}
         {!projectPath && <div className="meta pad">Abra um projeto para iniciar sessões.</div>}
@@ -393,6 +432,7 @@ export function ProvidersPanel({
                   {session.turns > 0 && ` · ${formatTokens(session.usage)}`}
                   {!projectPath && ` · ${baseName(session.projectPath)}`}
                 </div>
+                {activity[session.id] && <Working activity={activity[session.id]!} waitingCalls={waitingCalls} />}
               </div>
             </li>
           ))}

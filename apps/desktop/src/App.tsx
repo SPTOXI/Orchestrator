@@ -1,4 +1,5 @@
 import { type MouseEvent as ReactMouseEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { getCurrentWindow, UserAttentionType } from "@tauri-apps/api/window";
 import { CommandPanel } from "./components/CommandPanel";
 import { ConnectionEditor } from "./components/ConnectionEditor";
 import { ContextBar } from "./components/ContextBar";
@@ -60,6 +61,17 @@ import { useProjects } from "./lib/useProjects";
 import { useGitStatus } from "./lib/useGitStatus";
 import { useProviders } from "./lib/useProviders";
 import { useRuntimeSessions } from "./lib/useRuntimeSessions";
+import { activityLabel, formatElapsed, runningList } from "./lib/activity";
+import { useSessionActivity } from "./lib/useSessionActivity";
+
+/** "A sessão terminou" notice (bottom right). */
+interface FinishToast {
+  id: string;
+  sessionId: string;
+  title: string;
+  text: string;
+  ok: boolean;
+}
 
 type PanelId = "project" | "providers" | "tasks" | "agents" | "terminal" | "git" | "memory" | "history";
 type BottomTab = "terminal" | "processes" | "command";
@@ -202,6 +214,11 @@ export function App() {
     [autonomy.pending],
   );
   const openSessionId = activeTab?.startsWith("session:") ? activeTab.slice("session:".length) : null;
+  /** What each AI is doing now, and the turn that ended last. */
+  const activity = useSessionActivity(ready);
+  /** Sessions whose turn ended while the user looked elsewhere. */
+  const [unseen, setUnseen] = useState<ReadonlySet<string>>(new Set());
+  const [toasts, setToasts] = useState<FinishToast[]>([]);
   /** What the top bar shows as the current task: the one of the open
    * session, else the task being worked on now (ADR-0014). */
   const currentTask =
@@ -285,6 +302,60 @@ export function App() {
 
   const openFile = (path: string) => showTab({ id: `file:${path}`, kind: "file", path });
   const openSession = (sessionId: string) => showTab({ id: `session:${sessionId}`, kind: "session", sessionId });
+
+  // A turn ended where the user is not looking: mark the tab, say so in a
+  // notice and, with the window in the background, flash it in the taskbar.
+  // Agents report through their own board (ADR-0015), not here.
+  const finished = activity.finished;
+  useEffect(() => {
+    if (!finished) return;
+    const focused = document.hasFocus();
+    if (focused && openSessionId === finished.sessionId) return;
+    if (agents.list.some((agent) => agent.session === finished.sessionId)) return;
+    setUnseen((all) => new Set(all).add(finished.sessionId));
+    const id = `${finished.sessionId}:${finished.turnId}`;
+    const text =
+      finished.status === "completed"
+        ? `terminou em ${formatElapsed(finished.durationMs)}`
+        : finished.status === "cancelled"
+          ? "foi cancelada"
+          : `falhou${finished.error ? `: ${finished.error}` : ""}`;
+    const toast: FinishToast = {
+      id,
+      sessionId: finished.sessionId,
+      title: sessionsById.get(finished.sessionId)?.title ?? "Sessão",
+      text,
+      ok: finished.status === "completed",
+    };
+    setToasts((all) => [...all.filter((t) => t.id !== id), toast].slice(-4));
+    const timer = window.setTimeout(() => setToasts((all) => all.filter((t) => t.id !== id)), 12_000);
+    if (!focused && ready) {
+      void getCurrentWindow()
+        .requestUserAttention(UserAttentionType.Informational)
+        .catch(() => undefined);
+    }
+    return () => window.clearTimeout(timer);
+    // Only a new ending matters; the rest is read as it is now.
+  }, [finished]);
+
+  // Opening the session is seeing it.
+  useEffect(() => {
+    if (!openSessionId) return;
+    setUnseen((all) => {
+      if (!all.has(openSessionId)) return all;
+      const next = new Set(all);
+      next.delete(openSessionId);
+      return next;
+    });
+  }, [openSessionId]);
+
+  /** The AIs at work, for the status bar. */
+  const working = runningList(activity).map((a) => ({
+    sessionId: a.sessionId,
+    title: sessionsById.get(a.sessionId)?.title ?? "Sessão",
+    label: activityLabel(a, a.callId !== null && waitingCalls.has(a.callId)),
+    since: a.since,
+  }));
 
   const newSession = async (provider: string, model: string | null) => {
     setStartingSession(true);
@@ -452,6 +523,8 @@ export function App() {
             council={council}
             onOpenCouncil={openCouncil}
             onOpenRoute={() => openRoute()}
+            activity={activity.running}
+            waitingCalls={waitingCalls}
           />
         );
       case "tasks":
@@ -610,6 +683,12 @@ export function App() {
                       onClick={() => setActiveTab(tab.id)}
                       title={tab.kind === "file" ? tab.path : tab.kind === "diff" ? `${tab.repo} — ${tab.file}` : undefined}
                     >
+                      {tab.kind === "session" && activity.running[tab.sessionId] && (
+                        <span className="spinner small" title="A IA está trabalhando" />
+                      )}
+                      {tab.kind === "session" && !activity.running[tab.sessionId] && unseen.has(tab.sessionId) && (
+                        <span className="tab-done" title="Terminou enquanto você estava em outro lugar" />
+                      )}
                       <span>{tabTitle(tab, sessionsById, connections.view)}</span>
                       {confirmClose === tab.id ? (
                         <span className="confirm">
@@ -704,6 +783,7 @@ export function App() {
                       onOpenContext={openContext}
                       onOpenHandoff={(sessionId) => openHandoff({ sessionId })}
                       waitingCalls={waitingCalls}
+                      activity={activity.running[tab.sessionId] ?? null}
                     />
                   );
                 }
@@ -943,8 +1023,37 @@ export function App() {
           </section>
         </main>
       </div>
+      {toasts.length > 0 && (
+        <div className="toasts" role="status">
+          {toasts.map((toast) => (
+            <div key={toast.id} className={`toast ${toast.ok ? "ok" : "err"}`}>
+              <span className="grow">
+                <strong>{toast.title}</strong> {toast.text}
+              </span>
+              <button
+                className="button small"
+                onClick={() => {
+                  openSession(toast.sessionId);
+                  setToasts((all) => all.filter((t) => t.id !== toast.id));
+                }}
+              >
+                Abrir
+              </button>
+              <button
+                className="icon-button small"
+                title="Fechar"
+                onClick={() => setToasts((all) => all.filter((t) => t.id !== toast.id))}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       <StatusBar
         ready={ready}
+        working={working}
+        onOpenSession={openSession}
         info={info}
         workspace={workspace}
         branch={branchLabel}

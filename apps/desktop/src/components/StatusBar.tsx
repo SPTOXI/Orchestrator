@@ -2,8 +2,20 @@
 
 import { formatUsd } from "../lib/format";
 import type { AppInfo, BudgetView } from "../lib/types";
+import { Elapsed } from "./Activity";
+
+/** An AI at work (lib/activity.ts). */
+export interface Working {
+  sessionId: string;
+  title: string;
+  label: string;
+  since: number;
+}
 
 interface Props {
+  /** The AIs working now, the oldest first. */
+  working?: Working[];
+  onOpenSession?: (sessionId: string) => void;
   ready: boolean;
   info: AppInfo | null;
   workspace: string;
@@ -16,7 +28,19 @@ interface Props {
   onOpenAbout: () => void;
 }
 
-export function StatusBar({ ready, info, workspace, branch, spentToday, onOpenCost, update, onOpenAbout }: Props) {
+export function StatusBar({
+  ready,
+  info,
+  workspace,
+  branch,
+  spentToday,
+  onOpenCost,
+  update,
+  onOpenAbout,
+  working = [],
+  onOpenSession,
+}: Props) {
+  const first = working[0];
   return (
     <footer className="status-bar">
       <span className={`status ${ready ? "ok" : "err"}`}>
@@ -28,6 +52,22 @@ export function StatusBar({ ready, info, workspace, branch, spentToday, onOpenCo
         {workspace || "—"}
       </span>
       <span className="spacer" />
+      {first && (
+        <button
+          className="status-link working"
+          title={working.map((w) => `${w.title}: ${w.label}`).join("\n") + "\n— abre a sessão"}
+          onClick={() => onOpenSession?.(first.sessionId)}
+        >
+          <span className="spinner small" aria-hidden />
+          {working.length === 1 ? (
+            <>
+              {first.title}: {first.label} · <Elapsed since={first.since} />
+            </>
+          ) : (
+            <>{working.length} IAs trabalhando</>
+          )}
+        </button>
+      )}
       {spentToday && (
         <button
           className={`status-link${spentToday.exhausted ? " err" : ""}`}

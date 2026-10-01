@@ -3,12 +3,14 @@
 // message and the handoff to another AI (ADR-0013).
 
 import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import type { SessionActivity } from "../lib/activity";
 import { HANDOFF_PROMPT_PREFIX, SECTION_LABELS, summaryLine } from "../lib/context";
 import { formatDuration, formatTime } from "../lib/format";
 import { contextApi, errorMessage, sessionApi } from "../lib/runtime";
 import { formatUsage, type TranscriptItem } from "../lib/transcript";
 import { useSessionTranscript } from "../lib/useProviders";
 import type { ContextOptions, ContextPack, ProviderInfo, SessionInfo } from "../lib/types";
+import { ActivityLine } from "./Activity";
 import type { ContextTabRequest } from "./ContextView";
 import { SendIcon, StopIcon, SubagentIcon } from "./icons";
 import { statusDot, statusLabel } from "./ProvidersPanel";
@@ -30,6 +32,8 @@ interface Props {
   onOpenHandoff: (sessionId: string) => void;
   /** Tool calls waiting for the user's authorization (ADR-0016). */
   waitingCalls?: ReadonlySet<string>;
+  /** What the AI is doing in the turn in progress, if any. */
+  activity?: SessionActivity | null;
 }
 
 function compactJson(value: unknown, max = 160): string {
@@ -308,6 +312,7 @@ export function SessionView({
   onOpenContext,
   onOpenHandoff,
   waitingCalls,
+  activity = null,
 }: Props) {
   const { transcript, error: syncError } = useSessionTranscript(sessionId, ready);
   const [input, setInput] = useState("");
@@ -523,8 +528,15 @@ export function SessionView({
             waiting={item.kind === "tool" && (waitingCalls?.has(item.callId) ?? false)}
           />
         ))}
-        {running && <div className="meta typing">{providerName} está trabalhando…</div>}
+        {running && !activity && <div className="meta typing">{providerName} está trabalhando…</div>}
       </div>
+      {running && activity && (
+        <ActivityLine
+          activity={activity}
+          providerName={providerName}
+          waitingForUser={activity.callId !== null && (waitingCalls?.has(activity.callId) ?? false)}
+        />
+      )}
       {orphan && (
         <div className="inline-notice">
           O provider <code>{session?.provider}</code> não está mais registrado (conexão removida, renomeada ou

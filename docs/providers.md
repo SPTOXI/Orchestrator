@@ -190,6 +190,27 @@ local; os testes usam `MemorySessionStore`.
   um turno falhar.
 - **Um turno interrompido** pela queda do app perde só o próprio andamento.
 
+### A IA trabalhando (interface)
+
+Os eventos ao vivo abaixo também alimentam um indicador único
+(`apps/desktop/src/lib/activity.ts`), para o usuário fazer outra coisa
+enquanto a IA trabalha:
+
+- **na sessão**, uma linha fixa acima da caixa de mensagem: o que a IA
+  está fazendo ("aguardando a resposta da IA", "pensando", "escrevendo a
+  resposta", "executando `filesystem.list`", "esperando sua autorização
+  para …", "a API recusou; tentando de novo") e o tempo do turno; sem sinal
+  da IA por 30 s fora de uma ferramenta, avisa "sem sinal da IA há …";
+- **na lista de sessões**, o mesmo texto com o relógio;
+- **na aba**, um ícone girando; ao terminar enquanto o usuário está em
+  outra aba, uma bolinha verde até ele abrir a sessão;
+- **na barra de status**, a IA trabalhando (ou "N IAs trabalhando"), que
+  abre a sessão;
+- **ao terminar** fora da vista: um aviso "… terminou em 1 min 05 s" (ou
+  "falhou: …") com "Abrir", e, com a janela em segundo plano, a janela
+  pisca na barra de tarefas. Os agentes não geram esse aviso: eles têm o
+  Agent Board.
+
 ### Eventos ao vivo — `StreamEvent::Session { sessionId, seq, event }`
 
 | `event.type` | Campos |
