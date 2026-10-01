@@ -162,6 +162,10 @@ export function ConnectionEditor({ ready, active, connectionId, view, onSaved, o
     setDraft((d) => (d ? { ...d, models: d.models.map((m, i) => (i === index ? { ...m, ...patch } : m)) } : d));
   const keyStatus = existing?.key ?? null;
   const toolMode = draft.toolMode ?? defaultToolMode(draft.kind);
+  const fallbackChoices = (view?.connections ?? [])
+    .map((c) => c.connection)
+    .filter((c) => c.id !== draft.id && c.id !== previousId && c.enabled);
+  const fallbackConnection = fallbackChoices.find((c) => c.id === draft.fallback?.connection) ?? null;
 
   /** The draft with JSON fields parsed; throws a readable message. */
   const build = (): Connection => {
@@ -563,6 +567,66 @@ export function ConnectionEditor({ ready, active, connectionId, view, onSaved, o
           <div className="meta form-hint">
             O modelo nunca executa nada sozinho: pede a ferramenta e o Orchestrator executa e registra no histórico. O
             limite de rodadas evita laços infinitos; ao atingi-lo o turno termina com um aviso.
+          </div>
+        </section>
+
+        <section>
+          <h3>Quando o servidor não responder</h3>
+          <label className="form-row">
+            <span>Esperar no máximo (s)</span>
+            <DraftInput
+              className="num"
+              placeholder="120 (padrão)"
+              value={String(draft.firstResponseSecs ?? "")}
+              onCommit={(text) => {
+                const secs = numberOrNull(text);
+                update({ firstResponseSecs: secs === null ? null : Math.max(0, Math.round(secs)) });
+              }}
+            />
+          </label>
+          <label className="form-row">
+            <span>Conexão reserva</span>
+            <select
+              value={draft.fallback?.connection ?? ""}
+              onChange={(e) =>
+                update({ fallback: e.target.value ? { connection: e.target.value, model: null } : null })
+              }
+            >
+              <option value="">Nenhuma</option>
+              {fallbackChoices.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {fallbackConnection && (
+            <label className="form-row">
+              <span>Modelo da reserva</span>
+              <select
+                value={draft.fallback?.model ?? ""}
+                onChange={(e) =>
+                  update({
+                    fallback: { connection: fallbackConnection.id, model: e.target.value || null },
+                  })
+                }
+              >
+                <option value="">O mesmo modelo, se existir; senão o padrão</option>
+                {fallbackConnection.models
+                  .filter((m) => m.enabled)
+                  .map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name ?? m.id}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          )}
+          <div className="meta form-hint">
+            Servidores sobrecarregados (como o da DeepSeek nos horários de pico) às vezes aceitam o pedido e não
+            começam a responder. O Orchestrator desiste depois do tempo acima (0 espera o quanto o servidor quiser) e,
+            se houver uma conexão reserva, o mesmo pedido segue por ela, sem perder a conversa; o custo usa os preços
+            da reserva. Também vale para limite de uso (429), erros do servidor (5xx) e servidor fora do ar.
           </div>
         </section>
 

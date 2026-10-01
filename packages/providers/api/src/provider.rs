@@ -43,6 +43,9 @@ const OUTPUT_CAP_TTL: Duration = Duration::from_secs(30 * 60);
 pub(crate) type ConversationStore =
     Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<Conversation>>>>>;
 
+/// Finds an enabled saved connection by id (for [`Connection::fallback`]).
+pub(crate) type FallbackLookup = Arc<dyn Fn(&str) -> Option<Connection> + Send + Sync>;
+
 pub struct ApiProvider {
     conn: Connection,
     secrets: Arc<dyn SecretStore>,
@@ -53,6 +56,7 @@ pub struct ApiProvider {
     conversations: ConversationStore,
     /// Output limits learned from 402s, by model: what the credit paid for.
     output_caps: Mutex<HashMap<String, (u32, Instant)>>,
+    fallbacks: Option<FallbackLookup>,
 }
 
 /// Result of "Testar conexão".
@@ -81,7 +85,13 @@ impl ApiProvider {
             key_cache: Mutex::new(None),
             conversations: ConversationStore::default(),
             output_caps: Mutex::default(),
+            fallbacks: None,
         }
+    }
+
+    pub(crate) fn with_fallbacks(mut self, lookup: FallbackLookup) -> Self {
+        self.fallbacks = Some(lookup);
+        self
     }
 
     pub(crate) fn with_conversations(mut self, store: ConversationStore) -> Self {
@@ -165,6 +175,108 @@ impl ApiProvider {
         on_retry: &(dyn Fn(&Retry) + Send + Sync),
         cancel: &CancellationToken,
     ) -> Result<Reply, ProviderError> {
+        // Text already shown cannot be taken back: only a request that
+        // produced nothing goes to the fallback.
+        let started = std::sync::atomic::AtomicBool::new(false);
+        let watched = |delta: Delta| {
+            started.store(true, std::sync::atomic::Ordering::Relaxed);
+            on_delta(delta);
+        };
+        let error = match self
+            .call_model_here(&call, &watched, on_retry, cancel)
+            .await
+        {
+            Ok(reply) => return Ok(reply),
+            Err(error) => error,
+        };
+        if !crate::http::is_overload(&error) {
+            return Err(error);
+        }
+        let fallback = call
+            .fallback
+            .then_some(self.conn.fallback.as_ref())
+            .flatten()
+            .filter(|_| !started.load(std::sync::atomic::Ordering::Relaxed))
+            .and_then(|f| {
+                let conn = self.fallbacks.as_ref()?(&f.connection)?;
+                let model = f
+                    .model
+                    .clone()
+                    .filter(|m| conn.model(m).is_some())
+                    .or_else(|| conn.model(&call.model.id).map(|m| m.id.clone()))
+                    .or_else(|| conn.default_model_id())?;
+                // Native tool calls need a connection that makes them.
+                let tools_ok = call.tools.is_empty() || conn.tool_mode() == ToolMode::Native;
+                tools_ok.then_some((conn, model))
+            });
+        let Some((conn, model_id)) = fallback else {
+            return Err(overloaded(&self.conn, error));
+        };
+        on_retry(&Retry {
+            attempt: 1,
+            wait: Duration::ZERO,
+            reason: overloaded(&self.conn, error.clone()).message,
+            kind: RetryKind::Fallback {
+                connection: conn.name.clone(),
+                model: model_id.clone(),
+            },
+        });
+        let other = ApiProvider::new(conn.clone(), self.secrets.clone(), self.client.clone());
+        let model = other.model_entry(&model_id);
+        // What one protocol keeps of its replies means nothing to another.
+        let same_kind = conn.kind == self.conn.kind;
+        let messages: Vec<Message> = if same_kind {
+            call.messages.to_vec()
+        } else {
+            call.messages
+                .iter()
+                .cloned()
+                .map(|mut m| {
+                    m.native = None;
+                    m
+                })
+                .collect()
+        };
+        let mut reply = other
+            .call_model_here(
+                &ModelCall {
+                    model: &model,
+                    messages: &messages,
+                    fallback: false,
+                    ..call
+                },
+                on_delta,
+                on_retry,
+                cancel,
+            )
+            .await
+            .map_err(|second| {
+                let second = overloaded(&conn, second);
+                ProviderError::new(
+                    second.kind,
+                    format!(
+                        "{} — e a conexão reserva também falhou: {}",
+                        overloaded(&self.conn, error).message,
+                        second.message
+                    ),
+                )
+            })?;
+        if !same_kind {
+            reply.native = None;
+        }
+        reply.served_model.get_or_insert_with(|| model.id.clone());
+        reply.served_by = Some(Box::new((conn, model)));
+        Ok(reply)
+    }
+
+    /// [`Self::call_model`] on this connection only.
+    async fn call_model_here(
+        &self,
+        call: &ModelCall<'_>,
+        on_delta: &(dyn Fn(Delta) + Send + Sync),
+        on_retry: &(dyn Fn(&Retry) + Send + Sync),
+        cancel: &CancellationToken,
+    ) -> Result<Reply, ProviderError> {
         let key = self.key().await?;
         let protocol = protocol(self.conn.kind);
         let stream = protocol.streams(&self.conn);
@@ -181,11 +293,13 @@ impl ApiProvider {
                 cache_key: call.cache_key,
             })
         };
+        // Without streaming, nothing comes before the whole reply.
+        let first_response = self.conn.first_response().filter(|_| stream);
         let mut shrunk = false;
         let response = loop {
             let error = match self
                 .client
-                .send_retrying(&request(&model)?, cancel, on_retry)
+                .send_retrying(&request(&model)?, cancel, on_retry, first_response)
                 .await
             {
                 Ok(response) => break response,
@@ -237,7 +351,8 @@ impl ApiProvider {
             cache_key: call.cache_key,
         };
         let mut decoder = protocol.decoder(&req);
-        let mut reader = FrameReader::new(response, protocol.stream_format(&self.conn, stream));
+        let mut reader = FrameReader::new(response, protocol.stream_format(&self.conn, stream))
+            .with_first_frame_limit(first_response);
         while let Some(frame) = reader.next(cancel).await? {
             for delta in decoder.feed(&frame)? {
                 on_delta(delta);
@@ -267,9 +382,13 @@ impl ApiProvider {
         model
     }
 
-    /// Usage plus cost from the model's configured prices (ADR-0018).
-    fn priced(&self, model: &ModelEntry, usage: TokenUsage) -> TokenUsage {
-        crate::cost::priced(&self.conn, model, usage)
+    /// Usage plus cost from the prices of the model that answered
+    /// (ADR-0018): `model` here, or the fallback's.
+    pub(crate) fn priced(&self, model: &ModelEntry, reply: &Reply) -> TokenUsage {
+        match &reply.served_by {
+            Some(served) => crate::cost::priced(&served.0, &served.1, reply.usage),
+            None => crate::cost::priced(&self.conn, model, reply.usage),
+        }
     }
 
     fn system_prompt(
@@ -398,6 +517,7 @@ impl ApiProvider {
                         messages: &request_messages,
                         tools: native_tools,
                         cache_key: Some(&native.reference),
+                        fallback: true,
                     },
                     &on_delta,
                     &|retry| retry_notice(ctx, retry),
@@ -407,7 +527,7 @@ impl ApiProvider {
             if streaming && mode == ToolMode::Prompt {
                 ctx.emit_text(&filter.lock().finish());
             }
-            ctx.report_usage(self.priced(&model, reply.usage));
+            ctx.report_usage(self.priced(&model, &reply));
             // What the next prompt starts from: this one plus the reply.
             conv.last_prompt_tokens = match reply.usage.input_tokens {
                 0 => 0,
@@ -602,6 +722,7 @@ impl ApiProvider {
                     messages: &[Message::user("Reply with exactly: OK")],
                     tools: &[],
                     cache_key: None,
+                    fallback: false,
                 },
                 &quiet,
                 &|_| {},
@@ -610,7 +731,7 @@ impl ApiProvider {
             .await?;
         report.reply = Some(crate::http::truncate(reply.text.trim(), 200));
         report.served_model = reply.served_model.clone();
-        report.usage = Some(self.priced(&model, reply.usage));
+        report.usage = Some(self.priced(&model, &reply));
         if let Stop::Refusal(reason) = reply.stop {
             return Err(ProviderError::failed(format!(
                 "the model declined ({reason})"
@@ -637,6 +758,7 @@ impl ApiProvider {
                     messages: &[asked],
                     tools,
                     cache_key: None,
+                    fallback: false,
                 },
                 &quiet,
                 &|_| {},
@@ -697,6 +819,7 @@ impl ApiProvider {
 }
 
 /// What one model request carries.
+#[derive(Clone, Copy)]
 pub(crate) struct ModelCall<'a> {
     pub model: &'a ModelEntry,
     pub system: Option<&'a str>,
@@ -705,17 +828,38 @@ pub(crate) struct ModelCall<'a> {
     pub tools: &'a [ToolDefinition],
     /// The session, so its requests share the vendor's prompt cache.
     pub cache_key: Option<&'a str>,
+    /// Whether the connection's fallback may answer instead.
+    pub fallback: bool,
+}
+
+/// `error` explained: whose server is overloaded and what to do.
+fn overloaded(conn: &Connection, error: ProviderError) -> ProviderError {
+    if !crate::http::is_overload(&error) {
+        return error;
+    }
+    ProviderError::new(
+        error.kind,
+        format!(
+            "o servidor de {} está sobrecarregado ou não respondeu ({}). \
+             Tente de novo mais tarde, troque de modelo ou escolha uma conexão reserva na conexão.",
+            conn.name, error.message
+        ),
+    )
 }
 
 /// Tells the session that a request is about to be repeated.
 pub(crate) fn retry_notice(ctx: &TurnContext, retry: &Retry) {
-    let message = match retry.kind {
+    let message = match retry.kind.clone() {
         RetryKind::Wait => format!(
             "{} — tentando de novo em {} s ({} de {})",
             retry.reason,
             retry.wait.as_secs_f64().ceil() as u64,
             retry.attempt,
             crate::http::MAX_RETRIES
+        ),
+        RetryKind::Fallback { connection, model } => format!(
+            "{} Continuando com a conexão reserva {connection} ({model}).",
+            retry.reason
         ),
         RetryKind::SmallerOutput { affordable, tokens } => format!(
             "o crédito da conta (ou o limite da chave) só paga {} tokens de resposta deste modelo: \
@@ -952,6 +1096,7 @@ impl AIProvider for ApiProvider {
                     messages: &[Message::user(request.prompt.clone())],
                     tools: &[],
                     cache_key: None,
+                    fallback: true,
                 },
                 &quiet,
                 &|_| {},
@@ -963,10 +1108,11 @@ impl AIProvider for ApiProvider {
                 "the model declined the request ({reason})"
             )));
         }
+        let usage = self.priced(&model, &reply);
         Ok(Completion {
             text: reply.text,
             model: reply.served_model.or(Some(model_id)),
-            usage: self.priced(&model, reply.usage),
+            usage,
         })
     }
 }

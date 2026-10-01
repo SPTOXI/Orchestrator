@@ -708,6 +708,10 @@ export interface Connection {
   generic: GenericProfile | null;
   enabled: boolean;
   notes: string | null;
+  /** Seconds a streamed request waits for the server to start; 0 = no limit. Default 120. */
+  firstResponseSecs?: number | null;
+  /** Connection that answers when this one is overloaded or not responding. */
+  fallback?: { connection: string; model: string | null } | null;
 }
 
 export interface KeyStatus {

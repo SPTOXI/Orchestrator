@@ -580,6 +580,7 @@ impl Decoder for AnthropicDecoder {
             stop,
             notices,
             served_model: self.served,
+            served_by: None,
         })
     }
 }

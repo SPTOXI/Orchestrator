@@ -351,6 +351,7 @@ impl Decoder for GeminiDecoder {
             stop,
             notices: Vec::new(),
             served_model: self.served,
+            served_by: None,
         })
     }
 }

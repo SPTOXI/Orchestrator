@@ -29,9 +29,9 @@ mod secrets;
 mod tools;
 
 pub use config::{
-    ApiKind, CacheTtl, Connection, Credential, CredentialSource, GenericAuth, GenericProfile,
-    MessageFormat, ModelEntry, ProtocolOptions, RoleNames, StreamFormat, ToolMode,
-    DEFAULT_MAX_TOOL_ROUNDS,
+    ApiKind, CacheTtl, Connection, Credential, CredentialSource, Fallback, GenericAuth,
+    GenericProfile, MessageFormat, ModelEntry, ProtocolOptions, RoleNames, StreamFormat, ToolMode,
+    DEFAULT_FIRST_RESPONSE_SECS, DEFAULT_MAX_TOOL_ROUNDS,
 };
 pub use manager::{ConnectionManager, ConnectionView, KeyStatus, ProbeRequest, SaveRequest};
 pub use presets::{presets, Preset};

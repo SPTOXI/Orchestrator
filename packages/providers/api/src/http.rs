@@ -32,7 +32,7 @@ pub struct Retry {
 }
 
 /// Why a request is repeated.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RetryKind {
     /// The server did not take it: the same request after `wait`.
     Wait,
@@ -40,6 +40,9 @@ pub enum RetryKind {
     /// that says so, as OpenRouter's): sent again at once asking for at
     /// most `tokens`.
     SmallerOutput { affordable: u32, tokens: u32 },
+    /// This connection could not serve it: the fallback connection
+    /// (`connection`, by name) is asked with `model`.
+    Fallback { connection: String, model: String },
 }
 
 struct Failure {
@@ -146,23 +149,28 @@ impl HttpClient {
         call: &HttpCall,
         cancel: &CancellationToken,
     ) -> Result<reqwest::Response, ProviderError> {
-        self.send_once(call, cancel).await.map_err(|f| f.error)
+        self.send_once(call, cancel, None)
+            .await
+            .map_err(|f| f.error)
     }
 
     /// [`Self::send`], repeating a request the server did not take (rate
     /// limit, overload, a 5xx, a connection that never opened) up to
     /// [`MAX_RETRIES`] times. The wait is what the server asks for
     /// (`retry-after`, capped) or 2 s, then 4 s. `on_retry` is told before
-    /// each wait; cancelling ends the wait (ADR-0018).
+    /// each wait; cancelling ends the wait (ADR-0018). A server that does
+    /// not answer within `first_response` is not waited for again: it is
+    /// queueing requests it cannot serve.
     pub async fn send_retrying(
         &self,
         call: &HttpCall,
         cancel: &CancellationToken,
         on_retry: &(dyn Fn(&Retry) + Send + Sync),
+        first_response: Option<Duration>,
     ) -> Result<reqwest::Response, ProviderError> {
         let mut attempt = 0;
         loop {
-            let failure = match self.send_once(call, cancel).await {
+            let failure = match self.send_once(call, cancel, first_response).await {
                 Ok(response) => return Ok(response),
                 Err(failure) => failure,
             };
@@ -191,6 +199,7 @@ impl HttpClient {
         &self,
         call: &HttpCall,
         cancel: &CancellationToken,
+        first_response: Option<Duration>,
     ) -> Result<reqwest::Response, Failure> {
         let mut request = match call.method {
             Method::Get => self.client.get(&call.url),
@@ -202,10 +211,19 @@ impl HttpClient {
         if let Some(body) = &call.body {
             request = request.json(body);
         }
+        let send = async {
+            match first_response {
+                Some(limit) => tokio::time::timeout(limit, request.send())
+                    .await
+                    .map_err(|_| limit),
+                None => Ok(request.send().await),
+            }
+        };
         let response = tokio::select! {
-            result = request.send() => match result {
-                Ok(response) => response,
-                Err(err) => {
+            result = send => match result {
+                Err(limit) => return Err(Failure::final_(not_started(limit))),
+                Ok(Ok(response)) => response,
+                Ok(Err(err)) => {
                     // Nothing reached the server: safe to send again.
                     let retryable = err.is_connect();
                     return Err(Failure {
@@ -257,6 +275,8 @@ pub struct FrameReader {
     sse: SseState,
     pending: std::collections::VecDeque<Frame>,
     done: bool,
+    /// Until the first frame: when the server must have started answering.
+    first_frame: Option<(tokio::time::Instant, Duration)>,
 }
 
 impl FrameReader {
@@ -268,7 +288,16 @@ impl FrameReader {
             sse: SseState::default(),
             pending: Default::default(),
             done: false,
+            first_frame: None,
         }
+    }
+
+    /// Fails with [`not_started`] when no frame arrives within `limit`
+    /// (keep-alive comments do not count: a server that only sends them
+    /// has not started on the request).
+    pub fn with_first_frame_limit(mut self, limit: Option<Duration>) -> Self {
+        self.first_frame = limit.map(|l| (tokio::time::Instant::now() + l, l));
+        self
     }
 
     /// Next frame, `None` at the end of the response.
@@ -278,6 +307,7 @@ impl FrameReader {
     ) -> Result<Option<Frame>, ProviderError> {
         loop {
             if let Some(frame) = self.pending.pop_front() {
+                self.first_frame = None;
                 return Ok(Some(frame));
             }
             if self.done {
@@ -287,14 +317,25 @@ impl FrameReader {
                 return Ok(None);
             };
             if self.format == StreamFormat::None {
+                self.first_frame = None;
                 let response = self.response.take().expect("response present");
                 let data = read_all(response, cancel).await?;
                 self.done = true;
                 return Ok(Some(Frame { event: None, data }));
             }
+            let (wait, stalled) = match self.first_frame {
+                Some((deadline, limit)) => (
+                    deadline.saturating_duration_since(tokio::time::Instant::now()),
+                    not_started(limit),
+                ),
+                None => (
+                    IDLE_TIMEOUT,
+                    ProviderError::failed("stream stalled: no data for 300 s"),
+                ),
+            };
             let chunk = tokio::select! {
-                chunk = tokio::time::timeout(IDLE_TIMEOUT, response.chunk()) => chunk
-                    .map_err(|_| ProviderError::failed("stream stalled: no data for 300 s"))?
+                chunk = tokio::time::timeout(wait, response.chunk()) => chunk
+                    .map_err(|_| stalled)?
                     .map_err(|e| ProviderError::failed(format!("stream interrupted: {}", e.without_url())))?,
                 () = cancel.cancelled() => return Err(ProviderError::cancelled("stream cancelled")),
             };
@@ -445,6 +486,30 @@ async fn read_limited(
 
 /// Transport failure. The URL is dropped from the message: a query-string
 /// key (generic APIs) must never be echoed.
+/// The server took the request but did not start on it within `limit`.
+pub fn not_started(limit: Duration) -> ProviderError {
+    ProviderError::failed(format!("{NOT_STARTED} em {} s", limit.as_secs()))
+}
+
+const NOT_STARTED: &str = "o servidor não começou a responder";
+
+/// The server is overloaded, rate limited, failing or unreachable: worth
+/// asking another connection, and better explained to the user.
+pub fn is_overload(error: &ProviderError) -> bool {
+    let m = error.message.to_ascii_lowercase();
+    error.kind != ProviderErrorKind::Cancelled
+        && (m.contains(NOT_STARTED)
+            || ["(http 408)", "(http 429)", "(http 529)"]
+                .iter()
+                .any(|s| m.contains(s))
+            || (500..600).any(|code| m.contains(&format!("(http {code})")))
+            || m.contains("unable to start processing")
+            || m.contains("overloaded")
+            || m.contains("server is busy")
+            || m.starts_with("stream stalled")
+            || m.starts_with("cannot reach "))
+}
+
 fn transport_error(error: reqwest::Error, url: &str) -> ProviderError {
     let host = url
         .split("://")

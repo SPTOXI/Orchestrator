@@ -53,6 +53,7 @@ function Item({
   sessionTitle,
   onOpenSession,
   waiting,
+  onRetry,
 }: {
   item: TranscriptItem;
   sessionId: string;
@@ -61,6 +62,8 @@ function Item({
   onOpenSession: (id: string) => void;
   /** The call waits for the user's authorization. */
   waiting: boolean;
+  /** Sends the failed turn's message again (only on the last turn). */
+  onRetry?: () => void;
 }) {
   switch (item.kind) {
     case "user":
@@ -146,6 +149,11 @@ function Item({
             {item.toolCalls > 0 && ` · ${item.toolCalls} ${item.toolCalls === 1 ? "ferramenta" : "ferramentas"}`}
           </span>
           {item.error && <div className="tool-error">{item.error}</div>}
+          {onRetry && (
+            <button className="button small" onClick={onRetry}>
+              Tentar de novo
+            </button>
+          )}
         </div>
       );
     }
@@ -370,6 +378,20 @@ export function SessionView({
     });
   };
 
+  /** The last turn failed: its message, to send again. */
+  const lastEnd = [...transcript.items].reverse().find((i) => i.kind === "turnEnd");
+  const retryText =
+    lastEnd?.kind === "turnEnd" && lastEnd.status === "failed"
+      ? transcript.items.find((i) => i.kind === "user" && i.turnId === lastEnd.turnId)
+      : undefined;
+  const retry =
+    retryText?.kind === "user" && !running && !closed && !busy
+      ? () => {
+          stickRef.current = true;
+          void run(() => sessionApi.send(sessionId, retryText.text));
+        }
+      : undefined;
+
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
@@ -526,6 +548,7 @@ export function SessionView({
             sessionTitle={sessionTitle}
             onOpenSession={onOpenSession}
             waiting={item.kind === "tool" && (waitingCalls?.has(item.callId) ?? false)}
+            onRetry={item === lastEnd ? retry : undefined}
           />
         ))}
         {running && !activity && <div className="meta typing">{providerName} está trabalhando…</div>}

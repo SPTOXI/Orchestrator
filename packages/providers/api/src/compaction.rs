@@ -165,17 +165,14 @@ impl ApiProvider {
                     messages: &request,
                     tools: how.tools,
                     cache_key: Some(how.reference),
+                    fallback: true,
                 },
                 &quiet,
                 &|retry| retry_notice(ctx, retry),
                 &ctx.cancellation(),
             )
             .await?;
-        ctx.report_usage(crate::cost::priced(
-            self.connection(),
-            how.model,
-            reply.usage,
-        ));
+        ctx.report_usage(self.priced(how.model, &reply));
         if let Stop::Refusal(reason) = &reply.stop {
             return Err(ProviderError::failed(format!(
                 "the model declined to summarize ({reason})"

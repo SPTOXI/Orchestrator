@@ -303,6 +303,34 @@ crédito paga (OpenRouter) é repetido na hora pedindo uma resposta menor.
 Um stream parado por 300 s falha o turno. A conexão TCP tem 20 s para abrir.
 O cancelamento interrompe a requisição em andamento.
 
+### Servidor que não começa a responder e conexão reserva
+
+Servidores sobrecarregados (o da DeepSeek nos horários de pico, por
+exemplo) aceitam o pedido, mandam só comentários `: keep-alive` e, depois
+de 15 minutos, respondem "unable to start processing your request within
+the 900-second timeout limit". Por isso:
+
+- **`firstResponseSecs`** (padrão 120; 0 desliga): um pedido com streaming
+  que não recebe nenhum dado nesse tempo — cabeçalhos ou o primeiro evento;
+  `keep-alive` não conta — é abandonado, sem repetir na mesma conexão. Sem
+  streaming não há limite (a resposta inteira vem de uma vez).
+- **`fallback: {connection, model?}`**: quando o pedido falha por servidor
+  sobrecarregado ou fora do ar — o limite acima, 408, 429, 5xx, 529,
+  conexão recusada, stream parado, "overloaded" ou "unable to start
+  processing", depois das retentativas normais —, o mesmo pedido vai para a
+  outra conexão: com `model`, o mesmo id de modelo se ela o tiver, ou o
+  padrão dela. Vale para turnos de sessões e agentes, Conselho e
+  compactação; "Testar conexão" nunca usa a reserva. A sessão avisa
+  ("o servidor de DeepSeek está sobrecarregado … Continuando com a conexão
+  reserva …"), o custo usa os preços da reserva e o que é próprio de um
+  protocolo (`native`) não vai para outro. Só um pedido que ainda não
+  mostrou nada muda de conexão; com ferramentas nativas, só para uma
+  reserva com ferramentas nativas. A reserva não tem reserva.
+- Sem reserva, o erro diz em português que o servidor está sobrecarregado e
+  o que fazer; na sessão, o último turno que falhou tem **Tentar de novo**.
+
+Na tela: seção "Quando o servidor não responder" da conexão.
+
 ## Sessões e edição de conexões
 
 A sessão guarda o id do provider e usa a instância registrada **no início

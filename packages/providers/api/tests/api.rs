@@ -1162,3 +1162,121 @@ async fn the_project_context_joins_the_system_instructions_once() {
     let system = calls[3].body["messages"][0]["content"].as_str().unwrap();
     assert!(system.ends_with("tools: false"), "{system}");
 }
+
+/// A server that takes the request and only sends keep-alive comments,
+/// as DeepSeek does while it queues requests it cannot serve.
+fn keep_alive_only() -> Reply {
+    Reply {
+        status: 200,
+        content_type: "text/event-stream",
+        chunks: vec![": keep-alive\n\n".into(); 20],
+        delay: Duration::from_millis(300),
+        headers: Vec::new(),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_overloaded_server_gives_way_to_the_fallback_connection() {
+    let busy = FakeApi::start(|request, _| {
+        if request.headers.get("authorization").map(String::as_str) == Some("Bearer sk-503") {
+            Reply::status(
+                503,
+                json!({"error": {"message": "We were unable to start processing your request within the 900-second timeout limit. Please try again later."}}),
+            )
+            .header("retry-after", "0")
+        } else {
+            keep_alive_only()
+        }
+    })
+    .await;
+    let spare = FakeApi::start(|_, _| {
+        Reply::sse(vec![
+            openai_chunk(json!({"content": "resposta da reserva"}), Some("stop")),
+            openai_usage(1_000_000, 0),
+        ])
+        .sse_done()
+    })
+    .await;
+    let h = Harness::new();
+    h.add(
+        connection(json!({
+            "id": "reserva", "name": "Reserva", "kind": "openai",
+            "baseUrl": spare.url("/v1"), "credential": {"source": "vault"},
+            "models": [{"id": "outro", "inputPrice": 2.0, "outputPrice": 2.0}]
+        })),
+        Some("sk-spare"),
+    )
+    .await;
+    let deepseek = |id: &str, fallback: Value| {
+        connection(json!({
+            "id": id, "name": "DeepSeek", "kind": "openai",
+            "baseUrl": busy.url("/v1"), "credential": {"source": "vault"},
+            "models": [{"id": "deepseek-chat", "inputPrice": 0.5, "outputPrice": 0.5}],
+            "firstResponseSecs": 1,
+            "fallback": fallback,
+        }))
+    };
+
+    // Keep-alives only: given up after 1 s, the fallback answers, at its
+    // own prices, and the session says what happened.
+    h.add(
+        deepseek("deepseek", json!({"connection": "reserva"})),
+        Some("sk-ok"),
+    )
+    .await;
+    let session = h.start("deepseek").await;
+    let started = Instant::now();
+    let done = h.turn(&session.id, "oi").await;
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(h.last_turn(&session.id).0, TurnStatus::Completed);
+    assert!(h.text(&session.id).contains("resposta da reserva"));
+    assert_eq!(done.usage.cost_usd, Some(2.0), "the fallback's prices");
+    let notice = h
+        .events(&session.id)
+        .into_iter()
+        .find_map(|e| match e {
+            SessionEvent::Notice { message, .. } if message.contains("reserva") => Some(message),
+            _ => None,
+        })
+        .expect("a notice about the fallback");
+    assert!(
+        notice.contains("DeepSeek está sobrecarregado")
+            && notice.contains("não começou a responder em 1 s")
+            && notice.contains("Reserva (outro)"),
+        "{notice}"
+    );
+    assert_eq!(spare.requests().len(), 1);
+
+    // A 503 (after the usual retries) goes to the fallback as well.
+    h.add(
+        deepseek(
+            "deepseek-503",
+            json!({"connection": "reserva", "model": "outro"}),
+        ),
+        Some("sk-503"),
+    )
+    .await;
+    let session = h.start("deepseek-503").await;
+    h.turn(&session.id, "oi").await;
+    assert_eq!(h.last_turn(&session.id).0, TurnStatus::Completed);
+    assert!(h.text(&session.id).contains("resposta da reserva"));
+
+    // Without a fallback, the failure says what is going on, in Portuguese.
+    h.add(deepseek("deepseek-sozinho", Value::Null), Some("sk-ok"))
+        .await;
+    let session = h.start("deepseek-sozinho").await;
+    h.turn(&session.id, "oi").await;
+    let (status, error) = h.last_turn(&session.id);
+    assert_eq!(status, TurnStatus::Failed);
+    let error = error.unwrap();
+    assert!(
+        error.contains("o servidor de DeepSeek está sobrecarregado")
+            && error.contains("conexão reserva"),
+        "{error}"
+    );
+    assert_eq!(spare.requests().len(), 2, "no fallback configured");
+}

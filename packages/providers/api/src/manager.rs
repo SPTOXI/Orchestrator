@@ -73,7 +73,8 @@ pub struct ConnectionManager {
     secrets: Arc<dyn SecretStore>,
     sink: Arc<dyn EventSink>,
     client: HttpClient,
-    connections: RwLock<Vec<Connection>>,
+    /// Shared with the providers, which look up their fallback here.
+    connections: Arc<RwLock<Vec<Connection>>>,
     /// Conversation history per connection id, shared by its successive
     /// provider instances (sessions survive an edit of their connection).
     conversations: Mutex<HashMap<String, ConversationStore>>,
@@ -119,7 +120,7 @@ impl ConnectionManager {
             secrets,
             sink,
             client,
-            connections: RwLock::new(Vec::new()),
+            connections: Arc::new(RwLock::new(Vec::new())),
             conversations: Mutex::new(HashMap::new()),
             writes: tokio::sync::Mutex::new(()),
         };
@@ -158,7 +159,16 @@ impl ConnectionManager {
             .entry(connection.id.clone())
             .or_default()
             .clone();
-        self.provider(connection).with_conversations(store)
+        let connections = self.connections.clone();
+        self.provider(connection)
+            .with_conversations(store)
+            .with_fallbacks(Arc::new(move |id: &str| {
+                connections
+                    .read()
+                    .iter()
+                    .find(|c| c.id == id && c.enabled)
+                    .cloned()
+            }))
     }
 
     pub fn secrets_backend(&self) -> String {

@@ -59,6 +59,8 @@ pub struct Reply {
     pub notices: Vec<String>,
     /// Model that actually answered, when the API says.
     pub served_model: Option<String>,
+    /// Set when the connection's fallback answered: whose prices apply.
+    pub served_by: Option<Box<(crate::config::Connection, crate::config::ModelEntry)>>,
 }
 
 pub trait Decoder: Send {

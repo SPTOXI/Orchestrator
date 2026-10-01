@@ -336,9 +336,42 @@ pub struct Connection {
     pub enabled: bool,
     #[serde(default)]
     pub notes: Option<String>,
+    /// Seconds a streamed request may wait for the server to start
+    /// answering; 0 waits as long as the server does. Default 120.
+    #[serde(default)]
+    pub first_response_secs: Option<u32>,
+    /// Connection that takes the request when this one is overloaded,
+    /// rate limited or not answering.
+    #[serde(default)]
+    pub fallback: Option<Fallback>,
 }
 
+/// Another connection to ask when this one cannot serve a request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Fallback {
+    pub connection: String,
+    /// Default: the same model id if the other connection has it, else
+    /// its default model.
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+/// Default for [`Connection::first_response_secs`].
+pub const DEFAULT_FIRST_RESPONSE_SECS: u32 = 120;
+
 impl Connection {
+    /// How long a streamed request waits for the first data.
+    pub fn first_response(&self) -> Option<std::time::Duration> {
+        match self
+            .first_response_secs
+            .unwrap_or(DEFAULT_FIRST_RESPONSE_SECS)
+        {
+            0 => None,
+            secs => Some(std::time::Duration::from_secs(u64::from(secs))),
+        }
+    }
+
     pub fn tool_mode(&self) -> ToolMode {
         self.tool_mode.unwrap_or(match self.kind {
             ApiKind::Generic => ToolMode::Prompt,
@@ -443,6 +476,15 @@ impl Connection {
         }
         if self.max_tool_rounds == 0 {
             return Err(ProviderError::invalid("maxToolRounds must be at least 1"));
+        }
+        if self
+            .fallback
+            .as_ref()
+            .is_some_and(|f| f.connection == self.id)
+        {
+            return Err(ProviderError::invalid(
+                "the fallback must be another connection",
+            ));
         }
         Ok(())
     }

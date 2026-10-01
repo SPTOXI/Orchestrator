@@ -45,6 +45,8 @@ fn base(
         generic: None,
         enabled: true,
         notes: None,
+        first_response_secs: None,
+        fallback: None,
     }
 }
 

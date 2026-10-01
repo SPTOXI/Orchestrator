@@ -315,6 +315,7 @@ impl Decoder for OpenAiDecoder {
             stop,
             notices,
             served_model: self.served,
+            served_by: None,
         })
     }
 }
