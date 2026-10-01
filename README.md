@@ -37,7 +37,7 @@ cada fase em [`docs/phases/`](./docs/phases).
 | 8b | Agentes, subagentes e File Locks | ✅ concluída |
 | 9 | Autonomia: Assistido, Autônomo, Acesso Irrestrito e Pause | ✅ concluída |
 | 10 | GitHub, pull requests e operações remotas | ✅ concluída |
-| 11 | Otimização de tokens, cache, compactação, agent scheduling | ⏳ próxima |
+| 11 | Otimização de tokens, cache, compactação, agent scheduling | ✅ concluída |
 
 A ordem das Fases 4–5 foi redefinida na
 [ADR-0010](./docs/adr/0010-providers-por-api-com-cadastro-livre.md):
@@ -113,6 +113,44 @@ pnpm check            # typecheck + cargo fmt --check + cargo clippy -D warnings
 ```
 
 ## O que já funciona
+
+### Fase 11 — tokens, cache, compactação e escalonamento
+
+- **Custo real:** o custo de cada turno é o que o fornecedor cobra, com o
+  cache — tokens lidos do cache a preço de cache (coluna "$ cache" do
+  modelo; na Anthropic, 10% da entrada) e gravações a 1,25× ou 2× — e a
+  sessão mostra quanto o cache economizou.
+- **Cache de prompt:** instruções, ferramentas e conversa repetem o mesmo
+  começo a cada requisição; na Anthropic, três marcadores `cache_control`
+  (as ferramentas ficam compartilhadas entre agentes do mesmo modelo); na
+  OpenAI oficial, `prompt_cache_key` por sessão. Opções "Cache de prompt"
+  e "Validade" (5 min ou 1 h) na conexão.
+- **Compactação de contexto:** quando a conversa passa do limite (aba
+  Contexto: 150.000 tokens ou 80% da janela, o que vier primeiro), a
+  própria IA a resume — lendo do cache — e o resumo passa a abrir a
+  próxima mensagem. Também pelo botão "Compactar". A tela continua
+  mostrando a conversa inteira.
+- **Retentativas:** 429, 5xx, 529 e falhas de conexão são repetidos até
+  duas vezes, respeitando o `retry-after`; a sessão diz "tentando de novo
+  em N s".
+- **Escalonamento de agentes:** a fila anda por prioridade da task e
+  depois por chegada, sem que um agente parado segure os de trás; limite
+  de agentes por provider; teto de custo por agente (também ao executar a
+  task) e orçamento diário do projeto, que para os agentes com handoff e
+  nunca bloqueia as sessões do usuário; `maxSubagents` configurável.
+- **Tokens e custo:** gasto de hoje na barra de status e no painel AGENTS;
+  aba com 1, 7 ou 30 dias por provider e modelo, cache, economia e
+  compactações.
+- **Supervisão de processos:** no Windows, todo processo iniciado entra num
+  Job Object que o encerra se o app cair; no Linux e no macOS, o que
+  sobrou de uma queda é encerrado quando o app abre de novo (conferindo
+  que o pid ainda é o mesmo processo).
+
+![A aba Tokens e custo e o orçamento diário no painel AGENTS](./docs/assets/fase-11-custo.png)
+
+![Uma sessão compactada automaticamente, com retentativa e leitura do cache](./docs/assets/fase-11-compactacao.png)
+
+Referência: [`docs/tokens.md`](./docs/tokens.md).
 
 ### Fase 10 — GitHub e pull requests
 
@@ -393,5 +431,6 @@ A referência completa das ferramentas está em
 [`docs/router.md`](./docs/router.md), o banco e a memória em
 [`docs/memory.md`](./docs/memory.md), o contexto e o handoff em
 [`docs/context.md`](./docs/context.md), as tasks em
-[`docs/tasks.md`](./docs/tasks.md) e a camada IPC em
+[`docs/tasks.md`](./docs/tasks.md), tokens, custo e compactação em
+[`docs/tokens.md`](./docs/tokens.md) e a camada IPC em
 [`docs/ipc.md`](./docs/ipc.md).

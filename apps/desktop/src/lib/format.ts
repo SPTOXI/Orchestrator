@@ -98,8 +98,8 @@ export function stripAnsi(text: string): string {
   return text.replace(ANSI, "");
 }
 
-/** "US$ 1,25", or tenths of a cent below ten cents ("US$ 0,025"). */
+/** "US$ 1,25", or tenths of a cent below one dollar ("US$ 0,104"). */
 export function formatUsd(value: number): string {
-  const digits = Math.abs(value) < 0.1 ? 3 : 2;
+  const digits = Math.abs(value) < 1 ? 3 : 2;
   return `US$ ${value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: digits })}`;
 }

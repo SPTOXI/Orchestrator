@@ -95,6 +95,8 @@ describe("formatUsd", () => {
   it("shows cents, and tenths of a cent for small values", () => {
     expect(formatUsd(1.5)).toBe("US$ 1,50");
     expect(formatUsd(0.025)).toBe("US$ 0,025");
+    expect(formatUsd(0.104)).toBe("US$ 0,104");
+    expect(formatUsd(0.1)).toBe("US$ 0,10");
     expect(formatUsd(0)).toBe("US$ 0,00");
     expect(formatUsd(1234.5)).toBe("US$ 1.234,50");
   });

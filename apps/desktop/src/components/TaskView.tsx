@@ -413,14 +413,6 @@ export function TaskView({
                   </option>
                 ))}
               </select>
-              <input
-                className="narrow ceiling-input"
-                inputMode="decimal"
-                placeholder="teto US$"
-                title="Teto de custo deste agente em US$ (vazio: o das configurações). Ele para, com handoff, antes do turno em que passaria disso."
-                value={agentCeiling}
-                onChange={(e) => setAgentCeiling(e.target.value)}
-              />
               <button
                 className="button small"
                 disabled={!ready || busy !== null || !title.trim()}
@@ -451,6 +443,14 @@ export function TaskView({
                   </option>
                 ))}
               </select>
+              <input
+                className="narrow ceiling-input"
+                inputMode="decimal"
+                placeholder="teto US$"
+                title="Teto de custo deste agente em US$ (vazio: o das configurações). Ele para, com handoff, antes do turno em que passaria disso."
+                value={agentCeiling}
+                onChange={(e) => setAgentCeiling(e.target.value)}
+              />
               <button
                 className="button small primary"
                 disabled={!ready || busy !== null || waiting || ended || liveAgent !== null}

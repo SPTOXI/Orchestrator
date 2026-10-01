@@ -1002,7 +1002,7 @@ async fn a_cost_ceiling_stops_the_agent_with_a_handoff() {
     assert_eq!(agent.turns, 3);
     let error = agent.error.unwrap();
     assert!(
-        error.contains("teto de custo de US$ 0.025 (gastou US$ 0.030)"),
+        error.contains("teto de custo de US$ 0,025 (gastou US$ 0,030)"),
         "{error}"
     );
     assert!(agent.handoff.is_some(), "the work stays reachable");

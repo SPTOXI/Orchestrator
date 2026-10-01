@@ -89,7 +89,7 @@ apenas apresentação.
 | Agent Manager, Subagents, File Locks | `packages/agents` | Rust | 8b | ✅ agentes executando tasks em paralelo, subagentes, travas por arquivo, handoff automático, Agent Board (ADR-0015) |
 | Autonomia (Assistido/Autônomo/Irrestrito), pedidos de autorização e Pause | `packages/orchestrator` (`orchestrator-engine`, módulo `autonomy`) | Rust | 9 | ✅ gate na frente de toda chamada de IA, regras do usuário, pedidos com resposta, liberação por sessão, modo por projeto e por agente, pausa (ADR-0016) |
 | GitHub, pull requests e operações remotas | `packages/git` (módulo `github`) + `packages/runtime` (`github.*`) | Rust | 10 | ✅ API REST v3, token do cofre/ambiente/`gh`, PRs com CI e revisões, merge, issues, `git.fetch`/`git.remotes` (ADR-0017) |
-| Otimização de tokens, cache, compactação, scheduling | `packages/orchestrator` | Rust | 11 | planejado |
+| Otimização de tokens, cache, compactação, scheduling | `packages/providers/api` (custo, cache, compactação, retentativas) + `packages/agents` (fila e tetos) + `packages/memory` (gasto) + `packages/runtime` (supervisão) | Rust | 11 | ✅ custo real com cache, cache de prompt por protocolo, compactação pela própria IA, fila por prioridade com limite por provider, teto de custo por agente e orçamento diário, Job Object e órfãos (ADR-0018) |
 
 Alterações à estrutura original:
 
@@ -169,6 +169,11 @@ comentar, merge, abrir issue) vêm da Fase 10
   no Unix, `taskkill /T /F` no Windows).
 - Ao fechar o app (inclusive por SIGTERM/SIGINT/SIGHUP no Unix), todos os
   terminais e processos gerenciados são encerrados.
+- **Queda do app** (Fase 11): no Windows, cada processo entra num Job Object
+  com "encerrar ao fechar"; no Linux e no macOS, os grupos ficam em
+  `<app-data>/processes.json` e o app encerra os que sobraram ao abrir de
+  novo, conferindo o horário de início para não matar um pid reaproveitado
+  ([ADR-0018](./docs/adr/0018-tokens-cache-compactacao-e-escalonamento.md)).
 
 ### 4.3 Projeto (Fase 2)
 
@@ -275,6 +280,10 @@ TurnContext::call_tool → AutonomyGate → AgentTools → EngineTools → Runti
 - Eventos `GITHUB_PR_CREATED`, `GITHUB_PR_MERGED` e `GITHUB_ISSUE_CREATED`
   (Fase 10, ADR-0017); os tipos do GitHub ficam em `orchestrator-git`, não
   no `core`: são dados de uma ferramenta, não contratos entre módulos.
+- Evento `CONTEXT_COMPACTED` e o evento de sessão `compacted`; `TokenUsage`
+  com `cacheWriteTokens` e `cacheSavedUsd`; `Agent.maxCostUsd`;
+  `TURN_COMPLETED` com o `model` e `AGENT_FINISHED` com o `reason`
+  (`costCeiling`, `dailyBudget`) (Fase 11, ADR-0018).
 - `HandoffPacket`, `Handoff`, `HandoffEnd`, `HandoffStatus`, `HandoffId`,
   `ContextSummary` e os eventos de sessão `contextAttached` e `handedOff`
   (Fase 7).
@@ -425,6 +434,31 @@ em [`docs/agents.md`](./docs/agents.md)):
   ao iniciar); quanto ele roda é o teto de turnos (padrão 12) e o de
   paralelismo.
 
+## 8.3 Tokens, cache, compactação e escalonamento (Fase 11)
+
+[ADR-0018](./docs/adr/0018-tokens-cache-compactacao-e-escalonamento.md),
+referência em [`docs/tokens.md`](./docs/tokens.md). Nenhuma solução depende
+de um fornecedor; o que é de um fornecedor é otimização a mais.
+
+- **Custo real:** `TokenUsage` com `cacheWriteTokens` e `cacheSavedUsd`;
+  preço do cache por modelo (`cachedInputPrice`); o custo é o que o
+  fornecedor cobra, com leituras e gravações do cache.
+- **Cache de prompt:** prefixo estável (instruções congeladas, ferramentas
+  fixas, conversa só acrescentada); marcadores `cache_control` na
+  Anthropic, `prompt_cache_key` na OpenAI oficial.
+- **Compactação:** no adapter das conexões de API, entre turnos ou rodadas
+  e nunca com ferramenta pendente; a mesma IA resume a conversa (lendo do
+  cache) e o resumo abre a próxima mensagem. `CONTEXT_COMPACTED` no
+  histórico; a tela continua com tudo.
+- **Retentativas:** 408/429/5xx/529 e falhas de conexão, até duas, com
+  `retry-after`.
+- **Escalonamento:** fila por prioridade e chegada sem bloqueio de quem está
+  atrás, `providerLimits`, `maxCostUsd` por agente, `dailyBudgetUsd` por
+  projeto (para agentes, nunca as sessões do usuário), `maxSubagents`.
+- **Gasto:** lido do histórico (`TURN_COMPLETED` com o `model` e
+  `COUNCIL_DELIBERATED`), sem migração; barra de status, painel AGENTS e a
+  aba "Tokens e custo".
+
 ## 9. Providers (Fases 3–7)
 
 ```typescript
@@ -474,7 +508,8 @@ Crate `packages/providers/api`:
 - **Credenciais:** a chave fica no cofre do SO ou numa variável de
   ambiente. Nunca vai para arquivo, histórico, log ou UI.
 - **Modelos:** descoberta pela API, preços informados pelo usuário (custo
-  por turno), contexto e etiquetas usadas pelo roteador e pelo Conselho (9.2).
+  por turno, com o preço do cache desde a Fase 11), contexto e etiquetas
+  usadas pelo roteador e pelo Conselho (9.2).
 - **Sessões:** usam a instância registrada a cada turno. Editar uma conexão
   vale para as sessões abertas, sem perder a conversa. A conversa vai para
   o banco ao fim de cada turno e continua depois de reiniciar o app.

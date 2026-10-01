@@ -141,12 +141,16 @@ export function CostView({ active, ready, projectName, providerName, onOpenAgent
                     <tr>
                       <th>Provider</th>
                       <th>Modelo</th>
-                      <th>Chamadas</th>
-                      <th>Entrada</th>
-                      <th title="Parte da entrada lida do cache de prompt">Do cache</th>
-                      <th>Saída</th>
-                      <th>Custo</th>
-                      <th title="Quanto o cache economizou (negativo: gravou e não leu de volta)">Economia</th>
+                      <th className="num">Chamadas</th>
+                      <th className="num">Entrada</th>
+                      <th className="num" title="Parte da entrada lida do cache de prompt">
+                        Do cache
+                      </th>
+                      <th className="num">Saída</th>
+                      <th className="num">Custo</th>
+                      <th className="num" title="Quanto o cache economizou (negativo: gravou e não leu de volta)">
+                        Economia
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -162,8 +166,16 @@ export function CostView({ active, ready, projectName, providerName, onOpenAgent
                         </td>
                         <td className="num">{tokens(row.outputTokens)}</td>
                         <td className="num">
-                          {formatUsd(row.costUsd)}
-                          {row.unpriced > 0 && <span className="meta" title="Chamadas sem preço"> +?</span>}
+                          {row.unpriced === row.calls ? (
+                            <span className="meta" title="O modelo não tem preço na conexão">
+                              sem preço
+                            </span>
+                          ) : (
+                            <>
+                              {formatUsd(row.costUsd)}
+                              {row.unpriced > 0 && <span className="meta" title="Chamadas sem preço"> +?</span>}
+                            </>
+                          )}
                         </td>
                         <td className="num">{row.cacheSavedUsd ? formatUsd(row.cacheSavedUsd) : "—"}</td>
                       </tr>

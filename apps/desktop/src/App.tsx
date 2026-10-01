@@ -1019,6 +1019,11 @@ function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenPr
                   painel GIT ou pelas IAs — com o token no cofre do sistema.
                 </li>
                 <li>
+                  <strong>Tokens e custo</strong>: custo real com cache de prompt, conversas longas compactadas pela
+                  própria IA, fila de agentes por prioridade com limite por provider, teto de custo por agente e
+                  orçamento diário por projeto.
+                </li>
+                <li>
                   <strong>HISTORY</strong>: toda chamada de ferramenta é auditada, inclusive as feitas por IAs.
                 </li>
               </ul>
@@ -1026,9 +1031,9 @@ function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenPr
           )}
         </div>
         <div>
-          <h2>Próximas fases</h2>
+          <h2>Fases</h2>
           <ul>
-            <li>11 — Otimização de tokens, cache, compactação de contexto</li>
+            <li>0 a 11 concluídas: o plano do documento mestre está completo.</li>
           </ul>
         </div>
       </div>

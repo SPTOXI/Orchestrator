@@ -149,13 +149,15 @@ fn not_found(id: &AgentId) -> ProviderError {
     )
 }
 
-/// Dollars for a message: cents, or tenths of a cent below ten cents.
+/// Dollars for a message, as the UI writes them: cents, or tenths of a
+/// cent below one dollar ("0,104"), with a decimal comma.
 fn usd(value: f64) -> String {
-    if value.abs() < 0.1 {
+    let text = if value.abs() < 1.0 {
         format!("{value:.3}")
     } else {
         format!("{value:.2}")
-    }
+    };
+    text.replace('.', ",")
 }
 
 /// Local midnight, as the start of "today" for the daily budget.

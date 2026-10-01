@@ -47,9 +47,12 @@ Campos da seção 14 do documento mestre:
 1. **Fila.** Ele nasce em `QUEUED`. A task precisa estar liberada
    (dependências concluídas) e não pode estar encerrada nem bloqueada, e ela
    só aceita um agente vivo por vez.
-2. **Vaga.** Ele começa quando há vaga (`maxParallel`) e os arquivos
-   declarados na task estão livres. Enquanto não, o painel diz o motivo
-   ("`src/api.ts` está com \"…\"", "2 agentes em execução").
+2. **Vaga.** Ele começa quando há vaga (`maxParallel` e o limite do
+   provider), os arquivos declarados na task estão livres e o orçamento
+   diário do projeto não acabou. A fila anda pela prioridade da task e
+   depois pela chegada, e quem não pode começar não segura os de trás
+   (Fase 11). Enquanto espera, o painel diz a posição e o motivo ("1º na
+   fila · `src/api.ts` está com \"…\"", "2 agentes em execução").
 3. **Travas.** Ao começar, trava os arquivos declarados na task.
 4. **Sessão.** Abre a sessão da task (ADR-0014): contexto montado a partir
    dela, a task como primeira mensagem, `IN_PROGRESS`.
@@ -57,7 +60,8 @@ Campos da seção 14 do documento mestre:
    providers por API. Entre turnos, o Orchestrator manda só uma
    continuação: o contexto já foi.
 6. **Fim.** `agent.finish` encerra o agente. Sem isso, o teto de turnos
-   encerra.
+   encerra — ou, antes de um turno, o teto de custo do agente ou o fim do
+   orçamento diário (Fase 11).
 7. **Soltar.** Em qualquer saída as travas caem e a fila anda.
 
 **O agente não conclui a task.** `agent.finish` grava o resultado na task e
@@ -70,7 +74,8 @@ ao pô-lo para executar a task (`autonomy`, herdado pelos subagentes). Em
 Assistido, cada ação dele espera a sua autorização e o painel diz
 "esperando sua autorização".
 
-**Parou no meio, sai handoff.** `FAILED` (erro ou teto) e `STOPPED`
+**Parou no meio, sai handoff.** `FAILED` (erro, teto de turnos ou de
+custo, orçamento) e `STOPPED`
 (usuário) geram um handoff montado pelos fatos da sessão, sem gastar turno
 de IA. A task continua `IN_PROGRESS` e outra IA continua de onde parou.
 Quem termina bem não gera handoff: o resultado na task é o registro.
@@ -85,7 +90,10 @@ Quem termina bem não gera handoff: o resultado na task é o registro.
 São ferramentas como as outras: auditadas com `TOOL_CALLED` e só existem
 dentro de uma sessão conduzida por um agente.
 
-- **Profundidade 2** (agente → subagente) e **até 5 subagentes por agente**.
+- **Profundidade 2** (agente → subagente) e **até `maxSubagents`
+  subagentes por agente** (padrão 5; 0 desliga a delegação — Fase 11).
+- O subagente segue o provider e o modelo do pai: mesmos preços e, na
+  Anthropic, o mesmo cache das ferramentas.
 - O subagente entra na mesma fila e no mesmo teto: delegar não fura a fila.
 - O pai **não espera** o filho; a subtask aparece como progresso na
   task-mãe.
@@ -117,6 +125,13 @@ um `INSERT` que ou grava, ou diz quem já tem.
 | ------ | ------ | ----- |
 | `maxParallel` | 2 | 1–8 |
 | `maxTurns` | 12 | 1–50 |
+| `maxSubagents` | 5 | 0–10 |
+| `providerLimits` | `{}` | 1–8 agentes por conexão |
+| `maxCostUsd` | sem teto | US$ por agente; também ao executar a task |
+| `dailyBudgetUsd` | sem orçamento | US$ por projeto e por dia, todas as IAs |
+
+Os quatro últimos são da Fase 11; o funcionamento dos tetos de custo e do
+orçamento está em [tokens.md](./tokens.md#tetos-de-custo).
 
 Controles do usuário (seção 11 do documento mestre), no painel AGENTS e na
 aba da task:

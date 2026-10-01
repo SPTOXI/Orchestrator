@@ -139,21 +139,19 @@ export function AgentsPanel({
             </div>
             {budget && (
               <div className={`pad budget-line${budget.exhausted ? " exhausted" : ""}`}>
-                <div className="row tight">
-                  <span className="grow" title="Gasto das IAs neste projeto desde a meia-noite: sessões, agentes e Conselho">
-                    Hoje: {formatUsd(budget.spentTodayUsd)}
-                    {budget.budgetUsd !== null && ` de ${formatUsd(budget.budgetUsd)}`}
-                    {budget.unpriced > 0 && (
-                      <span className="meta" title="Chamadas de modelos sem preço configurado: o gasto real é maior">
-                        {" "}
-                        · {budget.unpriced} sem preço
-                      </span>
-                    )}
-                  </span>
-                  <button className="link meta" onClick={onOpenCost}>
-                    Tokens e custo
-                  </button>
+                <div className="budget-amount" title="Gasto das IAs neste projeto desde a meia-noite: sessões, agentes e Conselho">
+                  Hoje: {formatUsd(budget.spentTodayUsd)}
+                  {budget.budgetUsd !== null && ` de ${formatUsd(budget.budgetUsd).replace("US$ ", "")}`}
+                  {budget.unpriced > 0 && (
+                    <span className="meta" title="Chamadas de modelos sem preço configurado: o gasto real é maior">
+                      {" "}
+                      · {budget.unpriced} sem preço
+                    </span>
+                  )}
                 </div>
+                <button className="link meta" onClick={onOpenCost}>
+                  Tokens e custo
+                </button>
                 {budget.exhausted && (
                   <div className="inline-notice">
                     O orçamento diário acabou: nenhum agente começa, e os que estão rodando param no fim do turno.

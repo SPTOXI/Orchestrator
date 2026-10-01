@@ -31,7 +31,7 @@ Trait async (`Send + Sync`), mapeada 1:1 na seção 18 do documento mestre.
 | Método | Faz | Padrão |
 | ------ | --- | ------ |
 | `descriptor()` | id estável, nome, fornecedor, descrição | — (obrigatório) |
-| `capabilities()` | streaming, ferramentas, retomada, cancelamento, subagentes nativos, raciocínio, uso de tokens, custo, respostas avulsas (`completion`), modelos | — (obrigatório) |
+| `capabilities()` | streaming, ferramentas, retomada, cancelamento, subagentes nativos, raciocínio, uso de tokens, custo, respostas avulsas (`completion`), compactação (`compaction`, Fase 11), modelos | — (obrigatório) |
 | `inspect()` | disponível?, versão, autenticado?, detalhe | — (obrigatório) |
 | `start(spec)` | abre a sessão nativa → `NativeSession` | — (obrigatório) |
 | `resume(native, spec)` | reabre a sessão nativa | `UNSUPPORTED` |
@@ -56,6 +56,12 @@ Trait async (`Send + Sync`), mapeada 1:1 na seção 18 do documento mestre.
   API o anexam às instruções de sistema da conversa, que ficam iguais nos
   turnos seguintes e vão junto na persistência; o `echo` o guarda e mostra
   com `/context`.
+- Desde a Fase 11, `TurnInput` traz também `compaction` (a política da
+  aba Contexto: `auto`, `thresholdTokens`, `thresholdPercent`) e `compact`
+  (só compactar, sem mensagem nova — o botão "Compactar"). Quem compacta
+  marca `capabilities().compaction` e informa o resultado com
+  `ctx.compacted(…)`; o `SessionManager` grava o evento e o histórico
+  ([tokens.md](./tokens.md#compactação-de-contexto)).
 - Em `stream`, o texto vai para o contexto; em `execute`, volta em
   `TurnOutput` e o Orchestrator o registra.
 - `complete` não recebe `TurnContext`: sem ferramentas, o modelo não tem
@@ -199,13 +205,15 @@ local; os testes usam `MemorySessionStore`.
 | `subagentSpawned` | `childId`, `provider`, `title` |
 | `contextAttached` | `turnId`, `summary: { tokens, budget, sections[], omitted[], handoffId }` (Fase 7) |
 | `handedOff` | `handoffId`, `fromSession`, `toSession`, `provider` — gravado nas duas sessões (Fase 7) |
+| `compacted` | `turnId`, `automatic`, `beforeTokens`, `afterTokens`, `messages`, `summary` (Fase 11) |
 
 ### Histórico (`AuditEvent`)
 
 | Evento | `data` |
 | ------ | ------ |
 | `SESSION_STARTED` | `sessionId`, `provider`, `model`, `title`, `projectPath`, `parentSessionId`, `nativeRef` |
-| `TURN_COMPLETED` | `sessionId`, `provider`, `turnId`, `status`, `error`, `durationMs`, `toolCalls`, `usage`, `inputChars` |
+| `TURN_COMPLETED` | `sessionId`, `provider`, `model` (Fase 11), `turnId`, `status`, `error`, `durationMs`, `toolCalls`, `usage` (com `cachedInputTokens`, `cacheWriteTokens`, `costUsd`, `cacheSavedUsd`), `inputChars`, `compact` |
+| `CONTEXT_COMPACTED` (Fase 11) | `sessionId`, `provider`, `model`, `turnId`, `automatic`, `beforeTokens`, `afterTokens`, `messages` — o resumo fica só no transcript |
 | `SESSION_CLOSED` | `sessionId`, `provider`, `turns`, `usage` |
 | `SESSION_RESUMED` | `sessionId`, `provider`, `nativeRef` |
 | `PROVIDER_SWITCHED` | `from`, `to`; `reason: "removed"` quando o ativo saiu do registro |
@@ -221,7 +229,7 @@ memória do projeto.
 Comandos Tauri `providers_list`, `provider_inspect`, `provider_select`,
 `sessions_list`, `session_start`, `session_get`, `session_send`,
 `session_cancel`, `session_close`, `session_resume`, `session_spawn`,
-`session_context_get`, `session_context_set` — ver
+`session_context_get`, `session_context_set`, `session_compact` — ver
 [`ipc.md`](./ipc.md). Erros chegam como `{ kind, message }` com `kind` em
 `NOT_FOUND`, `ALREADY_EXISTS`, `UNAVAILABLE`, `UNSUPPORTED`,
 `INVALID_REQUEST`, `BUSY`, `CLOSED`, `CANCELLED`, `FAILED`, `INTERNAL`.

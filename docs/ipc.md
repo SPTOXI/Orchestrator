@@ -166,7 +166,7 @@ O Agent Manager e as travas de arquivo. Referência:
 | ------- | ---------- | ------- | --------- |
 | `agents_list` | `projectId?` (padrão: o projeto aberto) | `AgentView[]`, em ordem do painel | — |
 | `agent_get` | `id` | `AgentView \| null` | — |
-| `agent_start` | `request: { taskId, provider?, model?, maxTurns?, autonomy? }` | `Agent` em `QUEUED`; recusa task encerrada, bloqueada, não liberada ou que já tem agente | `AGENT_STARTED` quando ele começa |
+| `agent_start` | `request: { taskId, provider?, model?, maxTurns?, autonomy?, maxCostUsd? }` | `Agent` em `QUEUED`; recusa task encerrada, bloqueada, não liberada ou que já tem agente | `AGENT_STARTED` quando ele começa |
 | `agent_stop` | `id` | `Agent` | `AGENT_FINISHED` |
 | `agents_stop_all` | `projectId?` | quantos foram parados | `AGENT_FINISHED` de cada um |
 | `agent_locks` | `projectId?` | `FileLock[]` (arquivos em uso agora) | — |
@@ -179,7 +179,10 @@ O Agent Manager e as travas de arquivo. Referência:
 está na fila), `taskTitle`, `taskStatus`, `paused`, `approval` (o que ele
 espera você autorizar) e `mode` (o modo de autonomia das chamadas dele).
 `agent_start` aceita `autonomy` (o modo só para o agente e os subagentes
-dele; ausente, o do projeto).
+dele; ausente, o do projeto) e `maxCostUsd` (o teto de custo só para ele;
+ausente, o das configurações — Fase 11). Desde a Fase 11, `AgentView` traz
+também `costUsd` (o que o agente gastou) e `queuePosition` (a posição na
+fila).
 
 As IAs conduzidas por um agente recebem duas ferramentas a mais,
 `agent.finish` e `agent.delegate`, pelo mesmo caminho auditado das outras
@@ -222,6 +225,20 @@ configuração e o token têm comandos próprios.
 | `github_token_save` | `token` | `GitHubSetup` (o token não volta) | — |
 | `github_token_clear` | — | `GitHubSetup` | — |
 | `open_url` | `url` (só `http(s)`) | abre no navegador do sistema | — |
+
+### Tokens e custo (Fase 11, ADR-0018)
+
+Referência: [`docs/tokens.md`](./tokens.md).
+
+| Comando | Argumentos | Retorno | Histórico |
+| ------- | ---------- | ------- | --------- |
+| `spend_report` | `days` (1, 7, 30…), `projectId?`, `allProjects?` | `SpendReport` (gasto, economia do cache, tokens, chamadas, chamadas sem preço, compactações e `rows` por provider e modelo) | — |
+| `agents_budget` | `projectId?` | `BudgetView` (`spentTodayUsd`, `budgetUsd`, `unpriced`, `exhausted`) | — |
+| `session_compact` | `id` | `TurnResult`; recusa sessão ocupada, fechada ou sem conversa | `CONTEXT_COMPACTED` |
+
+O transcript da sessão recebe o evento `compacted` (`automatic`,
+`beforeTokens`, `afterTokens`, `messages`, `summary`) e os avisos de
+retentativa como `notice`.
 
 ## Eventos
 
@@ -275,7 +292,11 @@ entrada "Stack" da memória) seguem o mesmo caminho
   renomeado para `audit.jsonl.imported`.
 - Sessões de provider (com as opções de contexto), transcripts,
   deliberações do Conselho e handoffs também ficam no banco.
-- A configuração do contexto fica em `<app-data>/context.json`.
+- A configuração do contexto fica em `<app-data>/context.json` (desde a
+  Fase 11, com a compactação).
+- Os grupos de processos iniciados pelo runtime (Linux e macOS) ficam em
+  `<app-data>/processes.json`, para o app encerrar o que sobrar de uma
+  queda (Fase 11).
 - As tasks do projeto ficam no banco (migração 3, ADR-0014).
 - Agentes e as travas de arquivo ficam no banco (migração 4, ADR-0015), e a
   configuração deles em `<app-data>/agents.json`. Ao abrir o app, agentes

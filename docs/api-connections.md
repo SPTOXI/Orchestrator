@@ -63,7 +63,7 @@ servidores locais).
     {
       "id": "gpt-…", "name": null, "contextWindow": 400000, "maxOutputTokens": null,
       "supportsTools": true, "supportsVision": null,
-      "inputPrice": 1.25, "outputPrice": 10, "tags": ["código"],
+      "inputPrice": 1.25, "outputPrice": 10, "cachedInputPrice": 0.125, "tags": ["código"],
       "extraBody": null, "enabled": true
     }
   ],
@@ -71,7 +71,8 @@ servidores locais).
   "toolMode": null,
   "maxToolRounds": 50,
   "maxOutputTokens": null,
-  "options": { "streamUsage": null, "eagerToolStreaming": null, "refusalFallback": null },
+  "options": { "streamUsage": null, "eagerToolStreaming": null, "refusalFallback": null,
+               "promptCache": null, "cacheTtl": null },
   "generic": null,
   "enabled": true,
   "notes": null
@@ -90,6 +91,9 @@ servidores locais).
 | `maxToolRounds` | rodadas modelo → ferramentas por turno (padrão 50) |
 | `maxOutputTokens` | limite de saída; na Anthropic o padrão é 64000 com streaming e 16000 sem |
 | `enabled` | desativada = fica salva, mas sai do registro |
+| `models[].cachedInputPrice` | US$ por milhão de tokens lidos do cache (Fase 11); sem ele, a leitura custa a entrada cheia (Anthropic: 10% da entrada) |
+| `options.promptCache` | cache de prompt (`null` = ligado): marcadores `cache_control` na Anthropic, `prompt_cache_key` na OpenAI oficial |
+| `options.cacheTtl` | `5m` (padrão) ou `1h`, validade do cache na Anthropic |
 
 ## Credenciais
 
@@ -236,19 +240,23 @@ nativa é específica de cada protocolo.
 - O uso de tokens vem da resposta de cada API e é somado por turno e por
   sessão.
 - **Custo** = tokens de entrada × preço de entrada + tokens de saída × preço
-  de saída, com preços em US$ por milhão de tokens informados no modelo. As
-  APIs não informam preço; sem preço, o custo não aparece.
+  de saída, com preços em US$ por milhão de tokens informados no modelo —
+  e, desde a Fase 11, com o cache: tokens lidos do cache a
+  `cachedInputPrice` e gravações (Anthropic) a 1,25× ou 2× a entrada
+  ([tokens.md](./tokens.md#custo-real)). As APIs não informam preço; sem
+  preço, o custo não aparece.
 - A tabela de referência da Anthropic (setembro de 2026) vem preenchida no
   preset:
 
-  | Modelo | Contexto | US$ entrada / saída por 1M |
-  | ------ | -------- | -------------------------- |
-  | `claude-opus-5-5` | 1M | 4 / 20 |
-  | `claude-sonnet-5-5` | 1M | 2 / 10 |
-  | `claude-haiku-4-5` | 200K | 1 / 5 |
-  | `claude-fable-5-1` | 1M | 10 / 50 |
+  | Modelo | Contexto | US$ entrada / saída / cache por 1M |
+  | ------ | -------- | ---------------------------------- |
+  | `claude-opus-5-5` | 1M | 4 / 20 / 0,20 |
+  | `claude-sonnet-5-5` | 1M | 2 / 10 / 0,20 |
+  | `claude-haiku-4-5` | 200K | 1 / 5 / 0,10 |
+  | `claude-fable-5-1` | 1M | 10 / 50 / 0,25 |
 
-  Descontos de cache ainda não entram no cálculo.
+  "Buscar modelos" completa o preço do cache dos modelos que ainda não o
+  têm.
 
 ## Testar conexão
 
@@ -276,6 +284,11 @@ O relatório (`TestReport`) traz:
 | 429 | `FAILED` | `rate limit or quota exceeded` |
 | 5xx | `FAILED` | `server error` |
 | sem conexão | `UNAVAILABLE` | `cannot reach <host>` |
+
+Desde a Fase 11, 408, 429, 500, 502, 503, 504, 529 e falhas de conexão
+são repetidos até duas vezes antes de virar erro, com a espera do
+`retry-after` (até 60 s) ou 2 s e 4 s; a sessão mostra cada tentativa
+([tokens.md](./tokens.md#retentativas)).
 
 Um stream parado por 300 s falha o turno. A conexão TCP tem 20 s para abrir.
 O cancelamento interrompe a requisição em andamento.

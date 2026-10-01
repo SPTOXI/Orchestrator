@@ -439,9 +439,22 @@ mata todos os processos gerenciados. No Linux/macOS, SIGTERM, SIGINT e SIGHUP
 (logout, `kill`, Ctrl+C no `tauri dev`) são convertidos em saída normal do app,
 com a mesma limpeza.
 
-**Limitação conhecida:** se o app for morto abruptamente (SIGKILL,
-`taskkill /F`, crash), processos iniciados por `process.start` podem
-sobreviver (terminais morrem junto, pois o PTY é fechado pelo SO). A solução
-robusta (Job Objects no Windows, supervisão de processos no Unix) não é um
-controle do usuário sobre as IAs, e sim robustez do runtime contra quedas; a
-ADR-0016 a tirou da Fase 9 e a deixou para a Fase 11.
+### Queda do app (Fase 11, ADR-0018)
+
+Se o app for morto abruptamente (SIGKILL, `taskkill /F`, crash), os
+processos que ele iniciou não ficam para trás:
+
+- **Windows:** cada processo de `process.start` e `shell.exec` entra num Job
+  Object do runtime criado com "encerrar ao fechar". Quando o app morre, o
+  Windows fecha o job e encerra o processo e tudo o que ele iniciou.
+- **Linux e macOS:** não há equivalente portátil. Os grupos de processos de
+  `process.start` são anotados em `<app-data>/processes.json` (pid, horário
+  de início do processo e comando). Ao abrir, o app encerra (SIGTERM, depois
+  SIGKILL) os grupos que uma execução anterior deixou — só depois de
+  conferir que o pid ainda é o mesmo processo, pelo horário de início, para
+  nunca matar um processo que reaproveitou o pid. Cada um entra no histórico
+  como `PROCESS_EXITED` com `reason: "orphan"`.
+- Terminais morrem junto, como antes: o PTY é fechado pelo SO.
+
+No Linux e no macOS, o que sobra de uma queda vive até o app abrir de
+novo.

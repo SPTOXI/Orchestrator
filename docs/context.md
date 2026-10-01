@@ -272,7 +272,10 @@ Ver [ipc.md](./ipc.md#contexto-e-handoff-fase-7-adr-0013).
 - **Contexto congelado:** é o do primeiro turno. Numa sessão longa, a IA
   deve consultar as ferramentas de memória.
 - **Instruções maiores:** o contexto vai em todas as requisições da
-  sessão. Cache de prompt e compactação ficam para a Fase 11.
+  sessão. Desde a Fase 11 ele vem do cache do fornecedor depois da
+  primeira requisição, e conversas longas são compactadas pela própria IA
+  — o contexto fica, as mensagens viram um resumo
+  ([tokens.md](./tokens.md#compactação-de-contexto)).
 - **Narrativa custa um turno;** os fatos não custam nada.
 - **Handoff manual na conversa:** quem o pede é o usuário. O automático
   existe só quando um agente para no meio (Fase 8b).
