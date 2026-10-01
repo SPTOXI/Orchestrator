@@ -93,8 +93,10 @@ pub fn definitions() -> &'static [ToolDefinition] {
                 name: "agent.delegate".into(),
                 group: GROUP.into(),
                 description: "Creates a subtask of this agent's task and queues a subagent for \
-                              it. Use it to split work that can run on its own; the subagent \
-                              starts when there is a free slot. This agent does not wait for it."
+                              it. Only when it is justified: a large piece of work that can run \
+                              on its own, in files this agent does not need. Small or coupled \
+                              work is cheaper done here. The subagent starts when there is a \
+                              free slot; this agent does not wait for it."
                     .into(),
                 read_only: false,
                 parameters: schema::<DelegateArgs>(),

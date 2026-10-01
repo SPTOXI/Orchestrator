@@ -19,10 +19,10 @@ mod tools;
 
 pub use locks::{normalize as normalize_path, LockManager};
 pub use service::{
-    AgentDeps, AgentService, AgentView, StartAgent, MAX_DEPTH, MAX_RESULT, MAX_SUBAGENTS,
+    AgentDeps, AgentService, AgentView, BudgetView, StartAgent, MAX_DEPTH, MAX_RESULT,
 };
 pub use settings::{
-    load as load_settings, save as save_settings, AgentSettings, DEFAULT_PARALLEL, DEFAULT_TURNS,
-    MAX_PARALLEL, MAX_TURNS,
+    load as load_settings, save as save_settings, AgentSettings, DEFAULT_PARALLEL,
+    DEFAULT_SUBAGENTS, DEFAULT_TURNS, MAX_PARALLEL, MAX_SUBAGENTS, MAX_TURNS,
 };
 pub use tools::{definitions as agent_tool_definitions, AgentSlot, AgentTools};

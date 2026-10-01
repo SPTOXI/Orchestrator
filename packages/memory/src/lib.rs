@@ -17,7 +17,8 @@
 //!   from (ADR-0013);
 //! - **tasks** of the project, with their dependencies (ADR-0014);
 //! - **agents** executing tasks and the **file locks** they hold while
-//!   they do (ADR-0015).
+//!   they do (ADR-0015);
+//! - **spending** of the AIs, read from the history (ADR-0018).
 //!
 //! Depends only on `orchestrator-core`: the other crates see it through
 //! their own traits, wired by the app.
@@ -30,6 +31,7 @@ mod model;
 mod notes;
 mod search;
 mod sessions;
+mod spend;
 mod store;
 mod tasks;
 mod working;
@@ -40,4 +42,5 @@ pub use model::{
     MemoryKind, MemoryOverview, Project, RecentImport, SearchHit, SessionFacts, Source,
     StoredSession, WorkingCommand, WorkingError, WorkingFile, WorkingMemory, WorkingSession,
 };
+pub use spend::{SpendReport, SpendRow};
 pub use store::MemoryStore;

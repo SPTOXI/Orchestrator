@@ -30,8 +30,6 @@ use tokio_util::sync::CancellationToken;
 
 /// Characters of a result or of a delegated description.
 pub const MAX_RESULT: usize = 4_000;
-/// Subagents one agent may create.
-pub const MAX_SUBAGENTS: usize = 5;
 /// Agent → subagent, and no further (ADR-0015).
 pub const MAX_DEPTH: usize = 2;
 
@@ -54,6 +52,9 @@ pub struct StartAgent {
     /// project's (ADR-0016).
     #[serde(default)]
     pub autonomy: Option<AutonomyMode>,
+    /// Cost ceiling of this agent (USD); `None`: the setting (ADR-0018).
+    #[serde(default)]
+    pub max_cost_usd: Option<f64>,
 }
 
 /// An agent with what the panel and the board show but the agent does not
@@ -74,6 +75,24 @@ pub struct AgentView {
     pub approval: Option<String>,
     /// Mode its calls are judged by now.
     pub mode: AutonomyMode,
+    /// What its session cost so far (`None`: no price, or not started).
+    pub cost_usd: Option<f64>,
+    /// 1 = next to start, while queued (ADR-0018).
+    pub queue_position: Option<u32>,
+}
+
+/// What the AIs of a project spent today, against its daily budget
+/// (ADR-0018).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BudgetView {
+    /// Since local midnight.
+    pub spent_today_usd: f64,
+    pub budget_usd: Option<f64>,
+    /// Calls with tokens but no price: the real spending is higher.
+    pub unpriced: u64,
+    /// No agent starts, and running ones stop at their next turn.
+    pub exhausted: bool,
 }
 
 /// How an agent's work ended.
@@ -81,6 +100,12 @@ enum Ending {
     /// `agent.finish`: the agent reported what it did.
     Done(String),
     Failed(String),
+    /// A cost ceiling or the project's daily budget (ADR-0018): `reason`
+    /// is `costCeiling` or `dailyBudget`.
+    Spent {
+        reason: &'static str,
+        message: String,
+    },
     Stopped,
 }
 
@@ -101,6 +126,8 @@ struct Inner {
     settings: RwLock<AgentSettings>,
     settings_path: Option<PathBuf>,
     live: Mutex<HashMap<AgentId, Arc<Live>>>,
+    /// Serializes `pump`.
+    pumping: Mutex<()>,
     /// Where agents run. The app sets it, because its commands are not
     /// polled inside the async runtime; tests use the ambient one.
     runtime: Mutex<Option<tokio::runtime::Handle>>,
@@ -120,6 +147,25 @@ fn not_found(id: &AgentId) -> ProviderError {
         orchestrator_providers::ProviderErrorKind::NotFound,
         format!("agente {id} não encontrado"),
     )
+}
+
+/// Dollars for a message: cents, or tenths of a cent below ten cents.
+fn usd(value: f64) -> String {
+    if value.abs() < 0.1 {
+        format!("{value:.3}")
+    } else {
+        format!("{value:.2}")
+    }
+}
+
+/// Local midnight, as the start of "today" for the daily budget.
+fn today_start() -> chrono::DateTime<Utc> {
+    let now = chrono::Local::now();
+    now.date_naive()
+        .and_hms_opt(0, 0, 0)
+        .and_then(|midnight| midnight.and_local_timezone(chrono::Local).earliest())
+        .map(|midnight| midnight.with_timezone(&Utc))
+        .unwrap_or_else(|| Utc::now() - chrono::Duration::hours(24))
 }
 
 fn clip(text: &str, max: usize) -> String {
@@ -167,6 +213,7 @@ impl AgentService {
                 settings: RwLock::new(settings),
                 settings_path,
                 live: Mutex::new(HashMap::new()),
+                pumping: Mutex::new(()),
                 runtime: Mutex::new(None),
             }),
         };
@@ -181,7 +228,7 @@ impl AgentService {
     }
 
     pub fn settings(&self) -> AgentSettings {
-        *self.inner.settings.read()
+        self.inner.settings.read().clone()
     }
 
     pub fn save_settings(&self, settings: AgentSettings) -> Result<AgentSettings, ProviderError> {
@@ -189,7 +236,7 @@ impl AgentService {
         if let Some(path) = &self.inner.settings_path {
             settings::save(path, &settings).map_err(ProviderError::internal)?;
         }
-        *self.inner.settings.write() = settings;
+        *self.inner.settings.write() = settings.clone();
         // A wider ceiling may release what is queued.
         self.pump();
         Ok(settings)
@@ -200,15 +247,20 @@ impl AgentService {
     pub fn list(&self, project_id: Option<&str>) -> Vec<AgentView> {
         let agents = self.inner.store.agents_list(project_id);
         let pending = self.inner.autonomy.pending();
-        agents.into_iter().map(|a| self.view(a, &pending)).collect()
+        let plan = self.plan();
+        agents
+            .into_iter()
+            .map(|a| self.view(a, &pending, &plan))
+            .collect()
     }
 
     pub fn get(&self, id: &AgentId) -> Option<AgentView> {
         let pending = self.inner.autonomy.pending();
+        let plan = self.plan();
         self.inner
             .store
             .agent(id.as_str())
-            .map(|a| self.view(a, &pending))
+            .map(|a| self.view(a, &pending, &plan))
     }
 
     /// Locks held in a project, for the panel.
@@ -388,10 +440,15 @@ impl AgentService {
             .into_iter()
             .filter(|a| a.parent_agent.as_ref() == Some(&parent.id))
             .count();
-        if children >= MAX_SUBAGENTS {
-            return Err(invalid(format!(
-                "no máximo {MAX_SUBAGENTS} subagentes por agente"
-            )));
+        let limit = self.settings().max_subagents as usize;
+        if limit == 0 {
+            return Err(invalid(
+                "a delegação está desligada nas configurações dos agentes: faça a subtask \
+                 neste agente",
+            ));
+        }
+        if children >= limit {
+            return Err(invalid(format!("no máximo {limit} subagentes por agente")));
         }
         let origin = self.origin_of(&parent);
         let task = self.inner.tasks.save(
@@ -415,6 +472,7 @@ impl AgentService {
                 max_turns: None,
                 // The grant is for that line of work.
                 autonomy: parent.autonomy,
+                max_cost_usd: parent.max_cost_usd,
             },
             Some(parent.id.clone()),
         )?;
@@ -424,12 +482,18 @@ impl AgentService {
 
     // ---- internals -------------------------------------------------
 
-    fn view(&self, agent: Agent, pending: &[ApprovalView]) -> AgentView {
+    fn view(
+        &self,
+        agent: Agent,
+        pending: &[ApprovalView],
+        plan: &[(Agent, Option<String>)],
+    ) -> AgentView {
         let task = self.inner.store.task(agent.task.as_str());
-        let waiting = match agent.status {
-            AgentStatus::Queued => self.waiting_reason(&agent, task.as_ref()),
-            _ => None,
-        };
+        // Its place in the queue and what keeps it there.
+        let waiting = plan
+            .iter()
+            .position(|(queued, _)| queued.id == agent.id)
+            .map(|index| (plan[index].1.clone(), index as u32 + 1));
         let autonomy = &self.inner.autonomy;
         let paused = agent.status == AgentStatus::Running
             && (autonomy.paused_all() || autonomy.is_agent_paused(agent.id.as_str()));
@@ -440,11 +504,22 @@ impl AgentService {
         let mode = agent
             .autonomy
             .unwrap_or_else(|| autonomy.mode_of(Some(&agent.project_id)));
+        let cost_usd = agent
+            .session
+            .as_ref()
+            .and_then(|id| self.inner.sessions.info(id).ok())
+            .and_then(|info| info.usage.cost_usd);
+        let (waiting, queue_position) = match waiting {
+            Some((reason, position)) => (reason, Some(position)),
+            None => (None, None),
+        };
         AgentView {
             waiting,
             paused,
             approval,
             mode,
+            cost_usd,
+            queue_position,
             task_title: task
                 .as_ref()
                 .map(|t| t.title.clone())
@@ -454,44 +529,162 @@ impl AgentService {
         }
     }
 
-    /// What keeps a queued agent from starting, in the user's words.
-    fn waiting_reason(
-        &self,
-        agent: &Agent,
-        task: Option<&orchestrator_core::Task>,
-    ) -> Option<String> {
-        if self.inner.autonomy.paused_all() {
-            return Some("as IAs estão pausadas".to_owned());
-        }
-        let running = self
-            .inner
-            .store
-            .agents_live()
-            .into_iter()
-            .filter(|a| a.status == AgentStatus::Running)
-            .count();
+    /// The queue in start order (ADR-0018): task priority, then arrival.
+    /// Each agent comes with what keeps it waiting (`None`: it starts now),
+    /// as if those ahead of it started — an agent that cannot start does
+    /// not hold the ones behind it.
+    fn plan(&self) -> Vec<(Agent, Option<String>)> {
         let settings = self.settings();
-        if let Some(task) = task {
-            if let Some(project) = self.inner.store.project(&task.project_id) {
-                if let Some(lock) = self.inner.locks.blocked_by(
-                    &task.project_id,
-                    &PathBuf::from(&project.path),
-                    &task.files,
-                    agent,
-                ) {
-                    return Some(format!("{} está com \"{}\"", lock.path, lock.agent_title));
-                }
+        let paused = self.inner.autonomy.paused_all();
+        let live = self.inner.store.agents_live();
+        let spawned: Vec<AgentId> = self.inner.live.lock().keys().cloned().collect();
+        let mut running = 0u32;
+        let mut by_provider: HashMap<ProviderId, u32> = HashMap::new();
+        let mut queued = Vec::new();
+        for agent in live {
+            if agent.status == AgentStatus::Running || spawned.contains(&agent.id) {
+                running += 1;
+                *by_provider.entry(agent.provider.clone()).or_default() += 1;
+            } else {
+                let priority = self
+                    .inner
+                    .store
+                    .task(agent.task.as_str())
+                    .map(|t| t.priority)
+                    .unwrap_or_default();
+                queued.push((std::cmp::Reverse(priority), agent));
             }
         }
-        if running as u32 >= settings.max_parallel {
-            return Some(format!(
-                "{} agente{} em execução (o limite é {})",
-                running,
-                if running == 1 { "" } else { "s" },
-                settings.max_parallel
-            ));
+        // Stable: same priority keeps the order of arrival.
+        queued.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut budgets: HashMap<String, Option<String>> = HashMap::new();
+        let mut plan = Vec::new();
+        for (_, agent) in queued {
+            let hold = if paused {
+                Some("as IAs estão pausadas".to_owned())
+            } else if let Some(lock) = self.files_held(&agent) {
+                Some(lock)
+            } else if let Some(over) = budgets
+                .entry(agent.project_id.clone())
+                .or_insert_with(|| self.over_budget(&agent.project_id, &settings))
+                .clone()
+            {
+                Some(over)
+            } else if by_provider.get(&agent.provider).copied().unwrap_or(0)
+                >= settings.provider_limit(agent.provider.as_str())
+            {
+                let limit = settings.provider_limit(agent.provider.as_str());
+                Some(format!(
+                    "{limit} agente{} de {} em execução (o limite dele é {limit})",
+                    if limit == 1 { "" } else { "s" },
+                    agent.provider
+                ))
+            } else if running >= settings.max_parallel {
+                Some(format!(
+                    "{} agente{} em execução (o limite é {})",
+                    running,
+                    if running == 1 { "" } else { "s" },
+                    settings.max_parallel
+                ))
+            } else {
+                running += 1;
+                *by_provider.entry(agent.provider.clone()).or_default() += 1;
+                None
+            };
+            plan.push((agent, hold));
         }
-        None
+        plan
+    }
+
+    /// Who holds a file the agent's task declares.
+    fn files_held(&self, agent: &Agent) -> Option<String> {
+        let task = self.inner.store.task(agent.task.as_str())?;
+        let project = self.inner.store.project(&task.project_id)?;
+        self.inner
+            .locks
+            .blocked_by(
+                &task.project_id,
+                &PathBuf::from(&project.path),
+                &task.files,
+                agent,
+            )
+            .map(|lock| format!("{} está com \"{}\"", lock.path, lock.agent_title))
+    }
+
+    /// Why the project's daily budget keeps agents from running, if it does.
+    fn over_budget(&self, project_id: &str, settings: &AgentSettings) -> Option<String> {
+        let budget = settings.daily_budget_usd?;
+        let spent = self
+            .inner
+            .store
+            .spend(Some(project_id), today_start())
+            .cost_usd;
+        (spent >= budget).then(|| {
+            format!(
+                "o orçamento diário do projeto acabou (US$ {} de US$ {})",
+                usd(spent),
+                usd(budget)
+            )
+        })
+    }
+
+    /// The project's spending today against its daily budget.
+    pub fn budget(&self, project_id: &str) -> BudgetView {
+        let settings = self.settings();
+        let spend = self.inner.store.spend(Some(project_id), today_start());
+        BudgetView {
+            spent_today_usd: spend.cost_usd,
+            budget_usd: settings.daily_budget_usd,
+            unpriced: spend.unpriced,
+            exhausted: settings
+                .daily_budget_usd
+                .is_some_and(|budget| spend.cost_usd >= budget),
+        }
+    }
+
+    /// Whether a running agent must stop before its next turn: its own cost
+    /// ceiling or the project's daily budget. `unpriced` remembers that the
+    /// session was told its cost is unknown.
+    fn spent(&self, agent: &Agent, session: &SessionId, unpriced: &mut bool) -> Option<Ending> {
+        if let Some(ceiling) = agent.max_cost_usd {
+            let usage = self
+                .inner
+                .sessions
+                .info(session)
+                .map(|info| info.usage)
+                .unwrap_or_default();
+            match usage.cost_usd {
+                Some(cost) if cost >= ceiling => {
+                    return Some(Ending::Spent {
+                        reason: "costCeiling",
+                        message: format!(
+                            "o agente chegou ao teto de custo de US$ {} (gastou US$ {})",
+                            usd(ceiling),
+                            usd(cost)
+                        ),
+                    })
+                }
+                None if usage.total_tokens() > 0 && !*unpriced => {
+                    *unpriced = true;
+                    let _ = self.inner.sessions.annotate(
+                        session,
+                        SessionEvent::Notice {
+                            turn_id: None,
+                            level: orchestrator_core::NoticeLevel::Warning,
+                            message: "O modelo deste agente não tem preço configurado: o teto de \
+                                      custo não se aplica (informe o preço na conexão)."
+                                .into(),
+                        },
+                    );
+                }
+                _ => {}
+            }
+        }
+        self.over_budget(&agent.project_id, &self.settings())
+            .map(|message| Ending::Spent {
+                reason: "dailyBudget",
+                message,
+            })
     }
 
     fn depth_of(&self, agent: &Agent) -> usize {
@@ -594,6 +787,7 @@ impl AgentService {
             error: None,
             handoff: None,
             autonomy: request.autonomy,
+            max_cost_usd: request.max_cost_usd.or(self.settings().max_cost_usd),
             created_at: now,
             updated_at: now,
             started_at: None,
@@ -621,40 +815,10 @@ impl AgentService {
         let Some(runtime) = runtime else {
             return;
         };
-        // Nothing starts while the AIs are paused.
-        if self.inner.autonomy.paused_all() {
-            return;
-        }
-        let settings = self.settings();
-        let live = self.inner.store.agents_live();
-        let mut running = live
-            .iter()
-            .filter(|a| a.status == AgentStatus::Running)
-            .count() as u32;
-        for agent in live.iter().filter(|a| a.status == AgentStatus::Queued) {
-            if running >= settings.max_parallel {
-                break;
-            }
-            if self.inner.live.lock().contains_key(&agent.id) {
-                continue;
-            }
-            let Some(task) = self.inner.store.task(agent.task.as_str()) else {
-                continue;
-            };
-            let Some(project) = self.inner.store.project(&task.project_id) else {
-                continue;
-            };
-            if self
-                .inner
-                .locks
-                .blocked_by(
-                    &task.project_id,
-                    &PathBuf::from(&project.path),
-                    &task.files,
-                    agent,
-                )
-                .is_some()
-            {
+        // One pump at a time: the plan counts the slots it fills.
+        let _pumping = self.inner.pumping.lock();
+        for (agent, hold) in self.plan() {
+            if hold.is_some() || self.inner.live.lock().contains_key(&agent.id) {
                 continue;
             }
             let live = Arc::new(Live {
@@ -662,7 +826,6 @@ impl AgentService {
                 finish: Mutex::new(None),
             });
             self.inner.live.lock().insert(agent.id.clone(), live);
-            running += 1;
             let service = self.clone();
             let id = agent.id.clone();
             runtime.spawn(async move { service.run(id).await });
@@ -768,6 +931,7 @@ impl AgentService {
         );
 
         let mut message = opened.first_message;
+        let mut unpriced = false;
         loop {
             if live.cancel.is_cancelled() {
                 return Ending::Stopped;
@@ -780,6 +944,10 @@ impl AgentService {
                 .await
             {
                 return Ending::Stopped;
+            }
+            // Its cost ceiling, or the project's daily budget (ADR-0018).
+            if let Some(ending) = self.spent(&agent, &opened.session.id, &mut unpriced) {
+                return ending;
             }
             // The count goes up before the turn, so the panel shows the
             // turn the agent is on, not the one it finished.
@@ -864,7 +1032,7 @@ impl AgentService {
                 agent.status = AgentStatus::Done;
                 agent.result = result.clone();
             }
-            Ending::Failed(error) => {
+            Ending::Failed(error) | Ending::Spent { message: error, .. } => {
                 agent.status = AgentStatus::Failed;
                 agent.error = Some(clip(error, 500));
             }
@@ -892,7 +1060,7 @@ impl AgentService {
             }
             // It stopped mid-work: a handoff keeps the work reachable by
             // another AI, which is what the handoff is for.
-            Ending::Failed(_) | Ending::Stopped => {
+            Ending::Failed(_) | Ending::Spent { .. } | Ending::Stopped => {
                 agent.handoff = self.handoff_for(&agent, origin.clone()).await;
             }
         }
@@ -907,7 +1075,15 @@ impl AgentService {
         let outcome = match &ending {
             Ending::Done(_) => "concluiu",
             Ending::Failed(_) => "falhou",
+            Ending::Spent { reason, .. } if *reason == "dailyBudget" => {
+                "parou: orçamento diário do projeto"
+            }
+            Ending::Spent { .. } => "parou: teto de custo",
             Ending::Stopped => "parado pelo usuário",
+        };
+        let reason = match &ending {
+            Ending::Spent { reason, .. } => Some(*reason),
+            _ => None,
         };
         self.record(
             EventKind::AgentFinished,
@@ -920,6 +1096,7 @@ impl AgentService {
                 "error": agent.error,
                 "handoffId": agent.handoff,
                 "sessionId": agent.session,
+                "reason": reason,
             }),
             origin,
         );

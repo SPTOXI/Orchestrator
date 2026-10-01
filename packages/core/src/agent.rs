@@ -97,6 +97,10 @@ pub struct Agent {
     /// `None`: the project's (ADR-0016).
     #[serde(default)]
     pub autonomy: Option<AutonomyMode>,
+    /// What this agent may spend (USD) before it stops; `None` = no
+    /// ceiling (ADR-0018).
+    #[serde(default)]
+    pub max_cost_usd: Option<f64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
@@ -153,6 +157,7 @@ mod tests {
             error: None,
             handoff: None,
             autonomy: None,
+            max_cost_usd: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
             started_at: None,

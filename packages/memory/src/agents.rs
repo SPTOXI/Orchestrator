@@ -264,6 +264,7 @@ mod tests {
             error: None,
             handoff: None,
             autonomy: None,
+            max_cost_usd: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
             started_at: None,

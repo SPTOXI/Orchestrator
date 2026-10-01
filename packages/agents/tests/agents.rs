@@ -8,8 +8,8 @@ use orchestrator_agents::{
 };
 use orchestrator_core::{
     Agent, AgentId, AgentStatus, ApprovalAnswer, AuditEvent, AutonomyMode, CallOrigin, EventKind,
-    EventSink, FileLock, ProviderId, SessionId, StreamEvent, TaskInput, TaskStatus, ToolCall,
-    ToolDefinition, ToolErrorKind, ToolResult,
+    EventSink, FileLock, ProviderId, SessionId, StreamEvent, TaskInput, TaskPriority, TaskStatus,
+    TokenUsage, ToolCall, ToolDefinition, ToolErrorKind, ToolResult,
 };
 use orchestrator_engine::{
     AutonomyGate, AutonomyService, ContextBuilder, EngineTools, HandoffService, StoreSessions,
@@ -84,6 +84,8 @@ enum Script {
     Intruder,
     /// Splits the work and ends.
     Delegate,
+    /// Works slowly until the turn is cancelled (scheduling tests).
+    Slow,
 }
 
 /// A provider that acts as the agent asks, so the manager can be tested
@@ -102,6 +104,8 @@ fn classify(text: &str) -> Script {
         Script::Intruder
     } else if text.contains("Dividir") {
         Script::Delegate
+    } else if text.contains("devagar") {
+        Script::Slow
     } else {
         Script::Work
     }
@@ -175,10 +179,26 @@ impl AIProvider for Scripted {
                 })
             }
             Script::Forever => {
-                // Slow enough for the test to see it working.
+                // Slow enough for the test to see it working; each turn
+                // costs a cent (ADR-0018).
                 tokio::time::sleep(Duration::from_millis(20)).await;
+                ctx.report_usage(TokenUsage {
+                    input_tokens: 1_000,
+                    output_tokens: 100,
+                    cost_usd: Some(0.01),
+                    ..Default::default()
+                });
                 Ok(TurnOutput {
                     text: "ainda trabalhando".into(),
+                })
+            }
+            Script::Slow => {
+                let deadline = Instant::now() + Duration::from_secs(20);
+                while !ctx.is_cancelled() && Instant::now() < deadline {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                Ok(TurnOutput {
+                    text: "parei".into(),
                 })
             }
             Script::Intruder => {
@@ -212,9 +232,15 @@ impl AIProvider for Scripted {
                         }),
                     )
                     .await;
-                assert!(sub.ok, "{sub:?}");
+                let result = match &sub.error {
+                    None => "dividi o trabalho".to_owned(),
+                    Some(error) => {
+                        *self.denial.lock() = Some((error.kind, error.message.clone()));
+                        format!("não deleguei: {}", error.message)
+                    }
+                };
                 let done = ctx
-                    .call_tool("agent.finish", json!({"result": "dividi o trabalho"}))
+                    .call_tool("agent.finish", json!({"result": result}))
                     .await;
                 assert!(done.ok, "{done:?}");
                 Ok(TurnOutput {
@@ -413,6 +439,7 @@ async fn an_agent_executes_a_task_and_leaves_it_for_review() {
             model: None,
             max_turns: None,
             autonomy: None,
+            max_cost_usd: None,
         })
         .expect("agente na fila");
     assert_eq!(agent.status, AgentStatus::Queued);
@@ -470,6 +497,7 @@ async fn the_turn_ceiling_stops_an_agent_and_leaves_a_handoff() {
             model: None,
             max_turns: Some(2),
             autonomy: None,
+            max_cost_usd: None,
         })
         .expect("agente na fila");
     let ended = world.wait_final(&agent.id).await;
@@ -506,6 +534,7 @@ async fn two_agents_never_change_the_same_file() {
             model: None,
             max_turns: Some(500),
             autonomy: None,
+            max_cost_usd: None,
         })
         .unwrap();
     world
@@ -527,6 +556,7 @@ async fn two_agents_never_change_the_same_file() {
             model: None,
             max_turns: Some(2),
             autonomy: None,
+            max_cost_usd: None,
         })
         .unwrap();
     let view = world.agents.get(&queued.id).expect("agente na fila");
@@ -589,6 +619,7 @@ async fn a_write_on_a_file_another_agent_holds_is_refused_with_the_reason() {
         error: None,
         handoff: None,
         autonomy: None,
+        max_cost_usd: None,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
         started_at: Some(chrono::Utc::now()),
@@ -611,6 +642,7 @@ async fn a_write_on_a_file_another_agent_holds_is_refused_with_the_reason() {
             model: None,
             max_turns: Some(2),
             autonomy: None,
+            max_cost_usd: None,
         })
         .unwrap();
     let ended = world.wait_final(&intruder.id).await;
@@ -648,6 +680,7 @@ async fn an_agent_delegates_a_subtask_to_a_subagent() {
         .save_settings(AgentSettings {
             max_parallel: 1,
             max_turns: 4,
+            ..Default::default()
         })
         .unwrap();
     let task = world.task("Dividir o trabalho do webhook", &[]);
@@ -659,6 +692,7 @@ async fn an_agent_delegates_a_subtask_to_a_subagent() {
             model: None,
             max_turns: None,
             autonomy: Some(AutonomyMode::Autonomous),
+            max_cost_usd: None,
         })
         .unwrap();
     let parent = world.wait_final(&parent.id).await;
@@ -706,6 +740,7 @@ fn start(
             model: None,
             max_turns,
             autonomy,
+            max_cost_usd: None,
         })
         .expect("agente na fila")
 }
@@ -856,4 +891,194 @@ async fn while_the_ais_are_paused_the_queue_waits() {
     assert!(world.agents.resume_all(CallOrigin::User));
     let done = world.wait_final(&agent.id).await;
     assert_eq!(done.status, AgentStatus::Done);
+}
+
+// ---- scheduling (ADR-0018) --------------------------------------------
+
+impl World {
+    fn task_with(&self, title: &str, priority: TaskPriority) -> orchestrator_core::Task {
+        self.tasks
+            .save(
+                TaskInput {
+                    project_id: Some(self.project_id.clone()),
+                    title: Some(title.into()),
+                    priority: Some(priority),
+                    ..Default::default()
+                },
+                CallOrigin::User,
+            )
+            .expect("task criada")
+    }
+
+    fn settings(&self, change: impl FnOnce(&mut AgentSettings)) {
+        let mut settings = self.agents.settings();
+        change(&mut settings);
+        self.agents.save_settings(settings).unwrap();
+    }
+
+    fn status(&self, id: &AgentId) -> AgentStatus {
+        self.store.agent(id.as_str()).unwrap().status
+    }
+}
+
+#[tokio::test]
+async fn the_queue_follows_priority_and_the_provider_limit() {
+    let world = world().await;
+    world.settings(|s| {
+        s.max_parallel = 3;
+        s.provider_limits.insert("nuvem".into(), 1);
+    });
+    let first = start(
+        &world,
+        &world.task_with("devagar: primeiro", TaskPriority::Normal),
+        None,
+        None,
+    );
+    world
+        .wait_until("o primeiro rodando", |w| {
+            w.status(&first.id) == AgentStatus::Running
+        })
+        .await;
+    let low = start(
+        &world,
+        &world.task_with("devagar: baixa", TaskPriority::Low),
+        None,
+        None,
+    );
+    let urgent = start(
+        &world,
+        &world.task_with("devagar: urgente", TaskPriority::Urgent),
+        None,
+        None,
+    );
+
+    // One slot for "nuvem": both wait, the urgent one first, even though
+    // it arrived last; the reason names the provider's limit.
+    let view = world.agents.get(&urgent.id).unwrap();
+    assert_eq!(view.queue_position, Some(1));
+    assert!(view
+        .waiting
+        .as_deref()
+        .unwrap()
+        .contains("de nuvem em execução (o limite dele é 1)"));
+    assert_eq!(world.agents.get(&low.id).unwrap().queue_position, Some(2));
+    assert_eq!(world.agents.get(&first.id).unwrap().queue_position, None);
+
+    world
+        .agents
+        .stop(&first.id, CallOrigin::User)
+        .await
+        .unwrap();
+    world
+        .wait_until("o urgente rodando", |w| {
+            w.status(&urgent.id) == AgentStatus::Running
+        })
+        .await;
+    assert_eq!(
+        world.status(&low.id),
+        AgentStatus::Queued,
+        "the low one still waits"
+    );
+
+    world.agents.stop_all(None, CallOrigin::User).await.unwrap();
+    world.wait_final(&urgent.id).await;
+    world.wait_final(&low.id).await;
+}
+
+#[tokio::test]
+async fn a_cost_ceiling_stops_the_agent_with_a_handoff() {
+    let world = world().await;
+    // A cent per turn: the third turn reaches the ceiling.
+    world.settings(|s| s.max_cost_usd = Some(0.025));
+    let task = world.task("Trabalho sem fim", &[]);
+    let agent = start(&world, &task, Some(20), None);
+    assert_eq!(
+        agent.max_cost_usd,
+        Some(0.025),
+        "the setting, kept on the agent"
+    );
+    let agent = world.wait_final(&agent.id).await;
+    assert_eq!(agent.status, AgentStatus::Failed);
+    assert_eq!(agent.turns, 3);
+    let error = agent.error.unwrap();
+    assert!(
+        error.contains("teto de custo de US$ 0.025 (gastou US$ 0.030)"),
+        "{error}"
+    );
+    assert!(agent.handoff.is_some(), "the work stays reachable");
+    let finished = world.sink.of(EventKind::AgentFinished);
+    assert_eq!(finished.last().unwrap().data["reason"], "costCeiling");
+
+    // A ceiling given when the agent starts wins over the setting.
+    let task = world.task("Trabalho sem fim de novo", &[]);
+    let agent = world
+        .agents
+        .start(StartAgent {
+            task_id: task.id.clone(),
+            provider: None,
+            model: None,
+            max_turns: Some(20),
+            autonomy: None,
+            max_cost_usd: Some(0.005),
+        })
+        .unwrap();
+    let agent = world.wait_final(&agent.id).await;
+    assert_eq!(agent.turns, 1);
+}
+
+#[tokio::test]
+async fn the_daily_budget_stops_agents_and_holds_the_queue() {
+    let world = world().await;
+    world.settings(|s| s.daily_budget_usd = Some(0.02));
+    let agent = start(&world, &world.task("Trabalho sem fim", &[]), Some(20), None);
+    let agent = world.wait_final(&agent.id).await;
+    assert_eq!(agent.status, AgentStatus::Failed);
+    assert_eq!(agent.turns, 2, "two cents spent, then it stops");
+    assert!(agent.error.unwrap().contains("orçamento diário"));
+    assert_eq!(
+        world.sink.of(EventKind::AgentFinished).last().unwrap().data["reason"],
+        "dailyBudget"
+    );
+    let budget = world.agents.budget(&world.project_id);
+    assert!(budget.exhausted);
+    assert!((budget.spent_today_usd - 0.02).abs() < 1e-9, "{budget:?}");
+
+    // The next one waits for the budget, with the reason.
+    let next = start(
+        &world,
+        &world.task_with("devagar: depois", TaskPriority::Normal),
+        None,
+        None,
+    );
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(world.status(&next.id), AgentStatus::Queued);
+    let waiting = world.agents.get(&next.id).unwrap().waiting.unwrap();
+    assert!(
+        waiting.contains("orçamento diário do projeto acabou"),
+        "{waiting}"
+    );
+
+    // A bigger budget releases it.
+    world.settings(|s| s.daily_budget_usd = Some(1.0));
+    world
+        .wait_until("o agente liberado", |w| {
+            w.status(&next.id) == AgentStatus::Running
+        })
+        .await;
+    world.agents.stop(&next.id, CallOrigin::User).await.unwrap();
+    world.wait_final(&next.id).await;
+}
+
+#[tokio::test]
+async fn delegation_can_be_turned_off() {
+    let world = world().await;
+    world.settings(|s| s.max_subagents = 0);
+    let task = world.task("Dividir o trabalho", &[]);
+    let parent = start(&world, &task, None, None);
+    let parent = world.wait_final(&parent.id).await;
+    assert_eq!(parent.status, AgentStatus::Done);
+    let (kind, message) = world.provider.denial.lock().clone().unwrap();
+    assert_eq!(kind, ToolErrorKind::InvalidArgs);
+    assert!(message.contains("delegação está desligada"), "{message}");
+    assert!(parent.result.contains("não deleguei"));
 }
