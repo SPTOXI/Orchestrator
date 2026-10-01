@@ -558,7 +558,7 @@ impl AgentService {
             }
         }
         // Stable: same priority keeps the order of arrival.
-        queued.sort_by(|a, b| a.0.cmp(&b.0));
+        queued.sort_by_key(|a| a.0);
         let mut budgets: HashMap<String, Option<String>> = HashMap::new();
         let mut plan = Vec::new();
         for (_, agent) in queued {

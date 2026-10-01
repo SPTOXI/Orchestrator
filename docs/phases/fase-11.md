@@ -233,6 +233,7 @@ sob pedido e tem roteiros de agente lento e sem fim):
 | Instruções e ferramentas que sozinhas passam do limite fariam a compactação repetir a cada turno | Guarda: não compacta quando o que fica depois do resumo já passa do limite |
 | Num teste, a API falsa respondia à requisição depois da compactação como se fosse a anterior, em laço | O teste distingue as requisições pela primeira mensagem do usuário |
 | A CI de um commit falhou em todos os jobs em 2 s, sem logs (runner 0) | Falha da infraestrutura do GitHub; o push seguinte passou |
+| Da etapa 4 em diante a CI falhou no clippy: o Rust estável da CI (1.98) traz o lint `unnecessary_sort_by`, que o 1.94 local não tinha, na ordenação da fila de agentes | `sort_by_key`; clippy e rustfmt do 1.98 rodados localmente no workspace e no alvo Windows antes do push |
 | O valor de hoje na barra de status alargava o layout e escondia "Encerrar" | A barra não passa da janela: o caminho do projeto encolhe com reticências |
 | A linha do orçamento no painel AGENTS se sobrepunha ao link "Tokens e custo" | Valor e link em linhas separadas |
 | O campo "teto US$" na aba da task apertava os seletores de provider e modelo | O campo foi para junto de "Executar com um agente" e os seletores têm largura mínima |
