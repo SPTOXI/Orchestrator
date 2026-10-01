@@ -18,7 +18,7 @@ poder ser retomada de onde parou.
    `CONTEXT_COMPACTED`, `context.json`; testes.
 4. ✅ Escalonamento de agentes: ordem da fila, limite por provider, tetos
    de custo, orçamento diário, `maxSubagents`; testes.
-5. ⏳ Supervisão de processos: Job Object (Windows) e processos órfãos
+5. ✅ Supervisão de processos: Job Object (Windows) e processos órfãos
    (Linux/macOS); testes.
 6. ⏳ Desktop e UI: sessão, conexão, contexto, agentes, aba "Tokens e
    custo".

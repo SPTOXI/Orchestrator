@@ -22,10 +22,12 @@ pub mod process;
 pub mod project;
 pub mod schema;
 pub mod shell;
+pub mod supervisor;
 pub mod terminal;
 
 pub use catalog::CATALOG;
 pub use shell::{ShellInfo, ShellKind, ShellRegistry};
+pub use supervisor::{Orphan, Supervisor};
 
 use chrono::Utc;
 use orchestrator_core::{
@@ -74,6 +76,8 @@ struct Inner {
     shells: ShellRegistry,
     terminals: terminal::TerminalManager,
     processes: process::ProcessManager,
+    /// Keeps started processes from outliving the app (ADR-0018).
+    supervisor: Arc<Supervisor>,
     /// GitHub settings and token (ADR-0017).
     github: github_tools::GitHubState,
 }
@@ -113,12 +117,14 @@ impl ToolRuntime {
         sink: Arc<dyn EventSink>,
         shells: ShellRegistry,
     ) -> Self {
+        let supervisor = Arc::new(Supervisor::new());
         Self {
             inner: Arc::new(Inner {
                 base_dir: RwLock::new(config.base_dir),
                 git: Git::detect().ok(),
                 terminals: terminal::TerminalManager::new(sink.clone()),
-                processes: process::ProcessManager::new(sink.clone()),
+                processes: process::ProcessManager::new(sink.clone(), supervisor.clone()),
+                supervisor,
                 sink,
                 shells,
                 github: github_tools::GitHubState::default(),
@@ -281,7 +287,8 @@ impl ToolRuntime {
             }
             "shell.execute" => {
                 let args: shell::ExecuteArgs = parse(&call.args)?;
-                let out = shell::execute(&inner.shells, base, args).await?;
+                let out =
+                    shell::execute(&inner.shells, base, args, Some(&inner.supervisor)).await?;
                 let event = command_executed(origin, &out);
                 Dispatched::with_events(&out, vec![event])
             }
@@ -746,8 +753,34 @@ impl ToolRuntime {
                 stdin: None,
                 max_output_bytes: None,
             },
+            Some(&self.inner.supervisor),
         )
         .await
+    }
+
+    /// Keeps the process groups `process.start` creates in `path`, and ends
+    /// the ones a previous run that died left there (Linux and macOS; on
+    /// Windows a Job Object ends them with the app). Each one ended is
+    /// recorded as `PROCESS_EXITED` with `reason: "orphan"` (ADR-0018).
+    pub fn open_process_registry(&self, path: &Path) -> Vec<Orphan> {
+        let orphans = self.inner.supervisor.open_registry(path);
+        for orphan in &orphans {
+            self.inner.sink.audit(AuditEvent::new(
+                EventKind::ProcessExited,
+                CallOrigin::System,
+                format!(
+                    "processo da execução anterior encerrado: {}",
+                    orphan.command
+                ),
+                json!({
+                    "pid": orphan.pid,
+                    "command": orphan.command,
+                    "startedAt": orphan.started_at,
+                    "reason": "orphan",
+                }),
+            ));
+        }
+        orphans
     }
 
     /// Streams human keystrokes into a terminal (ADR-0003: not a tool call).

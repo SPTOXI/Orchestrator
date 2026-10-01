@@ -280,6 +280,7 @@ pub async fn probe(registry: &ShellRegistry, cwd: &Path, words: &[&str]) -> Opti
             stdin: None,
             max_output_bytes: Some(64 * 1024),
         },
+        None,
     )
     .await
     .ok()?;

@@ -5,6 +5,7 @@
 use crate::output::{OutputBuffer, OutputChunk, Utf8Decoder};
 use crate::platform::{configure_process_tree, resolve_cwd, terminate_tree, Termination};
 use crate::shell::ShellRegistry;
+use crate::supervisor::Supervisor;
 use chrono::{DateTime, Utc};
 use orchestrator_core::{
     AuditEvent, CallOrigin, EventKind, EventSink, OutputStream, ProcessId, StreamEvent, ToolError,
@@ -159,13 +160,16 @@ impl ManagedProcess {
 pub struct ProcessManager {
     sink: Arc<dyn EventSink>,
     processes: Mutex<HashMap<ProcessId, Arc<ManagedProcess>>>,
+    /// Keeps them from outliving the app (ADR-0018).
+    supervisor: Arc<Supervisor>,
 }
 
 impl ProcessManager {
-    pub fn new(sink: Arc<dyn EventSink>) -> Self {
+    pub fn new(sink: Arc<dyn EventSink>, supervisor: Arc<Supervisor>) -> Self {
         Self {
             sink,
             processes: Mutex::new(HashMap::new()),
+            supervisor,
         }
     }
 
@@ -205,6 +209,7 @@ impl ProcessManager {
                 format!("failed to start {}: {e}", shell.path.display()),
             )
         })?;
+        self.supervisor.adopt(&child, &args.command, true);
 
         let (exited_tx, exited_rx) = watch::channel(false);
         let process = Arc::new(ManagedProcess {
@@ -247,8 +252,10 @@ impl ProcessManager {
 
         let sink = self.sink.clone();
         let watched = process.clone();
+        let supervisor = self.supervisor.clone();
         tokio::spawn(async move {
             let status = child.wait().await;
+            supervisor.release(watched.pid);
             for reader in readers {
                 let abort = reader.abort_handle();
                 if tokio::time::timeout(PIPE_DRAIN_GRACE, reader)

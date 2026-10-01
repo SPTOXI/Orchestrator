@@ -186,6 +186,15 @@ pub fn run() {
                 store: store.clone(),
             });
             let runtime = ToolRuntime::new(RuntimeConfig::default(), sink.clone());
+            // Processes a crash left running end now (Linux/macOS; on
+            // Windows a Job Object ends them with the app, ADR-0018).
+            let orphans = runtime.open_process_registry(&data_dir.join("processes.json"));
+            if !orphans.is_empty() {
+                eprintln!(
+                    "[orchestrator] {} process(es) left by the previous run were ended",
+                    orphans.len()
+                );
+            }
             // GitHub (ADR-0017): which server, and the token saved in the
             // vault (the environment and the GitHub CLI are read by the
             // runtime itself).

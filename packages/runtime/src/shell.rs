@@ -1,6 +1,7 @@
 //! Shell detection and non-interactive command execution (`shell.execute`).
 
 use crate::platform::{configure_process_tree, resolve_cwd, terminate_tree, Termination};
+use crate::supervisor::Supervisor;
 use orchestrator_core::{ToolError, ToolErrorKind};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -434,6 +435,7 @@ pub async fn execute(
     registry: &ShellRegistry,
     base_dir: &Path,
     args: ExecuteArgs,
+    supervisor: Option<&Supervisor>,
 ) -> Result<ExecuteOutput, ToolError> {
     if args.command.trim().is_empty() {
         return Err(ToolError::invalid_args("command must not be empty"));
@@ -463,6 +465,10 @@ pub async fn execute(
         )
     })?;
     let pid = child.id();
+    // Windows: the job ends it if the app dies mid-command (ADR-0018).
+    if let Some(supervisor) = supervisor {
+        supervisor.adopt(&child, &args.command, false);
+    }
 
     if let (Some(input), Some(mut stdin)) = (args.stdin, child.stdin.take()) {
         tokio::spawn(async move {
