@@ -1,49 +1,63 @@
 # Orchestrator — instruções para agentes
 
-## Regra geral
+Regras específicas deste repositório. Regras gerais de estilo por linguagem
+(Rust, TypeScript, React) e de segurança ficam na configuração global de cada
+pessoa — por exemplo, as do [ECC](https://github.com/affaan-m/ECC) em
+`~/.claude/rules/`. Quando uma regra global conflitar com este documento,
+vale este documento.
 
-Todo agente que trabalha neste repositório segue as regras do
-[ECC](https://github.com/affaan-m/ECC), copiadas para
-[`.claude/rules/ecc/`](./.claude/rules/ecc):
+## Regra de ouro
 
-- [`common/`](./.claude/rules/ecc/common): estilo, testes, segurança,
-  revisão de código, fluxo de desenvolvimento e de git, desempenho e padrões;
-  valem para qualquer arquivo.
-- [`rust/`](./.claude/rules/ecc/rust): valem para `**/*.rs` (núcleo em
-  `packages/*` e `apps/desktop/src-tauri`).
-- [`typescript/`](./.claude/rules/ecc/typescript) e
-  [`react/`](./.claude/rules/ecc/react): valem para a interface em
-  `apps/desktop/src`.
+Os princípios da seção 1 do [`ARCHITECTURE.md`](./ARCHITECTURE.md) valem
+acima de qualquer outra regra. Os que mais pesam no dia a dia:
 
-O Claude Code carrega `.claude/rules/` sozinho; outros agentes leem os mesmos
-arquivos a partir deste documento ou do [`AGENTS.md`](./AGENTS.md).
+- Nenhum módulo do núcleo depende de um provider específico (OpenAI,
+  Anthropic…); todos passam pela interface `AIProvider`.
+- Providers pedem `tool_call`; quem executa é o Tool Runtime.
+- Logs, histórico e auditoria são sempre registrados, inclusive em Acesso
+  Irrestrito.
 
-### Precedência
+## Decisões e fases
 
-Quando uma regra do ECC conflitar com este repositório, vale o repositório:
+- Toda mudança estrutural, ou que adicione algo fora do `ARCHITECTURE.md`,
+  ganha um ADR em [`docs/adr/`](./docs/adr) **antes** de ser implementada
+  (Contexto → Decisão → Consequências) e entra na tabela do README dos ADRs.
+- O trabalho é organizado em fases; cada fase termina com um relatório em
+  [`docs/phases/`](./docs/phases).
+- Commits seguem o padrão do histórico, em português:
+  `Fase N: <resumo>` para trabalho de fase, `<Área>: <resumo>` para o resto
+  (ex.: `Runtime: …`, `CI: …`). Não use `feat:`/`fix:`.
 
-1. Os princípios de [`ARCHITECTURE.md`](./ARCHITECTURE.md) (regra de ouro).
-2. As decisões registradas em [`docs/adr/`](./docs/adr) — toda mudança
-   estrutural ganha um ADR antes.
-3. As convenções já presentes no código ao redor.
-4. As regras do ECC.
+## Antes de commitar
 
-Referências do ECC a agentes, comandos e hooks do plugin `ecc@ecc` só se
-aplicam quando o plugin estiver instalado; sem ele, siga o princípio descrito.
-
-### Atualizar as regras
-
-As regras vêm do commit `c70874f` do ECC (licença MIT, em
-[`.claude/rules/ecc/LICENSE`](./.claude/rules/ecc/LICENSE)). Para atualizar,
-copie de novo os diretórios inteiros — sem achatar, porque os arquivos de
-linguagem apontam para `../common/`:
+Rode o que o CI cobra:
 
 ```bash
-git clone --depth 1 https://github.com/affaan-m/ECC.git /tmp/ecc
-for d in common rust typescript react; do
-  rm -rf .claude/rules/ecc/$d && cp -r /tmp/ecc/rules/$d .claude/rules/ecc/
-done
-cp /tmp/ecc/LICENSE .claude/rules/ecc/LICENSE
+pnpm check      # typecheck + cargo fmt --check + clippy -D warnings
+pnpm test       # cargo test --workspace + testes da interface
 ```
 
-e troque o commit citado acima.
+## Testes
+
+- Funcionalidade nova ou bug corrigido vem com teste. Não é exigido escrever
+  o teste antes (TDD) nem uma porcentagem de cobertura.
+- Testes Rust ficam em `packages/*/tests/` ou em módulos `#[cfg(test)]`;
+  testes da interface ficam ao lado do módulo testado (`*.test.ts`).
+
+## Segurança
+
+O Orchestrator executa comandos, mexe no sistema de arquivos e guarda chaves
+de API. Por isso:
+
+- Segredos só passam pelo cofre (`vault.rs`, `secrets.rs`); nunca em código,
+  logs, histórico ou mensagens de erro.
+- Toda operação destrutiva ou remota passa pelo gate de autonomia (ADR-0016).
+- Valide caminhos e argumentos recebidos de IAs antes de executar.
+
+O app é desktop (Tauri) e não expõe servidor HTTP: regras de CSRF ou rate
+limiting por endpoint não se aplicam.
+
+## Tamanho de arquivo
+
+Arquivos acima de ~800 linhas são um alerta, não um bloqueio. Não divida
+arquivos existentes no meio de outra tarefa; proponha a divisão à parte.
