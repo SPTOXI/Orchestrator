@@ -65,10 +65,11 @@ Workflow novo `release.yml`:
   os pacotes nos três sistemas e cria um **release em rascunho** no GitHub
   com os arquivos e o manifesto de atualização (`latest.json`). Quem
   publica o release é o usuário, na página do GitHub;
-- **pull request que mexe no empacotamento** (configuração do Tauri,
-  workflow, script de versão): gera os pacotes nos três sistemas e os
-  guarda como artefatos do workflow, **sem release** — para o
-  empacotamento não quebrar escondido.
+- **push cujos commits mexem no empacotamento** (configuração do Tauri,
+  ícones, workflow, script de versão): gera os pacotes nos três sistemas e
+  os guarda como artefatos do workflow, **sem release** — para o
+  empacotamento não quebrar escondido. Um filtro por pull request não
+  serviria: ele compara o PR inteiro com a base.
 
 Assinatura:
 
