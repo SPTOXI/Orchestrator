@@ -53,6 +53,7 @@ which = "8"
 tauri = { version = "2.12", features = [] }
 tauri-build = { version = "2.7", features = [] }
 tauri-plugin-dialog = "2.8"
+tauri-plugin-updater = "2.13"
 
 [profile.dev.package."*"]
 opt-level = 1

@@ -1,7 +1,7 @@
 //! Orchestrator desktop shell.
 //!
 //! This crate is only an IPC bridge (ADR-0001, ADR-0003, ADR-0009,
-//! ADR-0011, ADR-0013, ADR-0015, ADR-0016): it turns Tauri commands into
+//! ADR-0011, ADR-0013, ADR-0015, ADR-0016, ADR-0019): it turns Tauri commands into
 //! `ToolRuntime` / `SessionManager` / `RouterService` / engine / agent /
 //! autonomy calls and runtime events into Tauri events. It contains no
 //! domain logic.
@@ -17,6 +17,7 @@ mod persistence;
 mod provider_commands;
 mod router_commands;
 mod task_commands;
+mod update_commands;
 mod vault;
 
 use orchestrator_agents::{AgentDeps, AgentService, AgentSlot, AgentTools, LockManager};
@@ -164,8 +165,12 @@ fn exit_on_termination_signals(handle: AppHandle) {
 }
 
 pub fn run() {
-    let app = tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
+    let mut builder = tauri::Builder::default().plugin(tauri_plugin_dialog::init());
+    // Only release builds carry the key that verifies updates (ADR-0019).
+    if let Some(pubkey) = update_commands::pubkey() {
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().pubkey(pubkey).build());
+    }
+    let app = builder
         .setup(|app| {
             let data_dir = app
                 .path()
@@ -339,6 +344,14 @@ pub fn run() {
                 sink,
                 data_dir,
             });
+            // Updates (ADR-0019): the version this run is, and a new one
+            // in the history when it changed.
+            let version = app.package_info().version.to_string();
+            let data_dir = app.state::<AppState>().data_dir.clone();
+            let (updates, change) = update_commands::Updates::open(&data_dir, &version);
+            update_commands::record_change(app.state::<AppState>().sink.as_ref(), change, &version);
+            app.manage(updates);
+            update_commands::start_auto_check(app.handle().clone());
             #[cfg(unix)]
             exit_on_termination_signals(app.handle().clone());
             Ok(())
@@ -430,6 +443,11 @@ pub fn run() {
             task_commands::task_status,
             task_commands::task_start_session,
             task_commands::task_context,
+            update_commands::update_status,
+            update_commands::update_check,
+            update_commands::update_install,
+            update_commands::update_restart,
+            update_commands::update_settings_save,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build the Orchestrator desktop app");

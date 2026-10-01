@@ -101,7 +101,8 @@ export type EventKind =
   | "GITHUB_PR_CREATED"
   | "GITHUB_PR_MERGED"
   | "GITHUB_ISSUE_CREATED"
-  | "CONTEXT_COMPACTED";
+  | "CONTEXT_COMPACTED"
+  | "APP_UPDATED";
 
 export interface AuditEvent {
   id: string;
@@ -1615,3 +1616,42 @@ export interface GitHubSetup {
   ghInstalled: boolean;
   warning: string | null;
 }
+
+// --------------------------------------------------------------- updates ---
+
+/** A newer version the update endpoint offers (ADR-0019). */
+export interface UpdateInfo {
+  version: string;
+  currentVersion: string;
+  /** Release date (RFC 3339), when the manifest says. */
+  date: string | null;
+  notes: string | null;
+}
+
+export type UpdatePhase = "idle" | "checking" | "downloading" | "installed";
+
+export interface UpdateStatus {
+  version: string;
+  commit: string | null;
+  os: string;
+  arch: string;
+  /** How the app was installed (deb, rpm, appimage, msi, nsis, app); null when it runs from a build. */
+  bundle: string | null;
+  /** This build looks for updates (release builds carry the key). */
+  configured: boolean;
+  notConfigured: string | null;
+  endpoint: string | null;
+  autoCheck: boolean;
+  lastCheck: string | null;
+  lastError: string | null;
+  phase: UpdatePhase;
+  available: UpdateInfo | null;
+  warning: string | null;
+}
+
+/** Pushed on `runtime://update`. */
+export type UpdateEvent =
+  | { kind: "available"; info: UpdateInfo }
+  | { kind: "progress"; downloaded: number; total: number | null }
+  | { kind: "installed"; version: string }
+  | { kind: "failed"; message: string };

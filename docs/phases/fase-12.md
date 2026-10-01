@@ -16,8 +16,8 @@ poder ser retomada de onde parou.
    `scripts/version.mjs` (gravar e conferir a versão) e o `--check` na CI.
 3. ✅ Workflow `release.yml`: pacotes nos três sistemas, release em
    rascunho por tag, artefatos quando um push mexe no empacotamento.
-4. ⏳ Updater no desktop: plugin, `updates.json`, comandos, progresso,
+4. ✅ Updater no desktop: plugin, `updates.json`, comandos, progresso,
    `APP_UPDATED`; testes.
-5. ⏳ UI: aba "Sobre e atualizações" e chip na barra de status; testes.
+5. ✅ UI: aba "Sobre e atualizações" e chip na barra de status; testes.
 6. ⏳ Validação: pacotes Linux gerados e instalados no container, uma
    atualização assinada de ponta a ponta, documentação e publicação.

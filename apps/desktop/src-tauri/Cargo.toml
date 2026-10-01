@@ -31,8 +31,7 @@ serde.workspace = true
 serde_json.workspace = true
 tauri.workspace = true
 tauri-plugin-dialog.workspace = true
-
-[target.'cfg(unix)'.dependencies]
+tauri-plugin-updater.workspace = true
 tokio = { workspace = true, features = ["signal"] }
 
 [dev-dependencies]

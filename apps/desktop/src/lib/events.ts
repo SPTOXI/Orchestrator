@@ -3,7 +3,7 @@
 
 import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "./runtime";
-import type { AuditEvent, StreamEvent } from "./types";
+import type { AuditEvent, StreamEvent, UpdateEvent } from "./types";
 
 type Handler<T> = (event: T) => void;
 
@@ -58,3 +58,6 @@ export const streamEvents = tauriChannel<StreamEvent>("runtime://stream");
 
 /** Durable history events (TOOL_CALLED, FILE_CHANGED, …). */
 export const auditEvents = tauriChannel<AuditEvent>("runtime://audit");
+
+/** Update checks and downloads (ADR-0019). */
+export const updateEvents = tauriChannel<UpdateEvent>("runtime://update");

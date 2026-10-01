@@ -92,6 +92,8 @@ pub enum EventKind {
     GithubIssueCreated,
     /// A session's conversation was compacted into a summary (ADR-0018).
     ContextCompacted,
+    /// The app opened in a new version (ADR-0019).
+    AppUpdated,
 }
 
 /// A durable, provider-independent history entry.

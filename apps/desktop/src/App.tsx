@@ -3,6 +3,7 @@ import { CommandPanel } from "./components/CommandPanel";
 import { ConnectionEditor } from "./components/ConnectionEditor";
 import { ContextBar } from "./components/ContextBar";
 import { type ContextTabRequest, ContextView } from "./components/ContextView";
+import { AboutView } from "./components/AboutView";
 import { CostView } from "./components/CostView";
 import { CouncilEditor } from "./components/CouncilEditor";
 import { DiffView } from "./components/DiffView";
@@ -50,6 +51,8 @@ import { useCouncil } from "./lib/useCouncil";
 import { useMemory } from "./lib/useMemory";
 import { agentChip, agentOfTask } from "./lib/agents";
 import { useAgents } from "./lib/useAgents";
+import { updateChip } from "./lib/updates";
+import { useUpdates } from "./lib/useUpdates";
 import { useAutonomy } from "./lib/useAutonomy";
 import { autonomyChip } from "./lib/autonomy";
 import { useTasks } from "./lib/useTasks";
@@ -87,7 +90,9 @@ type Tab =
   /** GitHub connection: token and server (ADR-0017). */
   | { id: "github"; kind: "github" }
   /** What the AIs spent (ADR-0018). */
-  | { id: "cost"; kind: "cost" };
+  | { id: "cost"; kind: "cost" }
+  /** This copy of the app and its updates (ADR-0019). */
+  | { id: "about"; kind: "about" };
 
 const ACTIVITIES: Array<{ id: PanelId; label: string; icon: () => ReactNode }> = [
   { id: "project", label: "PROJECT", icon: FolderIcon },
@@ -153,6 +158,8 @@ function tabTitle(tab: Tab, sessions: Map<string, SessionInfo>, connections: Con
       return "GitHub";
     case "cost":
       return "Tokens e custo";
+    case "about":
+      return "Sobre e atualizações";
     case "connection":
       if (!tab.connectionId) return "Nova API";
       return `API · ${connections?.connections.find((c) => c.connection.id === tab.connectionId)?.connection.name ?? tab.connectionId}`;
@@ -185,6 +192,7 @@ export function App() {
   const memory = useMemory(ready, projectId);
   const tasks = useTasks(ready, projectId);
   const agents = useAgents(ready, projectId);
+  const updates = useUpdates(ready);
   const autonomy = useAutonomy(ready, projectId);
   /** Changes after a GitHub action, so the GIT panel asks GitHub again. */
   const [githubNonce, setGithubNonce] = useState(0);
@@ -306,6 +314,8 @@ export function App() {
   const openGitHub = () => showTab({ id: "github", kind: "github" });
   /** Tokens and cost (ADR-0018). */
   const openCost = () => showTab({ id: "cost", kind: "cost" });
+  /** About and updates (ADR-0019). */
+  const openAbout = () => showTab({ id: "about", kind: "about" });
   const providerName = (id: string) => providers.view?.providers.find((p) => p.id === id)?.name ?? id;
   const pauseAgent = async (id: string, paused: boolean) => {
     if (paused) await agentApi.resume(id);
@@ -810,6 +820,17 @@ export function App() {
                       onChanged={() => setGithubNonce(Date.now())}
                     />
                   );
+                case "about":
+                  return (
+                    <AboutView
+                      key={tab.id}
+                      active={active}
+                      ready={ready}
+                      info={info}
+                      updates={updates}
+                      liveAgents={agents.list.filter((a) => a.status === "RUNNING" || a.status === "QUEUED").length}
+                    />
+                  );
                 case "cost":
                   return (
                     <CostView
@@ -929,6 +950,8 @@ export function App() {
         branch={branchLabel}
         spentToday={agents.budget}
         onOpenCost={openCost}
+        update={updateChip(updates.status)}
+        onOpenAbout={openAbout}
       />
     </div>
   );

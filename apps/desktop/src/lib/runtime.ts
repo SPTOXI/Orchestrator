@@ -82,6 +82,8 @@ import type {
   ToolErrorKind,
   ToolResult,
   ToolSpec,
+  UpdateInfo,
+  UpdateStatus,
   WriteOutput,
   StartedTask,
   StartTaskSession,
@@ -395,6 +397,19 @@ export const costApi = {
   /** Last `days` days (1 = today) of the open project, or of every project. */
   report: (days: number, allProjects = false) =>
     callProvider<SpendReport>("spend_report", { days, allProjects }),
+};
+
+/** Installers and updates (ADR-0019): the updater is on the Rust side; the
+ * webview only asks. Installing is always the user's call. */
+export const updateApi = {
+  status: () => invoke<UpdateStatus>("update_status"),
+  /** The newer version, or null when this one is the latest. */
+  check: () => invoke<UpdateInfo | null>("update_check"),
+  /** Stops running agents (with handoff), downloads, verifies and installs. */
+  install: () => invoke<void>("update_install"),
+  /** Opens the installed version. */
+  restart: () => invoke<void>("update_restart"),
+  saveSettings: (autoCheck: boolean) => invoke<UpdateStatus>("update_settings_save", { autoCheck }),
 };
 
 /** GitHub (ADR-0017): tools through the runtime; settings and token

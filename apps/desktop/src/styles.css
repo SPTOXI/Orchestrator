@@ -2970,3 +2970,62 @@ input.narrow {
 .ceiling-input {
   width: 80px;
 }
+
+/* ------------------------------------------ about and updates (ADR-0019) */
+
+.status-link.update {
+  color: var(--accent);
+}
+
+.kv-table {
+  border-collapse: collapse;
+  font-size: 12.5px;
+  max-width: 100%;
+}
+
+.kv-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-dim);
+  padding: 3px 16px 3px 0;
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+.kv-table td {
+  padding: 3px 0;
+  max-width: 640px;
+}
+
+.update-offer {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.update-notes {
+  white-space: pre-wrap;
+  font-size: 12px;
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  align-self: stretch;
+}
+
+.update-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  align-self: stretch;
+}
+
+.update-progress progress {
+  flex: 1;
+  max-width: 360px;
+}

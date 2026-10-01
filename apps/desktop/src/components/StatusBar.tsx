@@ -11,9 +11,12 @@ interface Props {
   /** What the open project's AIs spent today (ADR-0018). */
   spentToday: BudgetView | null;
   onOpenCost: () => void;
+  /** Something to do about updates ("Atualização 0.2.0"), if any (ADR-0019). */
+  update: string | null;
+  onOpenAbout: () => void;
 }
 
-export function StatusBar({ ready, info, workspace, branch, spentToday, onOpenCost }: Props) {
+export function StatusBar({ ready, info, workspace, branch, spentToday, onOpenCost, update, onOpenAbout }: Props) {
   return (
     <footer className="status-bar">
       <span className={`status ${ready ? "ok" : "err"}`}>
@@ -36,6 +39,11 @@ export function StatusBar({ ready, info, workspace, branch, spentToday, onOpenCo
           {spentToday.unpriced > 0 && " +?"}
         </button>
       )}
+      {update && (
+        <button className="status-link update" title="Abre Sobre e atualizações" onClick={onOpenAbout}>
+          ⬆ {update}
+        </button>
+      )}
       {info?.databaseWarning && (
         <span className="status err" title={info.databaseWarning}>
           <span className="dot err" />
@@ -48,7 +56,13 @@ export function StatusBar({ ready, info, workspace, branch, spentToday, onOpenCo
           <span>
             {info.os}/{info.arch}
           </span>
-          <span title={`Banco: ${info.database}`}>v{info.version}</span>
+          <button
+            className="status-link"
+            title={`Banco: ${info.database} — abre Sobre e atualizações`}
+            onClick={onOpenAbout}
+          >
+            v{info.version}
+          </button>
         </>
       )}
     </footer>
