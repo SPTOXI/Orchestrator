@@ -12,7 +12,7 @@ A fase é feita em passos, cada um commitado e enviado ao terminar, para
 poder ser retomada de onde parou.
 
 1. ✅ ADR-0019 e este arquivo.
-2. ⏳ Empacotamento: metadados e pacotes por sistema no `tauri.conf.json`,
+2. ✅ Empacotamento: metadados e pacotes por sistema no `tauri.conf.json`,
    `scripts/version.mjs` (gravar e conferir a versão) e o `--check` na CI.
 3. ⏳ Workflow `release.yml`: pacotes nos três sistemas, release em
    rascunho por tag, artefatos em pull requests de empacotamento.
