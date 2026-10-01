@@ -38,6 +38,7 @@ cada fase em [`docs/phases/`](./docs/phases).
 | 9 | Autonomia: Assistido, Autônomo, Acesso Irrestrito e Pause | ✅ concluída |
 | 10 | GitHub, pull requests e operações remotas | ✅ concluída |
 | 11 | Otimização de tokens, cache, compactação, agent scheduling | ✅ concluída |
+| 12 | Instaladores, release e atualização automática (escolhida depois do plano do documento mestre) | ✅ concluída |
 
 A ordem das Fases 4–5 foi redefinida na
 [ADR-0010](./docs/adr/0010-providers-por-api-com-cadastro-livre.md):
@@ -94,6 +95,14 @@ Dependências de sistema do Tauri por SO:
 
 Referência: <https://v2.tauri.app/start/prerequisites/>.
 
+## Instalar
+
+Os instaladores para Windows (`.exe`/`.msi`), macOS (`.dmg`, universal) e
+Linux (`.deb`, `.rpm`, AppImage) ficam na página de Releases do GitHub. O
+app avisa quando há versão nova e a instala quando você pede. Detalhes,
+assinatura de código e como publicar um release:
+[`docs/release.md`](./docs/release.md).
+
 ## Como executar
 
 ```bash
@@ -113,6 +122,32 @@ pnpm check            # typecheck + cargo fmt --check + cargo clippy -D warnings
 ```
 
 ## O que já funciona
+
+### Fase 12 — instaladores, release e atualizações
+
+- **Instaladores** para Windows (instalador por usuário `.exe`, em
+  português e inglês, e `.msi`), macOS (`.app`/`.dmg` universal, macOS
+  11+) e Linux (`.deb`, `.rpm` e AppImage), com nome, descrição, editor e
+  ícones.
+- **Uma versão só:** `pnpm version:set X.Y.Z` grava a versão em todos os
+  lugares e `pnpm version:check` (também na CI) confere — inclusive contra
+  a tag do release.
+- **Release pelo GitHub Actions:** uma tag `vX.Y.Z` gera os instaladores
+  nos três sistemas e cria um release em rascunho com eles e o manifesto
+  de atualização; quem publica é você. Um push que mexe no empacotamento
+  gera os instaladores como artefatos, sem release.
+- **Atualização automática assinada:** o app procura versões novas (ao
+  abrir e a cada 6 horas, desligável), avisa na barra de status e, quando
+  você pede, para os agentes com handoff, baixa, confere a assinatura e
+  instala; "Reiniciar agora" abre a versão nova. Builds locais não
+  procuram atualizações.
+- **Aba "Sobre e atualizações"** (clique na versão, na barra de status):
+  versão, tipo de instalação, pastas de dados, notas da versão nova e
+  progresso. O histórico registra `APP_UPDATED`.
+
+![A aba Sobre e atualizações oferecendo a versão nova](./docs/assets/fase-12-atualizacao.png)
+
+Referência: [`docs/release.md`](./docs/release.md).
 
 ### Fase 11 — tokens, cache, compactação e escalonamento
 
@@ -432,5 +467,6 @@ A referência completa das ferramentas está em
 [`docs/memory.md`](./docs/memory.md), o contexto e o handoff em
 [`docs/context.md`](./docs/context.md), as tasks em
 [`docs/tasks.md`](./docs/tasks.md), tokens, custo e compactação em
-[`docs/tokens.md`](./docs/tokens.md) e a camada IPC em
+[`docs/tokens.md`](./docs/tokens.md), instalação e release em
+[`docs/release.md`](./docs/release.md) e a camada IPC em
 [`docs/ipc.md`](./docs/ipc.md).

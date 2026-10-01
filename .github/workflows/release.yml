@@ -143,7 +143,9 @@ jobs:
         run: |
           config="${RUNNER_TEMP}/release.conf.json"
           if [ -n "${TAURI_SIGNING_PRIVATE_KEY}" ] && [ -n "${ORCHESTRATOR_UPDATER_PUBKEY}" ]; then
-            echo '{"bundle":{"createUpdaterArtifacts":true}}' > "$config"
+            # The CLI checks each signature against the configured public key.
+            node -e 'console.log(JSON.stringify({bundle: {createUpdaterArtifacts: true},
+              plugins: {updater: {pubkey: process.env.ORCHESTRATOR_UPDATER_PUBKEY}}}))' > "$config"
             echo "Atualizações assinadas: o app vai procurar e instalar versões novas."
           elif [ -n "${TAURI_SIGNING_PRIVATE_KEY}" ]; then
             echo "::error::Há o segredo TAURI_SIGNING_PRIVATE_KEY, mas falta a variável UPDATER_PUBKEY (a chave pública correspondente)."

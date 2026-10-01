@@ -3029,3 +3029,8 @@ input.narrow {
   flex: 1;
   max-width: 360px;
 }
+
+.about-view .task-body .inline-notice,
+.about-view .task-body .inline-error {
+  margin: 8px 0 0;
+}

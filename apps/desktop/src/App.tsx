@@ -1047,6 +1047,10 @@ function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenPr
                   orçamento diário por projeto.
                 </li>
                 <li>
+                  <strong>Instaladores e atualizações</strong>: instaladores para Windows, macOS e Linux, e o app avisa
+                  quando há versão nova — você decide quando instalar (clique na versão, na barra de status).
+                </li>
+                <li>
                   <strong>HISTORY</strong>: toda chamada de ferramenta é auditada, inclusive as feitas por IAs.
                 </li>
               </ul>
@@ -1057,6 +1061,7 @@ function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenPr
           <h2>Fases</h2>
           <ul>
             <li>0 a 11 concluídas: o plano do documento mestre está completo.</li>
+            <li>12 — instaladores, release e atualização automática.</li>
           </ul>
         </div>
       </div>

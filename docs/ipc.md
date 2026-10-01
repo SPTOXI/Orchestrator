@@ -240,12 +240,26 @@ O transcript da sessão recebe o evento `compacted` (`automatic`,
 `beforeTokens`, `afterTokens`, `messages`, `summary`) e os avisos de
 retentativa como `notice`.
 
+### Atualizações (Fase 12, ADR-0019)
+
+Referência: [`docs/release.md`](./release.md). O plugin de atualização fica
+no Rust; a webview não tem as permissões dele.
+
+| Comando | Argumentos | Retorno | Histórico |
+| ------- | ---------- | ------- | --------- |
+| `update_status` | — | `UpdateStatus` (versão, commit, sistema, tipo de instalação, se o build procura atualizações e por que não, procura automática, última procura e erro, fase, versão disponível) | — |
+| `update_check` | — | `UpdateInfo \| null` (versão, data, notas); recusa em build sem a chave | — |
+| `update_install` | — | — ; para os agentes (com handoff), baixa, confere a assinatura e instala; o progresso chega por `runtime://update` | `AGENT_FINISHED` dos agentes parados; `APP_UPDATED` na abertura seguinte |
+| `update_restart` | — | reinicia o app (abre a versão instalada) | — |
+| `update_settings_save` | `autoCheck` | `UpdateStatus` | — |
+
 ## Eventos
 
 | Evento | Payload | Uso |
 | ------ | ------- | --- |
 | `runtime://stream` | `StreamEvent` | saída de terminal/processo ao vivo, término; eventos de sessão de provider |
 | `runtime://audit` | `AuditEvent` | painel HISTORY, atualização de listas e do explorer |
+| `runtime://update` | `UpdateEvent` (`checked`, `available`, `progress`, `installed`, `failed`) | aba "Sobre e atualizações" e chip da barra de status (Fase 12) |
 
 `StreamEvent`:
 
@@ -294,6 +308,8 @@ entrada "Stack" da memória) seguem o mesmo caminho
   deliberações do Conselho e handoffs também ficam no banco.
 - A configuração do contexto fica em `<app-data>/context.json` (desde a
   Fase 11, com a compactação).
+- A procura automática de atualizações e a última versão aberta ficam em
+  `<app-data>/updates.json` (Fase 12).
 - Os grupos de processos iniciados pelo runtime (Linux e macOS) ficam em
   `<app-data>/processes.json`, para o app encerrar o que sobrar de uma
   queda (Fase 11).

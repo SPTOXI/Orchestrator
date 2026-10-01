@@ -1651,6 +1651,7 @@ export interface UpdateStatus {
 
 /** Pushed on `runtime://update`. */
 export type UpdateEvent =
+  | { kind: "checked" }
   | { kind: "available"; info: UpdateInfo }
   | { kind: "progress"; downloaded: number; total: number | null }
   | { kind: "installed"; version: string }

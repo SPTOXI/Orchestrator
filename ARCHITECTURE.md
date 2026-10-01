@@ -89,6 +89,7 @@ apenas apresentação.
 | Agent Manager, Subagents, File Locks | `packages/agents` | Rust | 8b | ✅ agentes executando tasks em paralelo, subagentes, travas por arquivo, handoff automático, Agent Board (ADR-0015) |
 | Autonomia (Assistido/Autônomo/Irrestrito), pedidos de autorização e Pause | `packages/orchestrator` (`orchestrator-engine`, módulo `autonomy`) | Rust | 9 | ✅ gate na frente de toda chamada de IA, regras do usuário, pedidos com resposta, liberação por sessão, modo por projeto e por agente, pausa (ADR-0016) |
 | GitHub, pull requests e operações remotas | `packages/git` (módulo `github`) + `packages/runtime` (`github.*`) | Rust | 10 | ✅ API REST v3, token do cofre/ambiente/`gh`, PRs com CI e revisões, merge, issues, `git.fetch`/`git.remotes` (ADR-0017) |
+| Instaladores, release e atualização automática | `apps/desktop/src-tauri` (`tauri.conf.json`, `update_commands.rs`) + `.github/workflows/release.yml` + `scripts/version.mjs` | Rust, Node | 12 | ✅ pacotes nos três sistemas, versão única, release em rascunho por tag, updater assinado só do lado Rust, `APP_UPDATED` (ADR-0019) |
 | Otimização de tokens, cache, compactação, scheduling | `packages/providers/api` (custo, cache, compactação, retentativas) + `packages/agents` (fila e tetos) + `packages/memory` (gasto) + `packages/runtime` (supervisão) | Rust | 11 | ✅ custo real com cache, cache de prompt por protocolo, compactação pela própria IA, fila por prioridade com limite por provider, teto de custo por agente e orçamento diário, Job Object e órfãos (ADR-0018) |
 
 Alterações à estrutura original:
@@ -284,6 +285,8 @@ TurnContext::call_tool → AutonomyGate → AgentTools → EngineTools → Runti
   com `cacheWriteTokens` e `cacheSavedUsd`; `Agent.maxCostUsd`;
   `TURN_COMPLETED` com o `model` e `AGENT_FINISHED` com o `reason`
   (`costCeiling`, `dailyBudget`) (Fase 11, ADR-0018).
+- Evento `APP_UPDATED` (`from`, `to`, `via`) na primeira abertura de uma
+  versão nova (Fase 12, ADR-0019).
 - `HandoffPacket`, `Handoff`, `HandoffEnd`, `HandoffStatus`, `HandoffId`,
   `ContextSummary` e os eventos de sessão `contextAttached` e `handedOff`
   (Fase 7).
@@ -458,6 +461,24 @@ de um fornecedor; o que é de um fornecedor é otimização a mais.
 - **Gasto:** lido do histórico (`TURN_COMPLETED` com o `model` e
   `COUNCIL_DELIBERATED`), sem migração; barra de status, painel AGENTS e a
   aba "Tokens e custo".
+
+## 8.4 Instaladores, release e atualizações (Fase 12)
+
+[ADR-0019](./docs/adr/0019-instaladores-release-e-atualizacao.md),
+referência em [`docs/release.md`](./docs/release.md).
+
+- **Pacotes:** `nsis`/`msi` (Windows), `app`/`dmg` universal (macOS),
+  `deb`/`rpm`/AppImage (Linux), pelo bundler do Tauri.
+- **Versão única:** o `package.json` da raiz manda; `scripts/version.mjs`
+  grava e confere a versão no desktop, no workspace Cargo, no `Cargo.lock`
+  e contra a tag. O `tauri.conf.json` lê a do `package.json` do desktop.
+- **Release:** `release.yml` gera os pacotes nos três sistemas e cria o
+  release em rascunho com o `latest.json`; o usuário publica.
+- **Atualização:** `tauri-plugin-updater` registrado só no Rust e só
+  quando o build traz a chave pública (`ORCHESTRATOR_UPDATER_PUBKEY`, do
+  release); a webview chama `update_*` como qualquer comando. Instalar é
+  do usuário, depois de parar os agentes com handoff; a assinatura é
+  conferida antes. `APP_UPDATED` registra a troca de versão na abertura.
 
 ## 9. Providers (Fases 3–7)
 

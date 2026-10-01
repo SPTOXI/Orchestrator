@@ -177,10 +177,21 @@ pub struct UpdateStatus {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase", tag = "kind")]
 pub enum UpdateEvent {
-    Available { info: UpdateInfo },
-    Progress { downloaded: u64, total: Option<u64> },
-    Installed { version: String },
-    Failed { message: String },
+    /// A check ended (found something or not, or failed).
+    Checked,
+    Available {
+        info: UpdateInfo,
+    },
+    Progress {
+        downloaded: u64,
+        total: Option<u64>,
+    },
+    Installed {
+        version: String,
+    },
+    Failed {
+        message: String,
+    },
 }
 
 /// Updater state, managed by Tauri next to `AppState`.
@@ -250,6 +261,34 @@ impl Updates {
     }
 }
 
+/// The updater's errors in the user's words; the rest as they come.
+fn explain(err: &tauri_plugin_updater::Error) -> String {
+    use tauri_plugin_updater::Error as E;
+    match err {
+        E::Minisign(_) | E::SignatureUtf8(_) | E::Base64(_) => {
+            "a assinatura do pacote não confere com a chave deste Orchestrator (nada foi instalado)"
+                .to_owned()
+        }
+        E::Reqwest(_) | E::Network(_) => {
+            format!("sem conexão com o servidor de atualizações ({err})")
+        }
+        E::ReleaseNotFound => {
+            "o servidor não tem o manifesto da versão (o release já foi publicado?)".to_owned()
+        }
+        E::TargetNotFound(_) | E::TargetsNotFound(_) => format!(
+            "o release não tem pacote para este sistema ({}/{})",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        ),
+        E::AuthenticationFailed => "a senha de administrador não foi informada".to_owned(),
+        E::DebInstallFailed | E::PackageInstallFailed => {
+            "o gerenciador de pacotes do sistema não instalou a atualização".to_owned()
+        }
+        E::InsecureTransportProtocol => "o endereço de atualização precisa ser https".to_owned(),
+        _ => err.to_string(),
+    }
+}
+
 /// Records `APP_UPDATED` when this run is a new version.
 pub fn record_change(sink: &dyn EventSink, change: Option<(String, &'static str)>, current: &str) {
     let Some((from, via)) = change else {
@@ -258,7 +297,7 @@ pub fn record_change(sink: &dyn EventSink, change: Option<(String, &'static str)
     sink.audit(AuditEvent::new(
         EventKind::AppUpdated,
         CallOrigin::System,
-        format!("Orchestrator atualizado: {from} → {current}"),
+        format!("Orchestrator mudou de versão: {from} → {current}"),
         json!({ "from": from, "to": current, "via": via }),
     ));
 }
@@ -287,15 +326,15 @@ async fn check(app: &AppHandle) -> Result<Option<UpdateInfo>, String> {
         app.updater_builder()
             .endpoints(vec![url])
             .and_then(|builder| builder.build())
-            .map_err(|e| e.to_string())?
+            .map_err(|e| explain(&e))?
             .check()
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| explain(&e))
     }
     .await;
     *updates.phase.lock() = Phase::Idle;
     *updates.last_check.lock() = Some(Utc::now());
-    match result {
+    let outcome = match result {
         Ok(found) => {
             let info = found.as_ref().map(UpdateInfo::from);
             *updates.available.lock() = found;
@@ -310,7 +349,10 @@ async fn check(app: &AppHandle) -> Result<Option<UpdateInfo>, String> {
             *updates.last_error.lock() = Some(message.clone());
             Err(message)
         }
-    }
+    };
+    // The automatic checks have no caller waiting: the UI learns here.
+    let _ = app.emit(UPDATE_EVENT, UpdateEvent::Checked);
+    outcome
 }
 
 /// Looks for updates 15 s after the app opens and every 6 hours, when the
@@ -401,7 +443,7 @@ pub async fn update_install(
         Err(err) => {
             *updates.phase.lock() = Phase::Idle;
             let _ = updates.update_settings(|s| s.pending = None);
-            let message = format!("A atualização não foi instalada: {err}");
+            let message = format!("A atualização não foi instalada: {}", explain(&err));
             *updates.last_error.lock() = Some(message.clone());
             let _ = app.emit(
                 UPDATE_EVENT,
@@ -498,6 +540,16 @@ mod tests {
 
         let (_, again) = Updates::open(dir.path(), "0.2.0");
         assert_eq!(again, None);
+    }
+
+    #[test]
+    fn updater_errors_are_told_in_words() {
+        use tauri_plugin_updater::Error as E;
+        assert!(explain(&E::ReleaseNotFound).contains("manifesto"));
+        assert!(explain(&E::TargetNotFound("linux-x86_64-deb".into())).contains("este sistema"));
+        assert!(explain(&E::SignatureUtf8("x".into())).contains("assinatura"));
+        assert!(explain(&E::AuthenticationFailed).contains("senha"));
+        assert_eq!(explain(&E::EmptyEndpoints), E::EmptyEndpoints.to_string());
     }
 
     #[test]
