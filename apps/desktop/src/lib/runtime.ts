@@ -8,6 +8,7 @@
 import { invoke, isTauri as detectTauri } from "@tauri-apps/api/core";
 import type {
   BudgetView,
+  SecretsView,
   SpendReport,
   AppInfo,
   ContextOptions,
@@ -414,6 +415,13 @@ export const updateApi = {
 
 /** GitHub (ADR-0017): tools through the runtime; settings and token
  * through their own commands (the token never comes back). */
+/** Secrets the AIs use by name (ADR-0020). Values go in, never out. */
+export const secretsApi = {
+  list: () => invoke<SecretsView>("secrets_list"),
+  save: (name: string, value: string) => invoke<SecretsView>("secret_save", { name, value }),
+  remove: (name: string) => invoke<SecretsView>("secret_delete", { name }),
+};
+
 export const githubApi = {
   status: (path?: string) => callTool<GitHubStatus>("github.status", { path }),
   pulls: (args: { path?: string; state?: "open" | "closed" | "all"; head?: string; limit?: number } = {}) =>

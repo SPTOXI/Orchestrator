@@ -5,7 +5,7 @@
 
 use crate::CATALOG;
 use crate::{
-    filesystem, git_tools, github_tools, package, process, project, shell, terminal, Empty,
+    filesystem, git_tools, github_tools, package, process, project, shell, terminal, web, Empty,
     OpenArgs,
 };
 use orchestrator_core::ToolDefinition;
@@ -45,6 +45,9 @@ pub fn parameters(tool: &str) -> Option<Value> {
         "filesystem.move" => schema::<filesystem::MoveArgs>(),
         "filesystem.delete" => schema::<filesystem::DeleteArgs>(),
         "shell.execute" => schema::<shell::ExecuteArgs>(),
+        "web.fetch" => schema::<web::FetchArgs>(),
+        "http.request" => schema::<web::RequestArgs>(),
+        "secrets.list" => schema::<Empty>(),
         "terminal.create" => schema::<terminal::CreateArgs>(),
         "terminal.write" => schema::<terminal::WriteArgs>(),
         "terminal.read" => schema::<terminal::ReadArgs>(),

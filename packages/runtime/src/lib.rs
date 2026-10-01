@@ -24,6 +24,7 @@ pub mod schema;
 pub mod shell;
 pub mod supervisor;
 pub mod terminal;
+pub mod web;
 
 pub use catalog::CATALOG;
 pub use shell::{ShellInfo, ShellKind, ShellRegistry};
@@ -80,6 +81,8 @@ struct Inner {
     supervisor: Arc<Supervisor>,
     /// GitHub settings and token (ADR-0017).
     github: github_tools::GitHubState,
+    /// The user's secrets, used by name in the web tools (ADR-0020).
+    secrets: RwLock<web::Secrets>,
 }
 
 /// Executes tool calls. Cheap to clone (shared state).
@@ -128,8 +131,15 @@ impl ToolRuntime {
                 sink,
                 shells,
                 github: github_tools::GitHubState::default(),
+                secrets: RwLock::default(),
             }),
         }
+    }
+
+    /// The user's secrets from the OS vault, handed in by the app; the AIs
+    /// use them as `{{secret:NAME}}` and never see the values (ADR-0020).
+    pub fn set_secrets(&self, secrets: web::Secrets) {
+        *self.inner.secrets.write() = secrets;
     }
 
     /// Which GitHub the `github.*` tools talk to (`github.json`).
@@ -286,12 +296,40 @@ impl ToolRuntime {
                 }))
             }
             "shell.execute" => {
-                let args: shell::ExecuteArgs = parse(&call.args)?;
-                let out =
+                let mut args: shell::ExecuteArgs = parse(&call.args)?;
+                // Secrets in env values: expanded for the command, masked in
+                // what it prints (ADR-0020).
+                let secrets = args
+                    .env
+                    .values()
+                    .any(|v| web::mentions_secret(v))
+                    .then(|| inner.secrets.read().clone());
+                if let Some(secrets) = &secrets {
+                    for value in args.env.values_mut() {
+                        *value = web::expand(value, secrets)?;
+                    }
+                }
+                let mut out =
                     shell::execute(&inner.shells, base, args, Some(&inner.supervisor)).await?;
+                if let Some(secrets) = &secrets {
+                    out.stdout = web::mask(&out.stdout, secrets);
+                    out.stderr = web::mask(&out.stderr, secrets);
+                }
                 let event = command_executed(origin, &out);
                 Dispatched::with_events(&out, vec![event])
             }
+
+            "web.fetch" => {
+                let args: web::FetchArgs = parse(&call.args)?;
+                let secrets = inner.secrets.read().clone();
+                masked(web::fetch(args, &secrets).await, &secrets)
+            }
+            "http.request" => {
+                let args: web::RequestArgs = parse(&call.args)?;
+                let secrets = inner.secrets.read().clone();
+                masked(web::request(args, &secrets).await, &secrets)
+            }
+            "secrets.list" => Dispatched::new(&web::list(&inner.secrets.read())),
 
             "terminal.create" => {
                 let args: terminal::CreateArgs = parse(&call.args)?;
@@ -808,6 +846,24 @@ pub(crate) struct OpenArgs {
 }
 
 /// `COMMAND_EXECUTED` for a command that ran to completion.
+/// The output (or error) of a web tool with every secret value hidden.
+fn masked<T: Serialize>(
+    outcome: Result<T, ToolError>,
+    secrets: &web::Secrets,
+) -> Result<Dispatched, ToolError> {
+    match outcome {
+        Ok(out) => {
+            let mut dispatched = Dispatched::new(&out)?;
+            web::mask_value(&mut dispatched.output, secrets);
+            Ok(dispatched)
+        }
+        Err(mut err) => {
+            err.message = web::mask(&err.message, secrets);
+            Err(err)
+        }
+    }
+}
+
 fn command_executed(origin: &CallOrigin, out: &shell::ExecuteOutput) -> AuditEvent {
     let exit = match (out.timed_out, out.exit_code) {
         (true, _) => "timed out".to_owned(),

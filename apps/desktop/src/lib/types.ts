@@ -1617,6 +1617,24 @@ export interface GitHubSetup {
   warning: string | null;
 }
 
+// --------------------------------------------------------------- secrets ---
+
+/** A secret the AIs use by name (ADR-0020); never its value. */
+export interface SecretItem {
+  name: string;
+  updatedAt: string;
+  /** Its value was read from the vault. */
+  loaded: boolean;
+  /** What the AIs write: {{secret:NAME}}. */
+  placeholder: string;
+}
+
+export interface SecretsView {
+  secrets: SecretItem[];
+  vault: string;
+  warning: string | null;
+}
+
 // --------------------------------------------------------------- updates ---
 
 /** A newer version the update endpoint offers (ADR-0019). */

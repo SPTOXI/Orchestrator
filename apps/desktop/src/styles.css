@@ -3150,3 +3150,33 @@ input.narrow {
 .toast.err {
   border-left-color: var(--err);
 }
+
+/* ------------------------------------------------------- secrets (0020) -- */
+
+.secret-list {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.secret-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.secret-form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.secret-form input {
+  flex: 1 1 200px;
+  min-width: 0;
+}

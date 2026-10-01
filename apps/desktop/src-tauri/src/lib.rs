@@ -16,6 +16,7 @@ mod memory_commands;
 mod persistence;
 mod provider_commands;
 mod router_commands;
+mod secret_commands;
 mod task_commands;
 mod update_commands;
 mod vault;
@@ -214,6 +215,13 @@ pub fn run() {
                 }
             }
             if let Some(warning) = &github_warning {
+                eprintln!("[orchestrator] {warning}");
+            }
+            // The user's secrets for the AIs (ADR-0020): values from the
+            // vault, names from secrets.json.
+            let (secrets, secrets_warning) = secret_commands::load(&data_dir);
+            runtime.set_secrets(secrets);
+            if let Some(warning) = &secrets_warning {
                 eprintln!("[orchestrator] {warning}");
             }
             let registry = provider_registry(sink.clone());
@@ -437,6 +445,9 @@ pub fn run() {
             github_commands::github_token_save,
             github_commands::github_token_clear,
             github_commands::open_url,
+            secret_commands::secrets_list,
+            secret_commands::secret_save,
+            secret_commands::secret_delete,
             task_commands::tasks_list,
             task_commands::task_get,
             task_commands::task_save,

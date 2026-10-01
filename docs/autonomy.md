@@ -87,7 +87,13 @@ Regras padrão (restauráveis na aba):
 | 9 | comando `git push*` | perguntar |
 | 10 | `terminal.write` | perguntar |
 | 11 | `github.*` · ações | perguntar (publica no GitHub em nome da sua conta; Fase 10) |
-| 12 | qualquer outra | permitir |
+| 12 | `http.request` | perguntar (envia dados para a internet, às vezes com seus segredos; ADR-0020) |
+| 13 | qualquer outra | permitir |
+
+`web.fetch` e `secrets.list` são consultas: rodam no Assistido e no
+Autônomo pela regra 3. No **Acesso Irrestrito**, `http.request` também roda
+sem perguntar. Instalações com `autonomy.json` mantêm as regras salvas; a
+regra 12 aparece em "Restaurar padrão".
 
 ### Como uma chamada é julgada
 

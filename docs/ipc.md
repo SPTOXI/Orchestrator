@@ -240,6 +240,19 @@ O transcript da sessão recebe o evento `compacted` (`automatic`,
 `beforeTokens`, `afterTokens`, `messages`, `summary`) e os avisos de
 retentativa como `notice`.
 
+### Segredos (ADR-0020)
+
+Chaves e tokens que as IAs usam pelo nome (`{{secret:NOME}}`). O valor vai
+para o cofre do sistema (conta `secret:<NOME>` do serviço
+`dev.orchestrator.desktop`) e para a memória do runtime; os nomes ficam em
+`<app-data>/secrets.json`. **Nenhum comando devolve um valor.**
+
+| Comando | Argumentos | Retorno |
+| ------- | ---------- | ------- |
+| `secrets_list` | — | `SecretsView` (nomes, data, se o cofre tem o valor, o marcador, nome do cofre, aviso); recarrega o runtime |
+| `secret_save` | `name`, `value` | `SecretsView`; nome: letras sem acento, números, `_`, `-`, `.` (até 64) |
+| `secret_delete` | `name` | `SecretsView` |
+
 ### Atualizações (Fase 12, ADR-0019)
 
 Referência: [`docs/release.md`](./release.md). O plugin de atualização fica

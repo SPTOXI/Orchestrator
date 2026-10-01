@@ -84,6 +84,8 @@ pub fn default_rules() -> Vec<PolicyRule> {
         PolicyRule::tools(&["github.*"], Decision::Ask)
             .with_access(RuleAccess::Write)
             .with_note("publica no GitHub em nome da sua conta"),
+        PolicyRule::tools(&["http.request"], Decision::Ask)
+            .with_note("envia dados para a internet, às vezes com seus segredos"),
         PolicyRule::tools(&[], Decision::Allow).with_note("o resto o agente faz sozinho"),
     ]
 }
@@ -925,6 +927,19 @@ mod tests {
             Decision::Ask
         );
         assert_eq!(decide("git.fetch", false, json!({})), Decision::Allow);
+        // Internet (ADR-0020): reading a page is routine, calling an API asks.
+        assert_eq!(
+            decide("web.fetch", true, json!({"url": "https://example.com"})),
+            Decision::Allow
+        );
+        assert_eq!(
+            decide(
+                "http.request",
+                false,
+                json!({"method": "POST", "url": "https://api.x"})
+            ),
+            Decision::Ask
+        );
     }
 
     #[test]

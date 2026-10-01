@@ -52,7 +52,22 @@ pub const CATALOG: &[ToolSpec] = &[
     action(
         "shell.execute",
         "shell",
-        "Run a command to completion: { command, cwd?, shell?, env?, timeoutMs?, stdin?, maxOutputBytes? } -> { exitCode, stdout, stderr, timedOut, durationMs }.",
+        "Run a command to completion: { command, cwd?, shell?, env?, timeoutMs?, stdin?, maxOutputBytes? } -> { exitCode, stdout, stderr, timedOut, durationMs }. env values may use {{secret:NAME}}.",
+    ),
+    query(
+        "web.fetch",
+        "web",
+        "Read a web page or URL (GET): { url, headers?, format?: text|raw, maxBytes?, timeoutMs? } -> { url, status, ok, contentType, title, content, binary, truncated }. HTML comes back as readable text. url and header values may use {{secret:NAME}}.",
+    ),
+    action(
+        "http.request",
+        "web",
+        "Call any HTTP API: { method?: GET|POST|PUT|PATCH|DELETE|HEAD, url, headers?, body? | json?, maxBytes?, timeoutMs? } -> { url, status, ok, headers, body (parsed JSON or text), truncated }. url, headers and body may use {{secret:NAME}}.",
+    ),
+    query(
+        "secrets.list",
+        "web",
+        "Names of the secrets the user saved for the AIs (API keys, tokens): {} -> { names[], usage }. Use one as {{secret:NAME}}; its value is never shown.",
     ),
     query(
         "shell.list",

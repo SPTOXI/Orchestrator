@@ -24,5 +24,6 @@ adiciona algo fora dela, é registrada aqui **antes** de ser implementada.
 | [0017](./0017-github-e-operacoes-remotas.md) | GitHub, pull requests e operações remotas | Aceita |
 | [0018](./0018-tokens-cache-compactacao-e-escalonamento.md) | Tokens, cache, compactação de contexto e escalonamento de agentes | Aceita |
 | [0019](./0019-instaladores-release-e-atualizacao.md) | Instaladores, release e atualização automática | Aceita |
+| [0020](./0020-acesso-total-da-ia.md) | Acesso total da IA: internet, APIs e segredos | Aceita |
 
 Formato: Contexto → Decisão → Consequências.

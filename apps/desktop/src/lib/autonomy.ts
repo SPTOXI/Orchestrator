@@ -26,7 +26,7 @@ export const MODE_SUMMARY: Record<AutonomyMode, string> = {
   autonomous:
     "As IAs agem sozinhas conforme as suas regras: o que elas mandam perguntar, pergunta; o que mandam negar, é negado.",
   unrestricted:
-    "O Orchestrator não impõe nenhuma política: sem confirmações, sem comandos proibidos. Tudo continua registrado no histórico.",
+    "O Orchestrator não impõe nenhuma política: sem confirmações, sem comandos proibidos — arquivos, comandos, GitHub, internet e APIs com os seus segredos. Tudo continua registrado no histórico.",
 };
 
 export const DECISION_LABELS: Record<RuleDecision, string> = {

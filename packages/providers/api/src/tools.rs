@@ -79,9 +79,9 @@ pub const CALL_OPEN: &str = "<tool_call>";
 pub const CALL_CLOSE: &str = "</tool_call>";
 
 /// System prompt section that tells the model what it can do through the
-/// tools it has, so it does not answer with a generic "I cannot access
-/// that" when a tool does exactly that, and says what is missing when
-/// one does not. Built from the tool names only: stable for a session.
+/// tools it has (ADR-0020), so it uses them instead of answering "I have
+/// no access", and leaves permissions to the Orchestrator. Built from the
+/// tool names only: stable for a session.
 pub fn capabilities_note(tools: &[ToolDefinition]) -> Option<String> {
     let has = |prefixes: &[&str]| {
         tools
@@ -90,16 +90,19 @@ pub fn capabilities_note(tools: &[ToolDefinition]) -> Option<String> {
     };
     let mut can = Vec::new();
     if has(&["filesystem."]) {
-        can.push("read, write, move and delete the project's files");
+        can.push("read and write any file the user's account can reach, in the project or anywhere on the machine");
     }
     if has(&["shell.", "terminal.", "process.", "package.", "runtime."]) {
-        can.push("run commands and programs on the user's machine (shell, terminals, processes, packages)");
+        can.push("run any command or program on the user's machine (shell, terminals, processes, packages)");
     }
     if has(&["git."]) {
-        can.push("use git in the project (status, diff, commit, branches, pull, push)");
+        can.push("use git (status, diff, commit, branches, pull, push)");
     }
     if has(&["github."]) {
         can.push("work on GitHub with the account the user connected in the Orchestrator (pull requests, CI checks, reviews, issues, merge)");
+    }
+    if has(&["web.", "http."]) {
+        can.push("reach the internet: read any page or URL (web.fetch) and call any HTTP API (http.request)");
     }
     if has(&["memory.", "decision."]) {
         can.push("read and save the project's memory and decisions");
@@ -111,22 +114,32 @@ pub fn capabilities_note(tools: &[ToolDefinition]) -> Option<String> {
         return None;
     }
     let mut note = format!(
-        "What you can do here: you act only through your tools, which the Orchestrator runs on the user's \
-         machine. With them you can {}. Use them instead of saying you cannot: never claim you have no \
-         access to something a tool reaches, and never ask the user to do by hand what a tool does.",
+        "What you can do here: you act through your tools, which the Orchestrator runs on the user's machine \
+         with the user's own permissions. With them you can {}. Whether a call runs at once or first waits \
+         for the user's authorization is decided by the Orchestrator, not by you: ask for what the task needs \
+         and never refuse in advance for lack of access, never claim you cannot reach something a tool \
+         reaches, and never ask the user to do by hand what a tool does.",
         can.join("; ")
     );
+    if has(&["secrets."]) {
+        note.push_str(
+            " For APIs and services that need a key or token, the user saves secrets in the Orchestrator: \
+             secrets.list gives their names, and you use one by writing {{secret:NAME}} in a URL, header or \
+             body (or in an env value of shell.execute). You never see the value; never ask the user to paste \
+             a key in the chat. If the service needs a secret that is not saved, say which one and ask the \
+             user to add it in the Autonomia tab, \"Segredos\".",
+        );
+    }
     if has(&["github."]) {
         note.push_str(
-            " The github tools use the user's GitHub account through a token kept by the Orchestrator \
-             (you never see it). If a call says GitHub is not connected, tell the user to connect it in the \
-             GIT panel, GitHub section, \"Conectar ao GitHub\".",
+            " If a github call says GitHub is not connected, tell the user to connect it in the GIT panel, \
+             GitHub section, \"Conectar ao GitHub\".",
         );
     }
     note.push_str(
-        " You have no web browser and cannot sign in to websites or use the user's passwords. When a request \
-         needs an access you do not have, say exactly what is missing and how the user can provide it, \
-         instead of a generic refusal.",
+        " There is no graphical browser: a site that only works with an interactive login needs its API and \
+         a key or token saved as a secret. When something is really missing, say exactly what and how the \
+         user can provide it.",
     );
     Some(note)
 }
@@ -385,13 +398,20 @@ mod tests {
             name: name.into(),
             ..ping_tool()
         };
-        let note = capabilities_note(&[tool("filesystem.read"), tool("github.pr.list")]).unwrap();
+        let note = capabilities_note(&[
+            tool("filesystem.read"),
+            tool("github.pr.list"),
+            tool("web.fetch"),
+            tool("secrets.list"),
+        ])
+        .unwrap();
         assert!(
-            note.contains("project's files") && note.contains("GitHub"),
+            note.contains("any file") && note.contains("GitHub") && note.contains("internet"),
             "{note}"
         );
-        assert!(note.contains("Conectar ao GitHub") && note.contains("no web browser"));
-        assert!(!note.contains("run commands"), "{note}");
+        assert!(note.contains("never refuse in advance") && note.contains("{{secret:NAME}}"));
+        assert!(note.contains("Conectar ao GitHub") && note.contains("Segredos"));
+        assert!(!note.contains("run any command"), "{note}");
         // The connection test's ping, or no tools: nothing to say.
         assert_eq!(capabilities_note(&[ping_tool()]), None);
         assert_eq!(capabilities_note(&[]), None);

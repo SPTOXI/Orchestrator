@@ -123,6 +123,21 @@ pnpm check            # typecheck + cargo fmt --check + cargo clippy -D warnings
 
 ## O que já funciona
 
+### Acesso total da IA — internet, APIs e segredos (ADR-0020)
+
+- **Internet:** as IAs leem páginas (`web.fetch`, HTML vira texto) e chamam
+  qualquer API HTTP (`http.request`).
+- **Segredos:** chaves de API e tokens guardados no cofre do sistema (aba
+  Autonomia → "Segredos") e usados pelas IAs **pelo nome**,
+  `{{secret:NOME}}`, numa URL, cabeçalho, corpo ou variável de ambiente de
+  um comando. A IA nunca vê o valor: ele é trocado por `***` em tudo o que
+  volta, e o histórico guarda só o marcador.
+- **Sem recusa prévia:** a instrução de sistema diz o que as ferramentas
+  alcançam e que quem decide as autorizações é o Orchestrator.
+- No **Acesso Irrestrito**, nada disso pergunta nada; no Autônomo,
+  chamar uma API pergunta (regra padrão nova); no Assistido, ler páginas
+  roda e chamar APIs pede autorização.
+
 ### Fase 12 — instaladores, release e atualizações
 
 - **Instaladores** para Windows (instalador por usuário `.exe`, em

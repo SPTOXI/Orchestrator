@@ -22,6 +22,7 @@ import {
 } from "../lib/autonomy";
 import { appApi, autonomyApi, errorMessage } from "../lib/runtime";
 import type { Autonomy } from "../lib/useAutonomy";
+import { SecretsSection } from "./SecretsSection";
 import type {
   ApprovalAnswer,
   ApprovalView,
@@ -179,8 +180,9 @@ export function AutonomyView({ active, ready, projectName, autonomy }: Props) {
               <p>
                 <strong>Acesso Irrestrito</strong> significa que o Orchestrator não impõe nenhuma
                 política às IAs de {scope}: elas leem, criam, alteram e excluem arquivos, executam
-                comandos e scripts, instalam dependências, usam o Git (inclusive push), criam
-                subagentes e mexem fora da pasta do projeto — sem pedir autorização.
+                comandos e scripts, instalam dependências, usam o Git e o GitHub (inclusive push e
+                merge), acessam a internet e chamam APIs com os seus segredos, criam subagentes e
+                mexem fora da pasta do projeto — sem pedir autorização.
               </p>
               <p className="meta">
                 Continua valendo: tudo registrado no histórico; as travas de arquivo entre os seus
@@ -288,6 +290,8 @@ export function AutonomyView({ active, ready, projectName, autonomy }: Props) {
             </ul>
           </section>
         )}
+
+        <SecretsSection ready={ready} />
 
         <section className="task-step">
           <h3>Regras do modo Assistido</h3>

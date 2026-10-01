@@ -58,6 +58,31 @@ fn github_repo(call: &ToolCall) -> String {
         .unwrap_or_default()
 }
 
+/// Names of the secrets a call uses (`{{secret:NAME}}`, ADR-0020).
+fn secret_names(call: &ToolCall) -> Vec<String> {
+    let text = call.args.to_string();
+    let mut names: Vec<String> = text
+        .split("{{secret:")
+        .skip(1)
+        .filter_map(|rest| {
+            rest.split_once("}}")
+                .map(|(name, _)| name.trim().to_owned())
+        })
+        .filter(|name| !name.is_empty())
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn using_secrets(call: &ToolCall) -> String {
+    match secret_names(call).as_slice() {
+        [] => String::new(),
+        [one] => format!(" (usa o segredo {one})"),
+        many => format!(" (usa os segredos {})", many.join(", ")),
+    }
+}
+
 fn number(call: &ToolCall) -> String {
     call.args
         .get("number")
@@ -87,7 +112,23 @@ pub fn summary(call: &ToolCall) -> String {
             format!("Excluir {path} com tudo o que tem dentro")
         }
         "filesystem.delete" => format!("Excluir {path}"),
-        "shell.execute" => format!("Executar {}", quoted(arg(call, "command").unwrap_or(""))),
+        "shell.execute" => format!(
+            "Executar {}{}",
+            quoted(arg(call, "command").unwrap_or("")),
+            using_secrets(call)
+        ),
+        "web.fetch" => format!(
+            "Ler a página {}{}",
+            line(arg(call, "url").unwrap_or("?"), 160),
+            using_secrets(call)
+        ),
+        "http.request" => format!(
+            "Chamar a API: {} {}{}",
+            arg(call, "method").unwrap_or("GET").to_uppercase(),
+            line(arg(call, "url").unwrap_or("?"), 160),
+            using_secrets(call)
+        ),
+        "secrets.list" => "Ver os nomes dos segredos".to_owned(),
         "process.start" => format!(
             "Iniciar o processo {}",
             quoted(arg(call, "command").unwrap_or(""))
@@ -283,6 +324,19 @@ mod tests {
             "Criar um subagente: Testes"
         );
         assert_eq!(summary(&call("x.y", json!({}))), "x.y");
+        // Internet and secrets (ADR-0020): the names, never the values.
+        assert_eq!(
+            summary(&call(
+                "http.request",
+                json!({"method": "post", "url": "https://api.x/v1/itens",
+                       "headers": {"Authorization": "Bearer {{secret:API_X}}"}})
+            )),
+            "Chamar a API: POST https://api.x/v1/itens (usa o segredo API_X)"
+        );
+        assert_eq!(
+            summary(&call("web.fetch", json!({"url": "https://example.com"}))),
+            "Ler a página https://example.com"
+        );
         // GitHub (ADR-0017).
         assert_eq!(
             summary(&call(

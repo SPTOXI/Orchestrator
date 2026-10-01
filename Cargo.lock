@@ -2948,11 +2948,13 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
+ "encoding_rs",
  "libc",
  "orchestrator-core",
  "orchestrator-git",
  "parking_lot",
  "portable-pty",
+ "reqwest 0.12.28",
  "schemars 1.2.2",
  "serde",
  "serde_json",

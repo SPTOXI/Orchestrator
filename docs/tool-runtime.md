@@ -387,6 +387,39 @@ O token nunca aparece nos argumentos, no `TOOL_CALLED` nem nas saídas.
 
 ---
 
+## web (ADR-0020)
+
+Internet para as IAs: ler páginas e chamar APIs, com os segredos do usuário
+usados pelo nome.
+
+| Ferramenta | Tipo | Argumentos | Retorno |
+| ---------- | ---- | ---------- | ------- |
+| `web.fetch` | consulta | `{ url, headers?, format?: "text" \| "raw", maxBytes?, timeoutMs? }` | `{ url, status, ok, contentType, title, content, binary, truncated, bytes }` |
+| `http.request` | ação | `{ method?: GET\|POST\|PUT\|PATCH\|DELETE\|HEAD, url, headers?, body? \| json?, maxBytes?, timeoutMs? }` | `{ url, status, ok, headers, body, binary, truncated, bytes }` |
+| `secrets.list` | consulta | `{}` | `{ names[], usage }` — nunca os valores |
+
+- Só `http`/`https`; até 10 redirecionamentos; 60 s de tempo padrão; corpo
+  lido até 1 MB (`maxBytes`, até 20 MB), com `truncated`.
+- `web.fetch` devolve páginas HTML como texto legível (sem scripts,
+  estilos, comentários e tags; blocos viram linhas; entidades decodificadas)
+  e o `<title>` à parte; `format: "raw"` devolve o HTML. O charset vem do
+  `Content-Type` ou do `<meta charset>`.
+- `http.request` devolve o corpo já interpretado quando a resposta é JSON;
+  texto, senão; `null` sem corpo ou com corpo binário. Um 4xx/5xx **não** é
+  erro da ferramenta: `ok` diz.
+- **Segredos:** `{{secret:NOME}}` na URL, nos cabeçalhos, no corpo (texto
+  ou strings do JSON) e nos valores de `env` do `shell.execute`. O valor
+  entra só na requisição (ou no ambiente do comando); os argumentos
+  gravados no histórico guardam o marcador; o valor de todo segredo é
+  trocado por `***` no que volta (corpo, cabeçalhos, URL final, mensagens
+  de erro, saída do comando). Nome desconhecido: `INVALID_ARGS` com os
+  nomes que existem. Erros de rede não trazem a URL (ela pode ter um
+  segredo).
+- Os segredos chegam ao runtime pelo app (`ToolRuntime::set_secrets`), lidos
+  do cofre do sistema; ver `docs/ipc.md`.
+
+---
+
 ## package (Fase 2)
 
 Usam o gerenciador detectado no perfil (o primeiro de `packageManagers`) ou o
