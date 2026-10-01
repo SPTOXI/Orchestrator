@@ -28,6 +28,18 @@ pub struct Retry {
     pub wait: Duration,
     /// What went wrong, as the API said it.
     pub reason: String,
+    pub kind: RetryKind,
+}
+
+/// Why a request is repeated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetryKind {
+    /// The server did not take it: the same request after `wait`.
+    Wait,
+    /// The account's credit pays only `affordable` output tokens (a 402
+    /// that says so, as OpenRouter's): sent again at once asking for at
+    /// most `tokens`.
+    SmallerOutput { affordable: u32, tokens: u32 },
 }
 
 struct Failure {
@@ -166,6 +178,7 @@ impl HttpClient {
                 attempt,
                 wait,
                 reason: failure.error.message.clone(),
+                kind: RetryKind::Wait,
             });
             tokio::select! {
                 () = tokio::time::sleep(wait) => {}
@@ -452,6 +465,10 @@ pub fn status_error(status: u16, body: &str) -> ProviderError {
             ProviderErrorKind::Unavailable,
             "authentication rejected — check the API key",
         ),
+        402 => (
+            ProviderErrorKind::Failed,
+            "insufficient credit or spending limit reached",
+        ),
         404 => (
             ProviderErrorKind::InvalidRequest,
             "not found — check the base URL and the model",
@@ -462,6 +479,32 @@ pub fn status_error(status: u16, body: &str) -> ProviderError {
         _ => (ProviderErrorKind::Failed, "unexpected status"),
     };
     ProviderError::new(kind, format!("{what} (HTTP {status}): {message}"))
+}
+
+/// What a 402 says the credit pays for (OpenRouter: "… You requested up
+/// to 131072 tokens, but can only afford 42012 …").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Affordable {
+    /// Output tokens the request asked for, when the message says.
+    pub requested: Option<u32>,
+    /// Output tokens the credit still pays for.
+    pub tokens: u32,
+}
+
+pub fn affordable_output_tokens(error: &ProviderError) -> Option<Affordable> {
+    let message = &error.message;
+    if !message.contains("(HTTP 402)") {
+        return None;
+    }
+    let number_after = |mark: &str| {
+        let rest = &message[message.find(mark)? + mark.len()..];
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        digits.parse::<u32>().ok()
+    };
+    Some(Affordable {
+        requested: number_after("requested up to "),
+        tokens: number_after("can only afford ")?,
+    })
 }
 
 /// Best-effort error text from a JSON (or plain) error body.
@@ -569,5 +612,30 @@ mod tests {
         assert!(err.message.contains("slow down"));
         assert_eq!(error_message(r#"{"detail":"x"}"#), "x");
         assert_eq!(error_message(""), "(empty body)");
+    }
+
+    #[test]
+    fn a_402_tells_what_the_credit_pays_for() {
+        let openrouter = r#"{"error":{"message":"This request requires more credits, or fewer max_tokens. You requested up to 131072 tokens, but can only afford 42012. To increase, visit https://openrouter.ai/settings/keys and adjust the key's total limit","code":402}}"#;
+        let err = status_error(402, openrouter);
+        assert!(
+            err.message.starts_with("insufficient credit"),
+            "{}",
+            err.message
+        );
+        assert_eq!(
+            affordable_output_tokens(&err),
+            Some(Affordable {
+                requested: Some(131072),
+                tokens: 42012
+            })
+        );
+        // A 402 without the number, or the words in another status: nothing.
+        assert_eq!(
+            affordable_output_tokens(&status_error(402, "Payment required")),
+            None
+        );
+        let other = status_error(400, r#"{"error":{"message":"can only afford 10"}}"#);
+        assert_eq!(affordable_output_tokens(&other), None);
     }
 }

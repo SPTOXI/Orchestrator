@@ -134,6 +134,16 @@ resposta. A espera é a que o fornecedor pede (`retry-after` ou
 quota exceeded (HTTP 429): … — tentando de novo em 1 s (1 de 2)", e
 cancelar interrompe a espera.
 
+**Crédito que não paga a resposta (402).** Sem limite de saída na conexão,
+o OpenRouter supõe a resposta mais longa que o modelo permite e recusa se o
+crédito (ou o limite da chave) não a paga: "You requested up to 131072
+tokens, but can only afford 42012". O Orchestrator repete o pedido na hora,
+uma vez, pedindo no máximo **90% do que o crédito paga** (37.810 no
+exemplo), e avisa na sessão. O limite aprendido vale para os pedidos
+seguintes do mesmo modelo por 30 minutos (o crédito muda) e nunca sobe um
+limite já configurado. Se o crédito não paga nem 1.024 tokens, o erro diz o
+que fazer: um modelo gratuito (`:free`, no OpenRouter) ou mais crédito.
+
 ## Escalonamento de agentes
 
 A fila do Agent Manager ([agents.md](./agents.md)):

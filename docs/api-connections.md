@@ -279,6 +279,7 @@ O relatório (`TestReport`) traz:
 | HTTP | Tipo | Mensagem |
 | ---- | ---- | -------- |
 | 401, 403 (e 400 `API_KEY_INVALID` do Gemini) | `UNAVAILABLE` | `authentication rejected — check the API key (HTTP …): <mensagem da API>` |
+| 402 | `FAILED` | `insufficient credit or spending limit reached` |
 | 404 | `INVALID_REQUEST` | `not found — check the base URL and the model` |
 | 400, 409, 413, 422 | `INVALID_REQUEST` | `request rejected` |
 | 429 | `FAILED` | `rate limit or quota exceeded` |
@@ -288,7 +289,8 @@ O relatório (`TestReport`) traz:
 Desde a Fase 11, 408, 429, 500, 502, 503, 504, 529 e falhas de conexão
 são repetidos até duas vezes antes de virar erro, com a espera do
 `retry-after` (até 60 s) ou 2 s e 4 s; a sessão mostra cada tentativa
-([tokens.md](./tokens.md#retentativas)).
+([tokens.md](./tokens.md#retentativas)). Um 402 que diz quantos tokens o
+crédito paga (OpenRouter) é repetido na hora pedindo uma resposta menor.
 
 Um stream parado por 300 s falha o turno. A conexão TCP tem 20 s para abrir.
 O cancelamento interrompe a requisição em andamento.

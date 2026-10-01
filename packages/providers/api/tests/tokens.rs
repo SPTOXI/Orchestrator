@@ -241,6 +241,113 @@ async fn a_request_the_server_did_not_take_is_repeated() {
     assert_eq!(api.calls("/v1/chat").len(), 1);
 }
 
+/// OpenRouter's 402 when the credit does not pay the reply asked for.
+fn no_credit(requested: u32, affordable: u32) -> Reply {
+    Reply::status(
+        402,
+        json!({"error": {"code": 402, "message": format!(
+            "This request requires more credits, or fewer max_tokens. You requested up to \
+             {requested} tokens, but can only afford {affordable}. To increase, visit \
+             https://openrouter.ai/settings/keys and adjust the key's total limit"
+        )}}),
+    )
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reply_the_credit_cannot_pay_is_asked_shorter() {
+    // No output limit set: the API assumes the model's maximum and refuses;
+    // the request goes again at once for 90% of what the credit pays.
+    let api = FakeApi::start(
+        |request, _| match request.body["max_completion_tokens"].as_u64() {
+            None => no_credit(131_072, 42_012),
+            Some(_) => openai_text("ok"),
+        },
+    )
+    .await;
+    let h = Harness::new();
+    h.add(
+        connection(json!({
+            "id": "or", "name": "OpenRouter", "kind": "openai", "baseUrl": api.url("/v1"),
+            "toolMode": "none", "models": [{"id": "openrouter/auto"}]
+        })),
+        None,
+    )
+    .await;
+    let session = h.start("or").await;
+    h.turn(&session.id, "oi").await;
+    assert_eq!(h.last_turn(&session.id), (TurnStatus::Completed, None));
+    let calls = api.calls("/v1/chat");
+    assert_eq!(calls.len(), 2);
+    assert!(calls[0].body.get("max_completion_tokens").is_none());
+    assert_eq!(calls[1].body["max_completion_tokens"], 37_810);
+    let warnings: Vec<String> = h
+        .events(&session.id)
+        .into_iter()
+        .filter_map(|e| match e {
+            SessionEvent::Notice {
+                level: NoticeLevel::Warning,
+                message,
+                ..
+            } => Some(message),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(
+        warnings[0].contains("42.012") && warnings[0].contains("37.810"),
+        "{}",
+        warnings[0]
+    );
+
+    // The next turn asks for the learned limit straight away.
+    h.turn(&session.id, "de novo").await;
+    assert_eq!(h.last_turn(&session.id), (TurnStatus::Completed, None));
+    let calls = api.calls("/v1/chat");
+    assert_eq!(calls.len(), 3);
+    assert_eq!(calls[2].body["max_completion_tokens"], 37_810);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_credit_too_small_says_what_to_do() {
+    // Not even 1.024 tokens of reply: no repeat, and the error says why.
+    let api = FakeApi::start(|_, _| no_credit(131_072, 900)).await;
+    let h = Harness::new();
+    h.add(
+        connection(json!({
+            "id": "or", "name": "OpenRouter", "kind": "openai", "baseUrl": api.url("/v1"),
+            "toolMode": "none", "models": [{"id": "openrouter/auto"}]
+        })),
+        None,
+    )
+    .await;
+    let session = h.start("or").await;
+    h.turn(&session.id, "oi").await;
+    let (status, error) = h.last_turn(&session.id);
+    assert_eq!(status, TurnStatus::Failed);
+    let error = error.unwrap_or_default();
+    assert!(
+        error.contains("HTTP 402") && error.contains(":free"),
+        "{error}"
+    );
+    assert_eq!(api.calls("/v1/chat").len(), 1);
+
+    // A limit already below what the credit pays is not raised.
+    let api = FakeApi::start(|_, _| no_credit(2_000, 42_012)).await;
+    let h = Harness::new();
+    h.add(
+        connection(json!({
+            "id": "or", "name": "OpenRouter", "kind": "openai", "baseUrl": api.url("/v1"),
+            "toolMode": "none", "maxOutputTokens": 2000, "models": [{"id": "m"}]
+        })),
+        None,
+    )
+    .await;
+    let session = h.start("or").await;
+    h.turn(&session.id, "oi").await;
+    assert_eq!(h.last_turn(&session.id).0, TurnStatus::Failed);
+    assert_eq!(api.calls("/v1/chat").len(), 1);
+}
+
 // ---- compaction ------------------------------------------------------
 
 /// Whether an OpenAI request is the one asking for the summary.

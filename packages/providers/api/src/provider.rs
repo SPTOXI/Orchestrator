@@ -7,7 +7,7 @@
 use crate::compaction::{self, Compact};
 use crate::config::{ApiKind, Connection, CredentialSource, ModelEntry, ToolMode};
 use crate::conversation::{Conversation, Message, Part, Role, ToolResultPart};
-use crate::http::{FrameReader, HttpClient, Retry};
+use crate::http::{FrameReader, HttpClient, Retry, RetryKind};
 use crate::protocol::{protocol, Delta, Reply, Request, Stop};
 use crate::secrets::SecretStore;
 use crate::tools::{
@@ -32,6 +32,10 @@ use tokio_util::sync::CancellationToken;
 
 const INSPECT_TIMEOUT: Duration = Duration::from_secs(15);
 const TEST_TIMEOUT: Duration = Duration::from_secs(90);
+/// Below this, a reply cut to what the credit pays is not worth asking for.
+const MIN_AFFORDABLE_OUTPUT: u32 = 1024;
+/// How long a limit learned from a 402 holds: the credit may have changed.
+const OUTPUT_CAP_TTL: Duration = Duration::from_secs(30 * 60);
 
 /// Conversations by native reference. Every instance of one connection gets
 /// the same store from the `ConnectionManager`, so editing the connection
@@ -47,6 +51,8 @@ pub struct ApiProvider {
     key_override: Option<String>,
     key_cache: Mutex<Option<Option<String>>>,
     conversations: ConversationStore,
+    /// Output limits learned from 402s, by model: what the credit paid for.
+    output_caps: Mutex<HashMap<String, (u32, Instant)>>,
 }
 
 /// Result of "Testar conexão".
@@ -74,6 +80,7 @@ impl ApiProvider {
             key_override: None,
             key_cache: Mutex::new(None),
             conversations: ConversationStore::default(),
+            output_caps: Mutex::default(),
         }
     }
 
@@ -148,7 +155,8 @@ impl ApiProvider {
     }
 
     /// One request to the model; streamed deltas go to `on_delta`. A
-    /// request the server did not take is repeated (ADR-0018); `on_retry`
+    /// request the server did not take is repeated (ADR-0018); so is one
+    /// the credit cannot pay for, asking for a shorter reply. `on_retry`
     /// hears about each repeat.
     pub(crate) async fn call_model(
         &self,
@@ -160,18 +168,74 @@ impl ApiProvider {
         let key = self.key().await?;
         let protocol = protocol(self.conn.kind);
         let stream = protocol.streams(&self.conn);
+        let mut model = self.capped(call.model);
+        let request = |model: &ModelEntry| {
+            protocol.request(&Request {
+                conn: &self.conn,
+                key: key.as_deref(),
+                model,
+                system: call.system,
+                messages: call.messages,
+                tools: call.tools,
+                stream,
+                cache_key: call.cache_key,
+            })
+        };
+        let mut shrunk = false;
+        let response = loop {
+            let error = match self
+                .client
+                .send_retrying(&request(&model)?, cancel, on_retry)
+                .await
+            {
+                Ok(response) => break response,
+                Err(error) => error,
+            };
+            // A reply as long as the model allows costs more than the
+            // credit left (OpenRouter asks for that when no limit is set):
+            // ask once more for what it pays, and remember it.
+            let Some(credit) = crate::http::affordable_output_tokens(&error) else {
+                return Err(error);
+            };
+            let affordable = credit.tokens;
+            let tokens = (u64::from(affordable) * 9 / 10) as u32;
+            let asked = model
+                .max_output_tokens
+                .or(self.conn.max_output_tokens)
+                .or(credit.requested);
+            // Only ever ask for less, once.
+            if shrunk || tokens < MIN_AFFORDABLE_OUTPUT || asked.is_none_or(|a| a <= tokens) {
+                return Err(ProviderError::new(
+                    error.kind,
+                    format!(
+                        "{} — o crédito da conta (ou o limite da chave) não paga esta resposta: \
+                         use um modelo gratuito (no OpenRouter, os terminados em :free) ou adicione crédito",
+                        error.message
+                    ),
+                ));
+            }
+            shrunk = true;
+            self.output_caps
+                .lock()
+                .insert(model.id.clone(), (tokens, Instant::now()));
+            model.max_output_tokens = Some(tokens);
+            on_retry(&Retry {
+                attempt: 1,
+                wait: Duration::ZERO,
+                reason: error.message,
+                kind: RetryKind::SmallerOutput { affordable, tokens },
+            });
+        };
         let req = Request {
             conn: &self.conn,
             key: key.as_deref(),
-            model: call.model,
+            model: &model,
             system: call.system,
             messages: call.messages,
             tools: call.tools,
             stream,
             cache_key: call.cache_key,
         };
-        let http = protocol.request(&req)?;
-        let response = self.client.send_retrying(&http, cancel, on_retry).await?;
         let mut decoder = protocol.decoder(&req);
         let mut reader = FrameReader::new(response, protocol.stream_format(&self.conn, stream));
         while let Some(frame) = reader.next(cancel).await? {
@@ -183,6 +247,24 @@ impl ApiProvider {
             }
         }
         decoder.finish()
+    }
+
+    /// `model` with the output limit a recent 402 taught, if lower than
+    /// the configured one.
+    fn capped(&self, model: &ModelEntry) -> ModelEntry {
+        let mut model = model.clone();
+        let mut caps = self.output_caps.lock();
+        match caps.get(&model.id).copied() {
+            Some((_, since)) if since.elapsed() > OUTPUT_CAP_TTL => {
+                caps.remove(&model.id);
+            }
+            Some((cap, _)) => {
+                let asked = model.max_output_tokens.or(self.conn.max_output_tokens);
+                model.max_output_tokens = Some(asked.map_or(cap, |a| a.min(cap)));
+            }
+            None => {}
+        }
+        model
     }
 
     /// Usage plus cost from the model's configured prices (ADR-0018).
@@ -621,16 +703,36 @@ pub(crate) struct ModelCall<'a> {
 
 /// Tells the session that a request is about to be repeated.
 pub(crate) fn retry_notice(ctx: &TurnContext, retry: &Retry) {
-    ctx.notice(
-        NoticeLevel::Warning,
-        format!(
+    let message = match retry.kind {
+        RetryKind::Wait => format!(
             "{} — tentando de novo em {} s ({} de {})",
             retry.reason,
             retry.wait.as_secs_f64().ceil() as u64,
             retry.attempt,
             crate::http::MAX_RETRIES
         ),
-    );
+        RetryKind::SmallerOutput { affordable, tokens } => format!(
+            "o crédito da conta (ou o limite da chave) só paga {} tokens de resposta deste modelo: \
+             tentando de novo pedindo no máximo {} (vale para os próximos pedidos). \
+             Para respostas maiores, adicione crédito ou use um modelo gratuito.",
+            thousands(affordable),
+            thousands(tokens)
+        ),
+    };
+    ctx.notice(NoticeLevel::Warning, message);
+}
+
+/// `42012` → `42.012`.
+fn thousands(n: u32) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push('.');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// Text-only view of the conversation for the prompt tool protocol.
