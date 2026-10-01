@@ -98,7 +98,14 @@ export function ContextView({ ready, active, request, nonce }: Props) {
   const changed =
     settings !== null &&
     view !== null &&
-    (settings.autoAttach !== view.settings.autoAttach || settings.budgetTokens !== view.settings.budgetTokens);
+    (settings.autoAttach !== view.settings.autoAttach ||
+      settings.budgetTokens !== view.settings.budgetTokens ||
+      settings.compaction.auto !== view.settings.compaction.auto ||
+      settings.compaction.thresholdTokens !== view.settings.compaction.thresholdTokens ||
+      settings.compaction.thresholdPercent !== view.settings.compaction.thresholdPercent);
+  const compaction = settings?.compaction;
+  const setCompaction = (change: Partial<ContextSettings["compaction"]>) =>
+    settings && setSettings({ ...settings, compaction: { ...settings.compaction, ...change } });
 
   return (
     <div className="editor context-view" hidden={!active}>
@@ -146,6 +153,47 @@ export function ContextView({ ready, active, request, nonce }: Props) {
               <span className="meta">
                 de {view.minBudget.toLocaleString("pt-BR")} a {view.maxBudget.toLocaleString("pt-BR")} tokens; cada
                 sessão pode desligar o contexto antes da primeira mensagem.
+              </span>
+            </div>
+          )}
+          {compaction && (
+            <div className="row wrap compaction-settings">
+              <label className="check" title="ADR-0018">
+                <input
+                  type="checkbox"
+                  checked={compaction.auto}
+                  onChange={(e) => setCompaction({ auto: e.target.checked })}
+                />
+                Compactar a conversa automaticamente
+              </label>
+              <label className="row">
+                quando passar de
+                <input
+                  type="number"
+                  className="narrow"
+                  min={8000}
+                  max={2000000}
+                  step={10000}
+                  disabled={!compaction.auto}
+                  value={compaction.thresholdTokens}
+                  onChange={(e) => setCompaction({ thresholdTokens: Number(e.target.value) })}
+                />
+                tokens ou
+                <input
+                  type="number"
+                  className="narrow"
+                  min={10}
+                  max={95}
+                  step={5}
+                  disabled={!compaction.auto}
+                  value={compaction.thresholdPercent}
+                  onChange={(e) => setCompaction({ thresholdPercent: Number(e.target.value) })}
+                />
+                % da janela do modelo (o que vier primeiro)
+              </label>
+              <span className="meta">
+                A própria IA resume a conversa e o resumo passa a ir no lugar dela; a tela continua com tudo. Cada sessão
+                também tem o botão “Compactar”.
               </span>
             </div>
           )}

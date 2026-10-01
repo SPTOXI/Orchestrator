@@ -5,12 +5,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { auditEvents } from "./events";
 import { agentApi, errorMessage } from "./runtime";
-import type { AgentSettings, AgentView, FileLock } from "./types";
+import type { AgentSettings, AgentView, BudgetView, FileLock } from "./types";
 
 export interface Agents {
   list: AgentView[];
   locks: FileLock[];
   settings: AgentSettings | null;
+  /** The project's spending today against the daily budget (ADR-0018). */
+  budget: BudgetView | null;
   error: string | null;
   refresh: () => Promise<void>;
   saveSettings: (settings: AgentSettings) => Promise<void>;
@@ -33,12 +35,15 @@ const RELEVANT = new Set([
   "EXECUTION_PAUSED",
   "EXECUTION_RESUMED",
   "AUTONOMY_CHANGED",
+  // What an agent spent, and the project's budget (ADR-0018).
+  "TURN_COMPLETED",
 ]);
 
 export function useAgents(enabled: boolean, projectId: string | null): Agents {
   const [list, setList] = useState<AgentView[]>([]);
   const [locks, setLocks] = useState<FileLock[]>([]);
   const [settings, setSettings] = useState<AgentSettings | null>(null);
+  const [budget, setBudget] = useState<BudgetView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -46,24 +51,32 @@ export function useAgents(enabled: boolean, projectId: string | null): Agents {
     if (!projectId) {
       setList([]);
       setLocks([]);
+      setBudget(null);
       return;
     }
     try {
-      const [agents, held] = await Promise.all([
+      const [agents, held, spent] = await Promise.all([
         agentApi.list(projectId),
         agentApi.locks(projectId),
+        agentApi.budget(projectId),
       ]);
       setList(agents);
       setLocks(held);
+      setBudget(spent);
       setError(null);
     } catch (err) {
       setError(errorMessage(err));
     }
   }, [projectId]);
 
-  const saveSettings = useCallback(async (next: AgentSettings) => {
-    setSettings(await agentApi.saveSettings(next));
-  }, []);
+  const saveSettings = useCallback(
+    async (next: AgentSettings) => {
+      setSettings(await agentApi.saveSettings(next));
+      // A new budget changes what is exhausted.
+      void refresh();
+    },
+    [refresh],
+  );
 
   useEffect(() => {
     if (!enabled) return;
@@ -83,5 +96,5 @@ export function useAgents(enabled: boolean, projectId: string | null): Agents {
     };
   }, [enabled, refresh]);
 
-  return { list, locks, settings, error, refresh, saveSettings };
+  return { list, locks, settings, budget, error, refresh, saveSettings };
 }

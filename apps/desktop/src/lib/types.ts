@@ -100,7 +100,8 @@ export type EventKind =
   | "EXECUTION_RESUMED"
   | "GITHUB_PR_CREATED"
   | "GITHUB_PR_MERGED"
-  | "GITHUB_ISSUE_CREATED";
+  | "GITHUB_ISSUE_CREATED"
+  | "CONTEXT_COMPACTED";
 
 export interface AuditEvent {
   id: string;
@@ -474,11 +475,17 @@ export interface AppInfo {
 // ------------------------------------------------------------- providers ---
 
 export interface TokenUsage {
+  /** The whole prompt, cache reads and writes included. */
   inputTokens: number;
   outputTokens: number;
+  /** Read from the provider's prompt cache. */
   cachedInputTokens: number;
+  /** Written to the prompt cache (Anthropic; ADR-0018). */
+  cacheWriteTokens?: number;
   reasoningTokens: number;
   costUsd: number | null;
+  /** What the cache saved (negative: a write never read back). */
+  cacheSavedUsd?: number | null;
   estimated: boolean;
 }
 
@@ -522,6 +529,15 @@ export type SessionEvent =
   | { type: "statusChanged"; status: SessionStatus }
   | { type: "subagentSpawned"; childId: string; provider: string; title: string }
   | { type: "contextAttached"; turnId: string; summary: ContextSummary }
+  | {
+      type: "compacted";
+      turnId: string;
+      automatic: boolean;
+      beforeTokens: number;
+      afterTokens: number;
+      messages: number;
+      summary: string;
+    }
   | { type: "handedOff"; handoffId: string; fromSession: string; toSession: string; provider: string };
 
 export interface SessionLogEntry {
@@ -559,6 +575,8 @@ export interface ProviderCapabilities {
   cost: boolean;
   /** Answers one-off requests: can sit on the Council (ADR-0011). */
   completion: boolean;
+  /** Compacts its conversation into a summary (ADR-0018). */
+  compaction?: boolean;
   models: ModelInfo[];
   defaultModel: string | null;
 }
@@ -653,9 +671,23 @@ export interface ModelEntry {
   supportsVision: boolean | null;
   inputPrice: number | null;
   outputPrice: number | null;
+  /** USD per million input tokens read from the prompt cache (ADR-0018). */
+  cachedInputPrice?: number | null;
   tags: string[];
   extraBody: unknown;
   enabled: boolean;
+}
+
+/** Lifetime of an Anthropic prompt cache entry. */
+export type CacheTtl = "5m" | "1h";
+
+export interface ProtocolOptions {
+  streamUsage: boolean | null;
+  eagerToolStreaming: boolean | null;
+  refusalFallback: boolean | null;
+  /** Prompt cache markers / key (default on). */
+  promptCache?: boolean | null;
+  cacheTtl?: CacheTtl | null;
 }
 
 export interface Connection {
@@ -671,7 +703,7 @@ export interface Connection {
   toolMode: ToolMode | null;
   maxToolRounds: number;
   maxOutputTokens: number | null;
-  options: { streamUsage: boolean | null; eagerToolStreaming: boolean | null; refusalFallback: boolean | null };
+  options: ProtocolOptions;
   generic: GenericProfile | null;
   enabled: boolean;
   notes: string | null;
@@ -1076,9 +1108,17 @@ export interface PreviewRequest {
   sessionId?: string;
 }
 
+/** When a session's conversation is compacted (ADR-0018). */
+export interface CompactionPolicy {
+  auto: boolean;
+  thresholdTokens: number;
+  thresholdPercent: number;
+}
+
 export interface ContextSettings {
   autoAttach: boolean;
   budgetTokens: number;
+  compaction: CompactionPolicy;
 }
 
 export interface ContextSettingsView {
@@ -1248,6 +1288,8 @@ export interface Agent {
   handoff: string | null;
   /** Mode the user granted to this agent; null: the project's (ADR-0016). */
   autonomy: AutonomyMode | null;
+  /** What it may spend (USD) before it stops; null: no ceiling (ADR-0018). */
+  maxCostUsd?: number | null;
   createdAt: string;
   updatedAt: string;
   startedAt: string | null;
@@ -1266,6 +1308,47 @@ export interface AgentView extends Agent {
   approval: string | null;
   /** Mode its calls are judged by now. */
   mode: AutonomyMode;
+  /** What its session cost so far (null: no price, or not started). */
+  costUsd: number | null;
+  /** 1 = next to start, while queued. */
+  queuePosition: number | null;
+}
+
+/** What the project's AIs spent today against its daily budget. */
+export interface BudgetView {
+  spentTodayUsd: number;
+  budgetUsd: number | null;
+  /** Calls with tokens but no price: the real spending is higher. */
+  unpriced: number;
+  exhausted: boolean;
+}
+
+/** Spending of one provider and model (ADR-0018). */
+export interface SpendRow {
+  provider: string;
+  model: string | null;
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number;
+  cacheSavedUsd: number;
+  unpriced: number;
+}
+
+export interface SpendReport {
+  since: string;
+  costUsd: number;
+  cacheSavedUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  cacheWriteTokens: number;
+  calls: number;
+  unpriced: number;
+  compactions: number;
+  rows: SpendRow[];
 }
 
 /** A file held by an agent while it works. */
@@ -1285,6 +1368,8 @@ export interface StartAgent {
   maxTurns?: number | null;
   /** Mode granted to this agent and its subagents; null: the project's. */
   autonomy?: AutonomyMode | null;
+  /** Cost ceiling of this agent (USD); null: the setting. */
+  maxCostUsd?: number | null;
 }
 
 export interface AgentSettings {
@@ -1292,6 +1377,14 @@ export interface AgentSettings {
   maxParallel: number;
   /** Turns an agent may spend before it stops on its own (1–50). */
   maxTurns: number;
+  /** Subagents one agent may create (0–10; 0 = no delegation). */
+  maxSubagents: number;
+  /** Agents of one provider running at the same time. */
+  providerLimits: Record<string, number>;
+  /** What one agent may spend (USD); null = no ceiling. */
+  maxCostUsd: number | null;
+  /** What a project's AIs may spend per day (USD); null = no budget. */
+  dailyBudgetUsd: number | null;
 }
 
 /** Autonomy (ADR-0016). */

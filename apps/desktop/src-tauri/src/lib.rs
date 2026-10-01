@@ -10,6 +10,7 @@ mod agent_commands;
 mod autonomy_commands;
 mod commands;
 mod context_commands;
+mod cost_commands;
 mod github_commands;
 mod memory_commands;
 mod persistence;
@@ -394,6 +395,9 @@ pub fn run() {
             context_commands::handoff_start,
             context_commands::handoffs_list,
             context_commands::handoff_get,
+            cost_commands::spend_report,
+            cost_commands::agents_budget,
+            cost_commands::session_compact,
             agent_commands::agents_list,
             agent_commands::agent_get,
             agent_commands::agent_start,

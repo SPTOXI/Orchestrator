@@ -175,6 +175,22 @@ function Item({
           ))}
         </details>
       );
+    case "compacted":
+      return (
+        <details className="context-item compacted-item">
+          <summary>
+            Conversa compactada {item.automatic ? "automaticamente" : "a pedido"} ·{" "}
+            <span className="meta">
+              {item.messages} {item.messages === 1 ? "mensagem" : "mensagens"} · ~
+              {item.beforeTokens.toLocaleString("pt-BR")} → ~{item.afterTokens.toLocaleString("pt-BR")} tokens
+            </span>
+          </summary>
+          <div className="meta">
+            Daqui em diante, a IA recebe este resumo no lugar da conversa anterior (que continua aqui na tela).
+          </div>
+          <pre className="output compacted-summary">{item.summary}</pre>
+        </details>
+      );
     case "handoff": {
       const incoming = item.toSession === sessionId;
       const other = incoming ? item.fromSession : item.toSession;
@@ -312,6 +328,9 @@ export function SessionView({
   const closed = status === "closed";
   const provider = providers.find((p) => p.id === session?.provider);
   const providerName = provider?.name ?? session?.provider ?? "Provider";
+  /** Its provider summarizes its own conversation (ADR-0018). */
+  const compacts = provider?.capabilities.compaction === true;
+  const [compacting, setCompacting] = useState(false);
   /** Its connection was removed or disabled: turns would fail. */
   const orphan = session !== null && providers.length > 0 && !provider;
 
@@ -393,6 +412,26 @@ export function SessionView({
         >
           Handoff
         </button>
+        {compacts && (
+          <button
+            className="button small"
+            disabled={!ready || busy || compacting || running || closed || !session || session.turns === 0}
+            title="A IA resume a conversa e o resumo passa a ir no lugar dela: menos tokens por mensagem (ADR-0018)"
+            onClick={() => {
+              // Not through `run`: Cancelar stays available while the AI
+              // writes the summary.
+              setCompacting(true);
+              setError(null);
+              stickRef.current = true;
+              sessionApi
+                .compact(sessionId)
+                .catch((e: unknown) => setError(errorMessage(e)))
+                .finally(() => setCompacting(false));
+            }}
+          >
+            {compacting ? "Compactando…" : "Compactar"}
+          </button>
+        )}
         {running && (
           <button
             className="button small danger"

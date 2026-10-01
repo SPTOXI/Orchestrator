@@ -2,7 +2,7 @@
 // registered: native protocols (OpenAI and compatible, Anthropic, Gemini)
 // or a generic profile that describes the HTTP/JSON API.
 
-import { type InputHTMLAttributes, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   KIND_LABELS,
   cloneConnection,
@@ -15,6 +15,7 @@ import {
   toJsonText,
 } from "../lib/connections";
 import { formatDuration } from "../lib/format";
+import { DraftInput } from "./DraftInput";
 import { connectionApi, errorMessage } from "../lib/runtime";
 import { formatUsage } from "../lib/transcript";
 import type {
@@ -49,38 +50,6 @@ function tagList(text: string): string[] {
     .split(",")
     .map((t) => t.trim())
     .filter(Boolean);
-}
-
-/**
- * Text field over a parsed value (number, tag list): the draft is updated as
- * the user types, but the text shown is only normalized on blur, so "0," or
- * "código," can be typed.
- */
-function DraftInput({
-  value,
-  onCommit,
-  ...props
-}: { value: string; onCommit: (text: string) => void } & Omit<
-  InputHTMLAttributes<HTMLInputElement>,
-  "value" | "onChange"
->) {
-  const [text, setText] = useState(value);
-  const [focused, setFocused] = useState(false);
-  useEffect(() => {
-    if (!focused) setText(value);
-  }, [value, focused]);
-  return (
-    <input
-      {...props}
-      value={text}
-      onFocus={() => setFocused(true)}
-      onBlur={() => setFocused(false)}
-      onChange={(e) => {
-        setText(e.target.value);
-        onCommit(e.target.value);
-      }}
-    />
-  );
 }
 
 function TestResult({ report }: { report: TestReport }) {
@@ -456,6 +425,15 @@ export function ConnectionEditor({ ready, active, connectionId, view, onSaved, o
                 <th>Contexto</th>
                 <th title="USD por 1M de tokens de entrada">$ entrada</th>
                 <th title="USD por 1M de tokens de saída">$ saída</th>
+                <th
+                  title={
+                    draft.kind === "anthropic"
+                      ? "USD por 1M de tokens lidos do cache de prompt (vazio: 10% da entrada)"
+                      : "USD por 1M de tokens lidos do cache de prompt (vazio: preço cheio da entrada)"
+                  }
+                >
+                  $ cache
+                </th>
                 <th title="Etiquetas livres, usadas pelo roteador e pelo Conselho">Etiquetas</th>
                 <th />
               </tr>
@@ -463,7 +441,7 @@ export function ConnectionEditor({ ready, active, connectionId, view, onSaved, o
             <tbody>
               {draft.models.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="meta">
+                  <td colSpan={9} className="meta">
                     Nenhum modelo. Use “Buscar modelos” ou adicione pelo id.
                   </td>
                 </tr>
@@ -510,6 +488,14 @@ export function ConnectionEditor({ ready, active, connectionId, view, onSaved, o
                       value={String(model.outputPrice ?? "")}
                       placeholder="—"
                       onCommit={(text) => updateModel(index, { outputPrice: numberOrNull(text) })}
+                    />
+                  </td>
+                  <td>
+                    <DraftInput
+                      className="num"
+                      value={String(model.cachedInputPrice ?? "")}
+                      placeholder="—"
+                      onCommit={(text) => updateModel(index, { cachedInputPrice: numberOrNull(text) })}
                     />
                   </td>
                   <td>
@@ -613,6 +599,40 @@ export function ConnectionEditor({ ready, active, connectionId, view, onSaved, o
               }}
             />
           </label>
+          {(draft.kind === "anthropic" || draft.kind === "openai") && (
+            <label
+              className="form-row check-row"
+              title={
+                draft.kind === "anthropic"
+                  ? "Marca ferramentas, instruções e conversa para o cache da Anthropic: as próximas mensagens leem o prefixo do cache (mais barato)."
+                  : "Na API da OpenAI, agrupa as mensagens da mesma sessão no mesmo cache (prompt_cache_key)."
+              }
+            >
+              <span>Cache de prompt</span>
+              <input
+                type="checkbox"
+                checked={draft.options.promptCache !== false}
+                onChange={(e) => update({ options: { ...draft.options, promptCache: e.target.checked } })}
+              />
+            </label>
+          )}
+          {draft.kind === "anthropic" && draft.options.promptCache !== false && (
+            <label
+              className="form-row"
+              title="5 minutos: gravar custa 1,25× a entrada. 1 hora: 2× — compensa quando as mensagens têm intervalos longos."
+            >
+              <span>Validade do cache</span>
+              <select
+                value={draft.options.cacheTtl ?? "5m"}
+                onChange={(e) =>
+                  update({ options: { ...draft.options, cacheTtl: e.target.value === "1h" ? "1h" : null } })
+                }
+              >
+                <option value="5m">5 minutos</option>
+                <option value="1h">1 hora</option>
+              </select>
+            </label>
+          )}
           {draft.kind === "openai" && (
             <label className="form-row check-row">
               <span>Pedir uso de tokens no streaming</span>

@@ -35,6 +35,16 @@ export type TranscriptItem =
   | { kind: "subagent"; key: string; childId: string; provider: string; title: string }
   | { kind: "context"; key: string; turnId: string; summary: ContextSummary }
   | {
+      kind: "compacted";
+      key: string;
+      turnId: string;
+      automatic: boolean;
+      beforeTokens: number;
+      afterTokens: number;
+      messages: number;
+      summary: string;
+    }
+  | {
       kind: "handoff";
       key: string;
       handoffId: string;
@@ -91,7 +101,8 @@ export function applyEvent(transcript: Transcript, seq: number, at: string, even
   let { items, status, runningTurn } = transcript;
   switch (event.type) {
     case "turnStarted":
-      items = [...items, { kind: "user", key, turnId: event.turnId, text: event.input, at }];
+      // A turn without input only compacts the conversation ("Compactar").
+      if (event.input) items = [...items, { kind: "user", key, turnId: event.turnId, text: event.input, at }];
       runningTurn = event.turnId;
       break;
     case "textDelta":
@@ -168,6 +179,21 @@ export function applyEvent(transcript: Transcript, seq: number, at: string, even
     case "contextAttached":
       items = [...items, { kind: "context", key, turnId: event.turnId, summary: event.summary }];
       break;
+    case "compacted":
+      items = [
+        ...items,
+        {
+          kind: "compacted",
+          key,
+          turnId: event.turnId,
+          automatic: event.automatic,
+          beforeTokens: event.beforeTokens,
+          afterTokens: event.afterTokens,
+          messages: event.messages,
+          summary: event.summary,
+        },
+      ];
+      break;
     case "handedOff":
       items = [
         ...items,
@@ -203,10 +229,23 @@ export function formatTokens(usage: TokenUsage): string {
   return `${total.toLocaleString("pt-BR")} ${total === 1 ? "token" : "tokens"}`;
 }
 
-/** "7 tokens (3 in / 4 out) · estimado · US$ 0.0012" */
+/** "7 tokens (3 in / 4 out · 2 do cache) · estimado · US$ 0.0012 · cache economizou US$ 0.0004" */
 export function formatUsage(usage: TokenUsage): string {
   const tokens = formatTokens(usage);
-  const detail = `${usage.inputTokens.toLocaleString("pt-BR")} in / ${usage.outputTokens.toLocaleString("pt-BR")} out`;
+  const cached = usage.cachedInputTokens
+    ? ` · ${usage.cachedInputTokens.toLocaleString("pt-BR")} do cache`
+    : "";
+  const detail = `${usage.inputTokens.toLocaleString("pt-BR")} in / ${usage.outputTokens.toLocaleString("pt-BR")} out${cached}`;
   const cost = usage.costUsd !== null ? ` · US$ ${usage.costUsd.toFixed(4)}` : "";
-  return `${tokens} (${detail})${usage.estimated ? " · estimado" : ""}${cost}`;
+  const saved =
+    usage.cacheSavedUsd !== null && usage.cacheSavedUsd !== undefined && Math.abs(usage.cacheSavedUsd) >= 0.00005
+      ? ` · cache ${usage.cacheSavedUsd >= 0 ? "economizou" : "custou"} US$ ${Math.abs(usage.cacheSavedUsd).toFixed(4)}`
+      : "";
+  return `${tokens} (${detail})${usage.estimated ? " · estimado" : ""}${cost}${saved}`;
+}
+
+/** Share of the prompt read from the cache, 0–100 (null with no prompt). */
+export function cacheShare(usage: TokenUsage): number | null {
+  if (!usage.inputTokens) return null;
+  return Math.round((usage.cachedInputTokens / usage.inputTokens) * 100);
 }

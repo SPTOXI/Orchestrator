@@ -1,8 +1,9 @@
 // AGENTS panel (sidebar): who is executing the project's tasks right now,
-// what they hold and the two limits around them (ADR-0015); pause and
-// resume, for one agent or for every AI (ADR-0016).
+// what they hold and the limits around them (ADR-0015); pause and resume,
+// for one agent or for every AI (ADR-0016); what they cost, the queue and
+// the daily budget (ADR-0018).
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MODE_LABELS } from "../lib/autonomy";
 import {
   AGENT_STATUS_LABELS,
@@ -11,14 +12,20 @@ import {
   isLive,
   locksOf,
 } from "../lib/agents";
+import { formatUsd } from "../lib/format";
 import { errorMessage } from "../lib/runtime";
-import type { AgentSettings, AgentView, FileLock } from "../lib/types";
+import type { AgentSettings, AgentView, BudgetView, FileLock } from "../lib/types";
 
 interface Props {
   ready: boolean;
   agents: AgentView[];
   locks: FileLock[];
   settings: AgentSettings | null;
+  /** Today's spending against the daily budget (ADR-0018). */
+  budget: BudgetView | null;
+  /** Providers that can run agents, for the per-provider limit. */
+  providers: { id: string; name: string }[];
+  onOpenCost: () => void;
   error: string | null;
   projectName: string | null;
   activeAgentId: string | null;
@@ -41,6 +48,9 @@ export function AgentsPanel({
   agents,
   locks,
   settings,
+  budget,
+  providers,
+  onOpenCost,
   error,
   projectName,
   activeAgentId,
@@ -73,9 +83,17 @@ export function AgentsPanel({
     }
   };
 
-  const change = (field: keyof AgentSettings, value: number) => {
+  const save = (label: string, next: AgentSettings) => void run(label, () => onSaveSettings(next));
+  const change = (field: "maxParallel" | "maxTurns" | "maxSubagents", value: number) => {
     if (!settings) return;
-    void run(field, () => onSaveSettings({ ...settings, [field]: value }));
+    save(field, { ...settings, [field]: value });
+  };
+  const providerLimit = (provider: string, value: number | null) => {
+    if (!settings) return;
+    const limits = { ...settings.providerLimits };
+    if (value === null) delete limits[provider];
+    else limits[provider] = Math.max(1, Math.round(value));
+    save(`limit:${provider}`, { ...settings, providerLimits: limits });
   };
 
   return (
@@ -119,6 +137,31 @@ export function AgentsPanel({
                 {busy === "stopAll" ? "Parando…" : "Parar todos"}
               </button>
             </div>
+            {budget && (
+              <div className={`pad budget-line${budget.exhausted ? " exhausted" : ""}`}>
+                <div className="row tight">
+                  <span className="grow" title="Gasto das IAs neste projeto desde a meia-noite: sessões, agentes e Conselho">
+                    Hoje: {formatUsd(budget.spentTodayUsd)}
+                    {budget.budgetUsd !== null && ` de ${formatUsd(budget.budgetUsd)}`}
+                    {budget.unpriced > 0 && (
+                      <span className="meta" title="Chamadas de modelos sem preço configurado: o gasto real é maior">
+                        {" "}
+                        · {budget.unpriced} sem preço
+                      </span>
+                    )}
+                  </span>
+                  <button className="link meta" onClick={onOpenCost}>
+                    Tokens e custo
+                  </button>
+                </div>
+                {budget.exhausted && (
+                  <div className="inline-notice">
+                    O orçamento diário acabou: nenhum agente começa, e os que estão rodando param no fim do turno.
+                    Suas sessões continuam.
+                  </div>
+                )}
+              </div>
+            )}
             {agents.length === 0 ? (
               <div className="placeholder">
                 <p className="meta">
@@ -228,9 +271,60 @@ export function AgentsPanel({
                       onChange={(e) => change("maxTurns", Number(e.target.value))}
                     />
                   </label>
+                  <label className="field" title="0 desliga a delegação: o agente faz tudo sozinho">
+                    <span>Subagentes por agente</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={10}
+                      value={settings.maxSubagents}
+                      disabled={!ready || busy !== null}
+                      onChange={(e) => change("maxSubagents", Number(e.target.value))}
+                    />
+                  </label>
+                  <label className="field" title="O agente para (com handoff) antes do turno em que passaria deste gasto">
+                    <span>Teto de custo por agente (US$)</span>
+                    <MoneyField
+                      value={settings.maxCostUsd}
+                      placeholder="sem teto"
+                      disabled={!ready || busy !== null}
+                      onCommit={(value) => save("maxCostUsd", { ...settings, maxCostUsd: value })}
+                    />
+                  </label>
+                  <label
+                    className="field"
+                    title="Gasto do projeto no dia (todas as IAs). Ao chegar nele, agentes não começam e os que rodam param; suas sessões continuam."
+                  >
+                    <span>Orçamento diário do projeto (US$)</span>
+                    <MoneyField
+                      value={settings.dailyBudgetUsd}
+                      placeholder="sem orçamento"
+                      disabled={!ready || busy !== null}
+                      onCommit={(value) => save("dailyBudgetUsd", { ...settings, dailyBudgetUsd: value })}
+                    />
+                  </label>
+                  {providers.length > 0 && (
+                    <div className="field">
+                      <span title="Agentes de um provider ao mesmo tempo — para os limites de taxa da conta">
+                        Por provider (agentes ao mesmo tempo)
+                      </span>
+                      {providers.map((provider) => (
+                        <label key={provider.id} className="row tight provider-limit">
+                          <span className="grow ellipsis">{provider.name}</span>
+                          <MoneyField
+                            value={settings.providerLimits[provider.id] ?? null}
+                            placeholder={`até ${settings.maxParallel}`}
+                            integer
+                            disabled={!ready || busy !== null}
+                            onCommit={(value) => providerLimit(provider.id, value)}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  )}
                   <p className="meta">
                     Os limites dizem quanto um agente roda (custo). O que ele pode fazer sem
-                    perguntar é o modo de autonomia.
+                    perguntar é o modo de autonomia. A fila anda por prioridade da task.
                   </p>
                   <button className="button small" onClick={onOpenAutonomy}>
                     Autonomia
@@ -242,5 +336,48 @@ export function AgentsPanel({
         )}
       </div>
     </div>
+  );
+}
+
+/** A positive number committed on blur or Enter; empty = none. */
+function MoneyField({
+  value,
+  placeholder,
+  disabled,
+  integer = false,
+  onCommit,
+}: {
+  value: number | null;
+  placeholder: string;
+  disabled: boolean;
+  integer?: boolean;
+  onCommit: (value: number | null) => void;
+}) {
+  const shown = value === null ? "" : String(value).replace(".", ",");
+  const [text, setText] = useState(shown);
+  useEffect(() => setText(shown), [shown]);
+  const commit = () => {
+    const trimmed = text.trim().replace(",", ".");
+    const next = trimmed === "" ? null : Number(trimmed);
+    if (next !== null && (!Number.isFinite(next) || next <= 0 || (integer && !Number.isInteger(next)))) {
+      setText(shown);
+      return;
+    }
+    if (next !== value) onCommit(next);
+  };
+  return (
+    <input
+      type="text"
+      inputMode={integer ? "numeric" : "decimal"}
+      className="narrow"
+      value={text}
+      placeholder={placeholder}
+      disabled={disabled}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+      }}
+    />
   );
 }

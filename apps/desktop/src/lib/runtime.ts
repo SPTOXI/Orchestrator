@@ -7,6 +7,8 @@
 
 import { invoke, isTauri as detectTauri } from "@tauri-apps/api/core";
 import type {
+  BudgetView,
+  SpendReport,
   AppInfo,
   ContextOptions,
   ContextPack,
@@ -302,6 +304,8 @@ export const sessionApi = {
   /** Subagent session (spawnAgent). */
   spawn: (parentId: string, request: StartRequest = {}) =>
     callProvider<SessionInfo>("session_spawn", { parentId, request }),
+  /** "Compactar" (ADR-0018): the AI summarizes the conversation; waits for it. */
+  compact: (id: string) => callProvider<unknown>("session_compact", { id }),
   /** Project context options; changeable before the first turn (ADR-0013). */
   context: (id: string) => callProvider<ContextOptions>("session_context_get", { id }),
   setContext: (id: string, options: ContextOptions) =>
@@ -382,6 +386,15 @@ export const agentApi = {
   /** Pause: the agent stops at its next tool call or turn (ADR-0016). */
   pause: (id: string) => callProvider<AgentView>("agent_pause", { id }),
   resume: (id: string) => callProvider<AgentView>("agent_resume", { id }),
+  /** The open project's spending today against the daily budget (ADR-0018). */
+  budget: (projectId?: string) => callProvider<BudgetView>("agents_budget", { projectId }),
+};
+
+/** What the AIs spent, from the history (ADR-0018). */
+export const costApi = {
+  /** Last `days` days (1 = today) of the open project, or of every project. */
+  report: (days: number, allProjects = false) =>
+    callProvider<SpendReport>("spend_report", { days, allProjects }),
 };
 
 /** GitHub (ADR-0017): tools through the runtime; settings and token

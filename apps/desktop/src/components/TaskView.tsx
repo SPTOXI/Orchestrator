@@ -64,6 +64,8 @@ export function TaskView({
   const [dependencies, setDependencies] = useState<string[]>([]);
   const [suggestion, setSuggestion] = useState<string | null>(null);
   const [agentMode, setAgentMode] = useState<"" | AutonomyMode>("");
+  /** Cost ceiling of this agent (US$); empty: the setting (ADR-0018). */
+  const [agentCeiling, setAgentCeiling] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -198,6 +200,7 @@ export function TaskView({
         provider: provider || null,
         model: model || null,
         autonomy: agentMode || null,
+        maxCostUsd: ceilingOf(agentCeiling),
       });
       onAgentChanged();
       onSaved(taskId);
@@ -410,6 +413,14 @@ export function TaskView({
                   </option>
                 ))}
               </select>
+              <input
+                className="narrow ceiling-input"
+                inputMode="decimal"
+                placeholder="teto US$"
+                title="Teto de custo deste agente em US$ (vazio: o das configurações). Ele para, com handoff, antes do turno em que passaria disso."
+                value={agentCeiling}
+                onChange={(e) => setAgentCeiling(e.target.value)}
+              />
               <button
                 className="button small"
                 disabled={!ready || busy !== null || !title.trim()}
@@ -547,4 +558,10 @@ export function TaskView({
       </div>
     </div>
   );
+}
+
+/** A positive amount typed by the user ("0,50"), or null. */
+function ceilingOf(text: string): number | null {
+  const value = Number(text.trim().replace(",", "."));
+  return text.trim() && Number.isFinite(value) && value > 0 ? value : null;
 }

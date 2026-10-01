@@ -1,15 +1,19 @@
 // Bottom status bar.
 
-import type { AppInfo } from "../lib/types";
+import { formatUsd } from "../lib/format";
+import type { AppInfo, BudgetView } from "../lib/types";
 
 interface Props {
   ready: boolean;
   info: AppInfo | null;
   workspace: string;
   branch: string | null;
+  /** What the open project's AIs spent today (ADR-0018). */
+  spentToday: BudgetView | null;
+  onOpenCost: () => void;
 }
 
-export function StatusBar({ ready, info, workspace, branch }: Props) {
+export function StatusBar({ ready, info, workspace, branch, spentToday, onOpenCost }: Props) {
   return (
     <footer className="status-bar">
       <span className={`status ${ready ? "ok" : "err"}`}>
@@ -21,6 +25,17 @@ export function StatusBar({ ready, info, workspace, branch }: Props) {
         {workspace || "—"}
       </span>
       <span className="spacer" />
+      {spentToday && (
+        <button
+          className={`status-link${spentToday.exhausted ? " err" : ""}`}
+          title="Gasto das IAs neste projeto hoje — abre Tokens e custo"
+          onClick={onOpenCost}
+        >
+          hoje: {formatUsd(spentToday.spentTodayUsd)}
+          {spentToday.budgetUsd !== null && ` de ${formatUsd(spentToday.budgetUsd)}`}
+          {spentToday.unpriced > 0 && " +?"}
+        </button>
+      )}
       {info?.databaseWarning && (
         <span className="status err" title={info.databaseWarning}>
           <span className="dot err" />

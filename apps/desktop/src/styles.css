@@ -1673,7 +1673,8 @@ textarea.json-field.tall {
 
 .models-table th:nth-child(4),
 .models-table th:nth-child(5),
-.models-table th:nth-child(6) {
+.models-table th:nth-child(6),
+.models-table th:nth-child(7) {
   width: 80px;
 }
 
@@ -2846,4 +2847,110 @@ input.narrow {
 
 .pr-view h3 .check-mark {
   font-size: 13px;
+}
+
+/* ---------------------------------------------- tokens and cost (F11) -- */
+
+.status-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-dim);
+  font: inherit;
+  cursor: pointer;
+}
+
+.status-link:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.status-link.err {
+  color: var(--err);
+}
+
+.budget-line {
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.budget-line.exhausted > .row {
+  color: var(--err);
+}
+
+.provider-limit {
+  font-size: 12px;
+}
+
+.provider-limit input {
+  width: 70px;
+}
+
+.compacted-summary {
+  white-space: pre-wrap;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.compaction-settings {
+  margin-top: 10px;
+}
+
+.cost-view .segmented {
+  display: flex;
+  gap: 4px;
+}
+
+.cost-summary {
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.cost-summary th {
+  text-align: left;
+  font-weight: normal;
+  color: var(--text-dim);
+  padding: 4px 16px 4px 0;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.cost-summary td {
+  padding: 4px 0;
+}
+
+.cost-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.cost-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-dim);
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.cost-table td {
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--border);
+  max-width: 240px;
+}
+
+.cost-table td.num {
+  white-space: nowrap;
+}
+
+.cost-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.ceiling-input {
+  width: 80px;
 }

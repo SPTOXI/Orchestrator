@@ -39,6 +39,8 @@ function agent(id: string, status: AgentStatus, extra: Partial<AgentView> = {}):
     paused: false,
     approval: null,
     mode: "assisted",
+    costUsd: null,
+    queuePosition: null,
     ...extra,
   };
 }
@@ -64,6 +66,10 @@ describe("agent helpers", () => {
     );
     // Nothing in the way: the state already says it is queued.
     expect(agentProgress(agent("x", "QUEUED"))).toBe("");
+    expect(agentProgress(agent("x", "QUEUED", { queuePosition: 2, waiting: "1 agente em execução" }))).toBe(
+      "2º na fila · 1 agente em execução",
+    );
+    expect(agentProgress(agent("x", "DONE", { turns: 4, costUsd: 0.025 }))).toBe("4 de 12 turnos · US$ 0,025");
     expect(agentProgress(agent("x", "RUNNING", { turns: 3 }))).toBe("3 de 12 turnos");
     expect(
       agentProgress(agent("x", "RUNNING", { turns: 3, files: ["a.ts", "b.ts"] })),

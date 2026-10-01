@@ -3,6 +3,7 @@ import { CommandPanel } from "./components/CommandPanel";
 import { ConnectionEditor } from "./components/ConnectionEditor";
 import { ContextBar } from "./components/ContextBar";
 import { type ContextTabRequest, ContextView } from "./components/ContextView";
+import { CostView } from "./components/CostView";
 import { CouncilEditor } from "./components/CouncilEditor";
 import { DiffView } from "./components/DiffView";
 import { DiscoveryView } from "./components/DiscoveryView";
@@ -84,7 +85,9 @@ type Tab =
   /** A pull request; `number` null is the form of a new one (ADR-0017). */
   | { id: string; kind: "pr"; number: number | null; nonce: number }
   /** GitHub connection: token and server (ADR-0017). */
-  | { id: "github"; kind: "github" };
+  | { id: "github"; kind: "github" }
+  /** What the AIs spent (ADR-0018). */
+  | { id: "cost"; kind: "cost" };
 
 const ACTIVITIES: Array<{ id: PanelId; label: string; icon: () => ReactNode }> = [
   { id: "project", label: "PROJECT", icon: FolderIcon },
@@ -148,6 +151,8 @@ function tabTitle(tab: Tab, sessions: Map<string, SessionInfo>, connections: Con
       return tab.number === null ? "Novo pull request" : `PR #${tab.number}`;
     case "github":
       return "GitHub";
+    case "cost":
+      return "Tokens e custo";
     case "connection":
       if (!tab.connectionId) return "Nova API";
       return `API · ${connections?.connections.find((c) => c.connection.id === tab.connectionId)?.connection.name ?? tab.connectionId}`;
@@ -299,6 +304,9 @@ export function App() {
   const openPull = (number: number | null) =>
     showTab({ id: number === null ? "pr:new" : `pr:${number}`, kind: "pr", number, nonce: Date.now() });
   const openGitHub = () => showTab({ id: "github", kind: "github" });
+  /** Tokens and cost (ADR-0018). */
+  const openCost = () => showTab({ id: "cost", kind: "cost" });
+  const providerName = (id: string) => providers.view?.providers.find((p) => p.id === id)?.name ?? id;
   const pauseAgent = async (id: string, paused: boolean) => {
     if (paused) await agentApi.resume(id);
     else await agentApi.pause(id);
@@ -455,6 +463,11 @@ export function App() {
             agents={agents.list}
             locks={agents.locks}
             settings={agents.settings}
+            budget={agents.budget}
+            providers={(providers.view?.providers ?? [])
+              .filter((p) => p.capabilities.toolCalls)
+              .map((p) => ({ id: p.id, name: p.name }))}
+            onOpenCost={openCost}
             error={agents.error}
             projectName={profile?.name ?? null}
             activeAgentId={currentAgent?.id ?? null}
@@ -797,6 +810,17 @@ export function App() {
                       onChanged={() => setGithubNonce(Date.now())}
                     />
                   );
+                case "cost":
+                  return (
+                    <CostView
+                      key={tab.id}
+                      active={active}
+                      ready={ready}
+                      projectName={projectId ? (profile?.name ?? null) : null}
+                      providerName={providerName}
+                      onOpenAgents={() => setPanel("agents")}
+                    />
+                  );
                 case "autonomy":
                   return (
                     <AutonomyView
@@ -898,7 +922,14 @@ export function App() {
           </section>
         </main>
       </div>
-      <StatusBar ready={ready} info={info} workspace={workspace} branch={branchLabel} />
+      <StatusBar
+        ready={ready}
+        info={info}
+        workspace={workspace}
+        branch={branchLabel}
+        spentToday={agents.budget}
+        onOpenCost={openCost}
+      />
     </div>
   );
 }

@@ -97,3 +97,9 @@ const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u00
 export function stripAnsi(text: string): string {
   return text.replace(ANSI, "");
 }
+
+/** "US$ 1,25", or tenths of a cent below ten cents ("US$ 0,025"). */
+export function formatUsd(value: number): string {
+  const digits = Math.abs(value) < 0.1 ? 3 : 2;
+  return `US$ ${value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: digits })}`;
+}

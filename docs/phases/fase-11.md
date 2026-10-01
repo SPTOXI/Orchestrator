@@ -20,6 +20,6 @@ poder ser retomada de onde parou.
    de custo, orçamento diário, `maxSubagents`; testes.
 5. ✅ Supervisão de processos: Job Object (Windows) e processos órfãos
    (Linux/macOS); testes.
-6. ⏳ Desktop e UI: sessão, conexão, contexto, agentes, aba "Tokens e
+6. ✅ Desktop e UI: sessão, conexão, contexto, agentes, aba "Tokens e
    custo".
 7. ⏳ Validação no app real, documentação e publicação.

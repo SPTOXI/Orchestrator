@@ -74,6 +74,7 @@ const KIND_FILTERS: Array<{ value: EventKind | ""; label: string }> = [
   { value: "GITHUB_PR_CREATED", label: "GITHUB_PR_CREATED" },
   { value: "GITHUB_PR_MERGED", label: "GITHUB_PR_MERGED" },
   { value: "GITHUB_ISSUE_CREATED", label: "GITHUB_ISSUE_CREATED" },
+  { value: "CONTEXT_COMPACTED", label: "CONTEXT_COMPACTED" },
 ];
 
 const PAGE = 500;

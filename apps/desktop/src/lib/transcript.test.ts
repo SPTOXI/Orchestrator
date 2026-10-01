@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyEvent, emptyTranscript, formatUsage, fromSnapshot, type Transcript } from "./transcript";
+import { applyEvent, cacheShare, emptyTranscript, formatUsage, fromSnapshot, type Transcript } from "./transcript";
 import type { SessionEvent, SessionInfo, TokenUsage, ToolResult } from "./types";
 
 const AT = "2026-09-28T12:00:00Z";
@@ -121,5 +121,30 @@ describe("transcript", () => {
     expect(formatUsage({ ...usage, inputTokens: 1, outputTokens: 0, estimated: false, costUsd: 0.0123 })).toBe(
       "1 token (1 in / 0 out) · US$ 0.0123",
     );
+    const cached = { ...usage, inputTokens: 1000, outputTokens: 10, cachedInputTokens: 800, estimated: false };
+    expect(formatUsage({ ...cached, costUsd: 0.002, cacheSavedUsd: 0.0029 })).toBe(
+      "1.010 tokens (1.000 in / 10 out · 800 do cache) · US$ 0.0020 · cache economizou US$ 0.0029",
+    );
+    expect(formatUsage({ ...cached, costUsd: 0.01, cacheSavedUsd: -0.001 })).toContain("cache custou US$ 0.0010");
+    expect(cacheShare(cached)).toBe(80);
+    expect(cacheShare(usage)).toBe(0);
+  });
+
+  it("shows a compaction and hides the empty input of a compaction turn", () => {
+    const t = apply([
+      { type: "turnStarted", turnId: "t9", input: "" },
+      {
+        type: "compacted",
+        turnId: "t9",
+        automatic: false,
+        beforeTokens: 152000,
+        afterTokens: 2100,
+        messages: 40,
+        summary: "o que foi feito",
+      },
+    ]);
+    expect(t.items.map((i) => i.kind)).toEqual(["compacted"]);
+    expect(t.items[0]).toMatchObject({ automatic: false, messages: 40, summary: "o que foi feito" });
+    expect(t.runningTurn).toBe("t9");
   });
 });

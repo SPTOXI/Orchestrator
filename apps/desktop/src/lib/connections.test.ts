@@ -11,11 +11,18 @@ describe("connections", () => {
   it("merges discovered models without overriding user edits", () => {
     const mine = { ...emptyModel("a"), inputPrice: 9, tags: ["meu"] };
     const found = [
-      { ...emptyModel("a"), inputPrice: 1, outputPrice: 2, contextWindow: 1000, tags: ["x"] },
+      { ...emptyModel("a"), inputPrice: 1, outputPrice: 2, cachedInputPrice: 0.1, contextWindow: 1000, tags: ["x"] },
       { ...emptyModel("b") },
     ];
     const merged = mergeModels([mine], found);
-    expect(merged[0]).toMatchObject({ id: "a", inputPrice: 9, outputPrice: 2, contextWindow: 1000, tags: ["meu"] });
+    expect(merged[0]).toMatchObject({
+      id: "a",
+      inputPrice: 9,
+      outputPrice: 2,
+      cachedInputPrice: 0.1,
+      contextWindow: 1000,
+      tags: ["meu"],
+    });
     expect(merged[1]).toMatchObject({ id: "b", enabled: false });
   });
 

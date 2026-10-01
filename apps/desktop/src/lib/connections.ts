@@ -32,6 +32,7 @@ export function emptyModel(id: string): ModelEntry {
     supportsVision: null,
     inputPrice: null,
     outputPrice: null,
+    cachedInputPrice: null,
     tags: [],
     extraBody: null,
     enabled: true,
@@ -60,6 +61,7 @@ export function mergeModels(existing: ModelEntry[], found: ModelEntry[]): ModelE
       supportsTools: model.supportsTools ?? discovered.supportsTools,
       inputPrice: model.inputPrice ?? discovered.inputPrice,
       outputPrice: model.outputPrice ?? discovered.outputPrice,
+      cachedInputPrice: model.cachedInputPrice ?? discovered.cachedInputPrice ?? null,
       tags: model.tags.length ? model.tags : discovered.tags,
     };
   });

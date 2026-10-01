@@ -2,6 +2,7 @@
 // ADR-0015). The rules are the agent manager's; here we only name, group
 // and count.
 
+import { formatUsd } from "./format";
 import type { AgentStatus, AgentView, FileLock, TaskStatus } from "./types";
 
 export const AGENT_STATUS_LABELS: Record<AgentStatus, string> = {
@@ -45,8 +46,12 @@ export const BOARD_COLUMNS: Array<{ status: TaskStatus; title: string }> = [
  * state itself is shown beside it, so a queued agent with nothing in its
  * way says nothing. */
 export function agentProgress(agent: AgentView): string {
-  if (agent.status === "QUEUED") return agent.waiting ?? "";
-  const turns = `${agent.turns} de ${agent.maxTurns} turnos`;
+  if (agent.status === "QUEUED") {
+    const place = agent.queuePosition ? `${agent.queuePosition}º na fila` : "";
+    return [place, agent.waiting].filter(Boolean).join(" · ");
+  }
+  const cost = agent.costUsd !== null && agent.costUsd !== undefined ? ` · ${formatUsd(agent.costUsd)}` : "";
+  const turns = `${agent.turns} de ${agent.maxTurns} turnos${cost}`;
   if (agent.status !== "RUNNING") return turns;
   // What it waits for comes first: it is what the user can act on.
   if (agent.approval) return `esperando sua autorização: ${agent.approval}`;

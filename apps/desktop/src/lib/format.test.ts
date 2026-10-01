@@ -3,6 +3,7 @@ import {
   baseName,
   detectEol,
   formatBytes,
+  formatUsd,
   formatDuration,
   isInside,
   joinPath,
@@ -87,5 +88,14 @@ describe("line endings", () => {
   it("keeps LF files untouched", () => {
     expect(detectEol("a\nb")).toBe("\n");
     expect(withEol("a\nb", "\n")).toBe("a\nb");
+  });
+});
+
+describe("formatUsd", () => {
+  it("shows cents, and tenths of a cent for small values", () => {
+    expect(formatUsd(1.5)).toBe("US$ 1,50");
+    expect(formatUsd(0.025)).toBe("US$ 0,025");
+    expect(formatUsd(0)).toBe("US$ 0,00");
+    expect(formatUsd(1234.5)).toBe("US$ 1.234,50");
   });
 });
