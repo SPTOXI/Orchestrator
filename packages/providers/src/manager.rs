@@ -8,7 +8,9 @@ use crate::context::{ToolExecutor, TurnContext, TurnObserver};
 use crate::error::{ProviderError, ProviderErrorKind};
 use crate::log::SessionLog;
 use crate::project_context::{ContextOptions, ContextRequest, ContextSource};
-use crate::provider::{AIProvider, NativeSession, SessionSpec, TurnInput, TurnOutput};
+use crate::provider::{
+    AIProvider, CompactionPolicy, NativeSession, SessionSpec, TurnInput, TurnOutput,
+};
 use crate::registry::ProviderRegistry;
 use crate::store::{PersistedSession, SessionStore};
 use chrono::Utc;
@@ -116,6 +118,8 @@ struct SessionState {
 
 struct RunningTurn {
     turn_id: TurnId,
+    /// Who asked for the turn (recorded with what the turn causes).
+    origin: CallOrigin,
     cancel: CancellationToken,
     usage: TokenUsage,
     text: String,
@@ -132,6 +136,8 @@ struct TurnStart {
     project_path: PathBuf,
     /// Set on the first turn: the project context is built for it.
     context: Option<ContextRequest>,
+    /// "Compactar": the turn only compacts the conversation (ADR-0018).
+    compact: bool,
 }
 
 impl Session {
@@ -148,6 +154,37 @@ impl Session {
                 }
                 _ => {}
             }
+        }
+        if let SessionEvent::Compacted {
+            turn_id,
+            automatic,
+            before_tokens,
+            after_tokens,
+            messages,
+            ..
+        } = &event
+        {
+            let origin = state
+                .running
+                .as_ref()
+                .map_or(CallOrigin::System, |r| r.origin.clone());
+            self.sink.audit(AuditEvent::new(
+                EventKind::ContextCompacted,
+                origin,
+                format!(
+                    "conversa compactada · {before_tokens} → {after_tokens} tokens ({messages} mensagens)"
+                ),
+                json!({
+                    "sessionId": self.id,
+                    "provider": state.info.provider,
+                    "model": state.info.model,
+                    "turnId": turn_id,
+                    "automatic": automatic,
+                    "beforeTokens": before_tokens,
+                    "afterTokens": after_tokens,
+                    "messages": messages,
+                }),
+            ));
         }
         state.info.updated_at = Utc::now();
         let seq = state.log.push(event.clone());
@@ -183,6 +220,8 @@ struct Inner {
     store: Option<Arc<dyn SessionStore>>,
     /// Builds the project context of first turns (ADR-0013).
     context: RwLock<Option<Arc<dyn ContextSource>>>,
+    /// When providers compact their conversation (ADR-0018).
+    compaction: RwLock<CompactionPolicy>,
     /// Creation order.
     sessions: RwLock<Vec<Arc<Session>>>,
 }
@@ -255,6 +294,7 @@ impl SessionManager {
                 config,
                 store: None,
                 context: RwLock::new(None),
+                compaction: RwLock::new(CompactionPolicy::default()),
                 sessions: RwLock::new(Vec::new()),
             }),
         }
@@ -322,6 +362,7 @@ impl SessionManager {
                 config,
                 store: Some(store),
                 context: RwLock::new(None),
+                compaction: RwLock::new(CompactionPolicy::default()),
                 sessions: RwLock::new(sessions),
             }),
         }
@@ -590,7 +631,7 @@ impl SessionManager {
         input: String,
         origin: CallOrigin,
     ) -> Result<TurnId, ProviderError> {
-        let (session, turn) = self.begin(id, &input)?;
+        let (session, turn) = self.begin(id, &input, false, &origin)?;
         let turn_id = turn.turn_id.clone();
         tokio::spawn(run_turn(
             self.inner.clone(),
@@ -611,7 +652,7 @@ impl SessionManager {
         input: String,
         origin: CallOrigin,
     ) -> Result<TurnResult, ProviderError> {
-        let (session, turn) = self.begin(id, &input)?;
+        let (session, turn) = self.begin(id, &input, false, &origin)?;
         tokio::spawn(run_turn(
             self.inner.clone(),
             session,
@@ -624,17 +665,59 @@ impl SessionManager {
         .map_err(|e| ProviderError::internal(format!("turn task failed: {e}")))
     }
 
+    /// "Compactar" (ADR-0018): the provider replaces the conversation it
+    /// sends to the AI with a summary written by the AI. Runs as a turn
+    /// (it costs tokens, can be cancelled, is recorded) and waits for it.
+    pub async fn compact(
+        &self,
+        id: &SessionId,
+        origin: CallOrigin,
+    ) -> Result<TurnResult, ProviderError> {
+        let (session, turn) = self.begin(id, "", true, &origin)?;
+        tokio::spawn(run_turn(
+            self.inner.clone(),
+            session,
+            turn,
+            String::new(),
+            Mode::Execute,
+            origin,
+        ))
+        .await
+        .map_err(|e| ProviderError::internal(format!("turn task failed: {e}")))
+    }
+
+    /// When providers compact on their own (`context.json`).
+    pub fn compaction(&self) -> CompactionPolicy {
+        *self.inner.compaction.read()
+    }
+
+    pub fn set_compaction(&self, policy: CompactionPolicy) {
+        *self.inner.compaction.write() = policy;
+    }
+
     fn begin(
         &self,
         id: &SessionId,
         input: &str,
+        compact: bool,
+        origin: &CallOrigin,
     ) -> Result<(Arc<Session>, TurnStart), ProviderError> {
-        if input.trim().is_empty() {
+        if !compact && input.trim().is_empty() {
             return Err(ProviderError::invalid("input is empty"));
         }
         let session = self.session(id)?;
         let provider = self.inner.provider(&session)?;
+        if compact && !provider.capabilities().compaction {
+            return Err(ProviderError::unsupported(
+                "este provider não compacta a conversa",
+            ));
+        }
         let mut state = session.state.lock();
+        if compact && state.info.turns == 0 {
+            return Err(ProviderError::invalid(
+                "a conversa ainda está vazia: não há o que compactar",
+            ));
+        }
         match state.info.status {
             SessionStatus::Closed => {
                 return Err(ProviderError::new(
@@ -655,6 +738,7 @@ impl SessionManager {
         let (done, done_rx) = watch::channel(false);
         state.running = Some(RunningTurn {
             turn_id: turn_id.clone(),
+            origin: origin.clone(),
             cancel: cancel.clone(),
             usage: TokenUsage::default(),
             text: String::new(),
@@ -684,6 +768,7 @@ impl SessionManager {
             native: state.native.clone(),
             project_path: state.spec.project_path.clone(),
             context,
+            compact,
         };
         drop(state);
         Ok((session, turn))
@@ -854,6 +939,8 @@ async fn run_turn(
     let turn_input = TurnInput {
         text: input.clone(),
         context,
+        compaction: *inner.compaction.read(),
+        compact: turn.compact,
     };
     // The provider runs in its own task: a panicking adapter fails the turn
     // instead of leaving the session running forever, and an abandoned turn
@@ -975,6 +1062,7 @@ async fn run_turn(
             "toolCalls": tool_calls,
             "usage": result.usage,
             "inputChars": input.chars().count(),
+            "compact": turn.compact,
         }),
     ));
     result

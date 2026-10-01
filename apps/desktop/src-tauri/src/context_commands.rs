@@ -53,7 +53,10 @@ pub fn context_settings_save(
     state: State<'_, AppState>,
     settings: ContextSettings,
 ) -> Result<ContextSettings, String> {
-    state.builder.save_settings(settings)
+    let saved = state.builder.save_settings(settings)?;
+    // Compaction applies from the next turn of every session (ADR-0018).
+    state.sessions.set_compaction(saved.compaction);
+    Ok(saved)
 }
 
 /// A handoff draft from a session (asks its AI when `askAgent`).

@@ -99,4 +99,15 @@ pub struct Conversation {
     pub messages: Vec<Message>,
     /// Counter for locally generated tool call ids (prompt protocol).
     pub next_call: u32,
+    /// The latest summary that replaced the earlier messages (ADR-0018).
+    /// It opens the next user message after the compaction.
+    pub summary: Option<String>,
+    /// How many times this conversation was compacted.
+    pub compactions: u32,
+    /// Size of the next prompt as the provider reported it (last prompt +
+    /// reply + tool results since); 0 = unknown, estimate instead.
+    pub last_prompt_tokens: u64,
+    /// Estimated size right after the last compaction (system, tools and
+    /// summary): what compacting again cannot remove.
+    pub floor_tokens: u64,
 }

@@ -192,6 +192,21 @@ pub enum SessionEvent {
         turn_id: TurnId,
         summary: ContextSummary,
     },
+    /// The conversation sent to the AI was replaced by a summary written
+    /// by the AI itself (ADR-0018). The transcript keeps everything; only
+    /// what goes to the provider shrinks.
+    Compacted {
+        turn_id: TurnId,
+        /// By the threshold (`true`) or by the user ("Compactar").
+        automatic: bool,
+        /// Prompt size before (reported by the provider, or estimated).
+        before_tokens: u64,
+        /// Estimated size of what replaced it.
+        after_tokens: u64,
+        /// Messages replaced by the summary.
+        messages: u32,
+        summary: String,
+    },
     /// The work passed from one session to another through a handoff
     /// (ADR-0013). Recorded in both sessions.
     HandedOff {
@@ -214,7 +229,8 @@ impl SessionEvent {
             | Self::ToolCallCompleted { turn_id, .. }
             | Self::Usage { turn_id, .. }
             | Self::TurnCompleted { turn_id, .. }
-            | Self::ContextAttached { turn_id, .. } => Some(turn_id),
+            | Self::ContextAttached { turn_id, .. }
+            | Self::Compacted { turn_id, .. } => Some(turn_id),
             Self::Notice { turn_id, .. } => turn_id.as_ref(),
             Self::StatusChanged { .. } | Self::SubagentSpawned { .. } | Self::HandedOff { .. } => {
                 None

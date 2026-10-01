@@ -4,6 +4,7 @@
 //! the Orchestrator (`TurnContext::call_tool`) → send the results back →
 //! until the model answers without tools (or `maxToolRounds`, ADR-0010).
 
+use crate::compaction::{self, Compact};
 use crate::config::{ApiKind, Connection, CredentialSource, ModelEntry, ToolMode};
 use crate::conversation::{Conversation, Message, Part, Role, ToolResultPart};
 use crate::http::{FrameReader, HttpClient, Retry};
@@ -240,8 +241,42 @@ impl ApiProvider {
             });
         }
         let system = self.system_prompt(conv.system.as_deref(), mode, &definitions);
-        conv.messages.push(Message::user(input.text.clone()));
         let cancel = ctx.cancellation();
+
+        // Compaction (ADR-0018): asked for, or the conversation plus this
+        // message passed the limit. Only between turns or tool rounds.
+        let size = compaction::prompt_size(&conv, system.as_deref(), native_tools)
+            + compaction::estimate(&input.text);
+        if input.compact || compaction::due(&input.compaction, &model, &conv, size) {
+            if conv.messages.is_empty() {
+                ctx.notice(NoticeLevel::Info, "a conversa já está compactada");
+            } else {
+                let how = Compact {
+                    reference: &native.reference,
+                    model: &model,
+                    system: system.as_deref(),
+                    tools: native_tools,
+                    mode,
+                    automatic: !input.compact,
+                };
+                match self.compact(&mut conv, how, ctx).await {
+                    Ok(()) => {}
+                    Err(err) if input.compact || err.kind == ProviderErrorKind::Cancelled => {
+                        return Err(err)
+                    }
+                    Err(err) => ctx.notice(
+                        NoticeLevel::Warning,
+                        format!("a conversa não foi compactada: {}", err.message),
+                    ),
+                }
+            }
+        }
+        if input.text.trim().is_empty() {
+            // "Compactar" only.
+            return Ok(TurnOutput::default());
+        }
+        let first = compaction::user_message(&conv, &input.text);
+        conv.messages.push(first);
         let mut output = String::new();
 
         for _round in 0..self.conn.max_tool_rounds {
@@ -285,6 +320,11 @@ impl ApiProvider {
                 ctx.emit_text(&filter.lock().finish());
             }
             ctx.report_usage(self.priced(&model, reply.usage));
+            // What the next prompt starts from: this one plus the reply.
+            conv.last_prompt_tokens = match reply.usage.input_tokens {
+                0 => 0,
+                input => input + reply.usage.output_tokens,
+            };
             for notice in &reply.notices {
                 ctx.notice(NoticeLevel::Info, notice.clone());
             }
@@ -350,6 +390,12 @@ impl ApiProvider {
                 };
                 results.push(result);
             }
+            if conv.last_prompt_tokens > 0 {
+                conv.last_prompt_tokens += results
+                    .iter()
+                    .map(|r| compaction::estimate(&r.content))
+                    .sum::<u64>();
+            }
             conv.messages.push(Message {
                 role: Role::User,
                 parts: results.into_iter().map(Part::ToolResult).collect(),
@@ -357,6 +403,30 @@ impl ApiProvider {
             });
             if ctx.is_cancelled() {
                 return Err(ProviderError::cancelled("turn cancelled"));
+            }
+            // The round is complete (every call has its result): the
+            // conversation may be compacted before the next one.
+            let size = compaction::prompt_size(&conv, system.as_deref(), native_tools);
+            if compaction::due(&input.compaction, &model, &conv, size) {
+                let how = Compact {
+                    reference: &native.reference,
+                    model: &model,
+                    system: system.as_deref(),
+                    tools: native_tools,
+                    mode,
+                    automatic: true,
+                };
+                match self.compact(&mut conv, how, ctx).await {
+                    Ok(()) => {
+                        let next = compaction::user_message(&conv, compaction::CONTINUE);
+                        conv.messages.push(next);
+                    }
+                    Err(err) if err.kind == ProviderErrorKind::Cancelled => return Err(err),
+                    Err(err) => ctx.notice(
+                        NoticeLevel::Warning,
+                        format!("a conversa não foi compactada: {}", err.message),
+                    ),
+                }
             }
         }
         ctx.notice(
@@ -550,7 +620,7 @@ pub(crate) struct ModelCall<'a> {
 }
 
 /// Tells the session that a request is about to be repeated.
-fn retry_notice(ctx: &TurnContext, retry: &Retry) {
+pub(crate) fn retry_notice(ctx: &TurnContext, retry: &Retry) {
     ctx.notice(
         NoticeLevel::Warning,
         format!(
@@ -564,7 +634,7 @@ fn retry_notice(ctx: &TurnContext, retry: &Retry) {
 }
 
 /// Text-only view of the conversation for the prompt tool protocol.
-fn as_prompt_messages(messages: &[Message]) -> Vec<Message> {
+pub(crate) fn as_prompt_messages(messages: &[Message]) -> Vec<Message> {
     messages
         .iter()
         .map(|message| {
@@ -616,6 +686,7 @@ impl AIProvider for ApiProvider {
                 .enabled_models()
                 .any(|m| m.input_price.is_some() || m.output_price.is_some()),
             completion: true,
+            compaction: true,
             models: self.conn.enabled_models().map(ModelEntry::info).collect(),
             default_model: self.conn.default_model_id(),
         }

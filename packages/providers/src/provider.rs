@@ -62,6 +62,9 @@ pub struct ProviderCapabilities {
     /// Answers one-off requests without a session or tools (`complete`);
     /// required to sit on the model Council (ADR-0011).
     pub completion: bool,
+    /// Compacts its conversation into a summary (`TurnInput::compact`,
+    /// ADR-0018).
+    pub compaction: bool,
     pub models: Vec<ModelInfo>,
     pub default_model: Option<String>,
 }
@@ -106,6 +109,59 @@ pub struct SessionSpec {
     pub instructions: Option<String>,
 }
 
+/// When a provider compacts its conversation (ADR-0018): at a turn or
+/// tool-round boundary, once the last prompt passes the smaller of
+/// `thresholdTokens` and `thresholdPercent` of the model's context window.
+/// Kept in `context.json`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CompactionPolicy {
+    pub auto: bool,
+    pub threshold_tokens: u64,
+    pub threshold_percent: u8,
+}
+
+impl CompactionPolicy {
+    pub const DEFAULT_TOKENS: u64 = 150_000;
+    pub const MIN_TOKENS: u64 = 8_000;
+    pub const MAX_TOKENS: u64 = 2_000_000;
+    pub const DEFAULT_PERCENT: u8 = 80;
+
+    pub fn validate(&self) -> Result<(), String> {
+        if !(Self::MIN_TOKENS..=Self::MAX_TOKENS).contains(&self.threshold_tokens) {
+            return Err(format!(
+                "o limite da compactação vai de {} a {} tokens",
+                Self::MIN_TOKENS,
+                Self::MAX_TOKENS
+            ));
+        }
+        if !(10..=95).contains(&self.threshold_percent) {
+            return Err("a porcentagem da janela de contexto vai de 10% a 95%".into());
+        }
+        Ok(())
+    }
+
+    /// The prompt size, in tokens, past which a conversation is compacted.
+    pub fn limit(&self, context_window: Option<u32>) -> u64 {
+        match context_window {
+            Some(window) if window > 0 => self
+                .threshold_tokens
+                .min(u64::from(window) * u64::from(self.threshold_percent) / 100),
+            _ => self.threshold_tokens,
+        }
+    }
+}
+
+impl Default for CompactionPolicy {
+    fn default() -> Self {
+        Self {
+            auto: true,
+            threshold_tokens: Self::DEFAULT_TOKENS,
+            threshold_percent: Self::DEFAULT_PERCENT,
+        }
+    }
+}
+
 /// Input of one turn.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TurnInput {
@@ -114,6 +170,11 @@ pub struct TurnInput {
     /// (ADR-0013). Providers add it to the session's system instructions,
     /// which then stay the same for the following turns.
     pub context: Option<String>,
+    /// When the provider compacts on its own (ADR-0018).
+    pub compaction: CompactionPolicy,
+    /// Compact before anything else ("Compactar"). With an empty `text`
+    /// the turn only compacts.
+    pub compact: bool,
 }
 
 /// Aggregated output of one turn.

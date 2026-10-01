@@ -269,6 +269,7 @@ pub fn run() {
                 eprintln!("[orchestrator] {warning}");
             }
             sessions.set_context_source(builder.clone());
+            sessions.set_compaction(builder.settings().compaction);
             let handoffs = HandoffService::new(
                 sessions.clone(),
                 store.clone(),

@@ -185,6 +185,7 @@ impl AIProvider for EchoProvider {
             token_usage: true,
             cost: false,
             completion: true,
+            compaction: false,
             models: vec![ModelInfo {
                 id: MODEL.into(),
                 name: "Echo".into(),

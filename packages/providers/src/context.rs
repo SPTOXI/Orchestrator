@@ -125,6 +125,19 @@ impl TurnContext {
         }
     }
 
+    /// The conversation was compacted (ADR-0018): recorded in the
+    /// transcript and, by the session manager, in the history.
+    pub fn compacted(&self, compaction: Compaction) {
+        self.observer.event(SessionEvent::Compacted {
+            turn_id: self.turn_id.clone(),
+            automatic: compaction.automatic,
+            before_tokens: compaction.before_tokens,
+            after_tokens: compaction.after_tokens,
+            messages: compaction.messages,
+            summary: compaction.summary,
+        });
+    }
+
     pub fn notice(&self, level: NoticeLevel, message: impl Into<String>) {
         self.observer.event(SessionEvent::Notice {
             turn_id: Some(self.turn_id.clone()),
@@ -223,4 +236,14 @@ fn not_executed(call: &ToolCall, error: ToolError) -> ToolResult {
         finished_at: now,
         duration_ms: 0,
     }
+}
+
+/// What a compaction did (`TurnContext::compacted`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Compaction {
+    pub automatic: bool,
+    pub before_tokens: u64,
+    pub after_tokens: u64,
+    pub messages: u32,
+    pub summary: String,
 }

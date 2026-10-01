@@ -1,6 +1,7 @@
 //! Context settings: `<app-data>/context.json` (ADR-0013). Configuration
 //! stays in files, like `council.json` (ADR-0012).
 
+use orchestrator_providers::CompactionPolicy;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -17,6 +18,8 @@ pub struct ContextSettings {
     pub auto_attach: bool,
     /// Default budget in estimated tokens.
     pub budget_tokens: u32,
+    /// When a session's conversation is compacted (ADR-0018).
+    pub compaction: CompactionPolicy,
 }
 
 impl Default for ContextSettings {
@@ -24,6 +27,7 @@ impl Default for ContextSettings {
         Self {
             auto_attach: true,
             budget_tokens: DEFAULT_BUDGET,
+            compaction: CompactionPolicy::default(),
         }
     }
 }
@@ -35,7 +39,7 @@ impl ContextSettings {
                 "o orçamento de contexto vai de {MIN_BUDGET} a {MAX_BUDGET} tokens"
             ));
         }
-        Ok(())
+        self.compaction.validate()
     }
 }
 
@@ -100,9 +104,30 @@ mod tests {
         let settings = ContextSettings {
             auto_attach: false,
             budget_tokens: 900,
+            compaction: CompactionPolicy {
+                auto: false,
+                threshold_tokens: 60_000,
+                threshold_percent: 50,
+            },
         };
         save(&path, &settings).unwrap();
         assert_eq!(load(&path), (settings, None));
+        assert!(ContextSettings {
+            compaction: CompactionPolicy {
+                threshold_tokens: 10,
+                ..settings.compaction
+            },
+            ..settings
+        }
+        .validate()
+        .is_err());
+        // A Phase 7 file (no compaction section) gets the defaults.
+        std::fs::write(&path, r#"{"version":1,"context":{"budgetTokens":900}}"#).unwrap();
+        assert_eq!(
+            load(&path).0.compaction,
+            CompactionPolicy::default(),
+            "compaction defaults"
+        );
         assert!(ContextSettings {
             budget_tokens: 100,
             ..settings

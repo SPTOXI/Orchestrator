@@ -12,6 +12,7 @@
 //!   app) or in an environment variable.
 
 mod anthropic;
+mod compaction;
 mod config;
 mod conversation;
 mod cost;

@@ -90,6 +90,8 @@ pub enum EventKind {
     GithubPrMerged,
     /// An issue was opened on GitHub (ADR-0017).
     GithubIssueCreated,
+    /// A session's conversation was compacted into a summary (ADR-0018).
+    ContextCompacted,
 }
 
 /// A durable, provider-independent history entry.
