@@ -89,13 +89,6 @@ jobs:
       # Signs the update artifacts (never stored in the repository).
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-      # Optional macOS code signing and notarization.
-      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@v4
       - name: Tauri system dependencies
@@ -118,6 +111,32 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Assinatura de código (macOS, opcional)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          ID: ${{ secrets.APPLE_ID }}
+          PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        # The bundler signs whenever APPLE_CERTIFICATE exists, even empty:
+        # the variables are exported only when the secrets are there.
+        run: |
+          if [ -z "${CERTIFICATE}" ]; then
+            echo "::warning::Sem APPLE_CERTIFICATE: o app do macOS sai sem assinatura (o macOS pede confirmação na primeira abertura)."
+            exit 0
+          fi
+          for pair in APPLE_CERTIFICATE:CERTIFICATE APPLE_CERTIFICATE_PASSWORD:CERTIFICATE_PASSWORD \
+                      APPLE_SIGNING_IDENTITY:SIGNING_IDENTITY APPLE_ID:ID APPLE_PASSWORD:PASSWORD APPLE_TEAM_ID:TEAM_ID; do
+            name="${pair%%:*}"
+            source="${pair##*:}"
+            value="${!source}"
+            [ -n "${value}" ] || continue
+            delimiter="EOF_$(openssl rand -hex 8)"
+            { echo "${name}<<${delimiter}"; echo "${value}"; echo "${delimiter}"; } >> "$GITHUB_ENV"
+          done
       - name: Assinatura das atualizações
         id: signing
         shell: bash
