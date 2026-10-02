@@ -434,6 +434,17 @@ fn remove_patiently(path: &Path) -> Result<(), String> {
     }
 }
 
+/// `current` is older than `previous` ("0.1.0" after "0.1.1"): the user
+/// went back to an earlier version.
+fn is_older(current: &str, previous: &str) -> bool {
+    let parts = |v: &str| -> Vec<u64> {
+        v.split(['.', '-', '+'])
+            .map_while(|p| p.parse().ok())
+            .collect()
+    };
+    parts(current) < parts(previous)
+}
+
 /// What the start did to keep the data safe.
 #[derive(Debug, Default)]
 pub struct StartBackup {
@@ -460,7 +471,11 @@ pub fn on_start(data_dir: &Path, app_version: &str) -> StartBackup {
         (None, None) => return StartBackup::default(),
         (Some(previous), None) => (
             Reason::NewVersion,
-            format!("Versão nova aberta: {previous} → {app_version}"),
+            if is_older(app_version, previous) {
+                format!("Versão anterior aberta: {previous} → {app_version}")
+            } else {
+                format!("Versão nova aberta: {previous} → {app_version}")
+            },
         ),
         (previous, Some(schema)) => (
             Reason::Migration,
@@ -743,6 +758,11 @@ mod tests {
         assert_eq!(made.reason, Reason::NewVersion);
         assert_eq!(made.label, "Versão nova aberta: 0.1.0 → 0.2.0");
         assert_eq!(made.schema, Some(SCHEMA_VERSION));
+        // Going back to an earlier version is backed up too.
+        write(dir.path(), "updates.json", r#"{"lastVersion":"0.2.0"}"#);
+        let back = on_start(dir.path(), "0.1.9").made.unwrap();
+        assert_eq!(back.label, "Versão anterior aberta: 0.2.0 → 0.1.9");
+        assert!(is_older("0.9.0", "0.10.0") && !is_older("1.0.0", "0.10.0"));
         // A first install has nothing to keep.
         let fresh = tempfile::tempdir().unwrap();
         assert!(on_start(fresh.path(), "0.2.0").made.is_none());

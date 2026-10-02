@@ -83,7 +83,7 @@ export function DataSection({ ready, active, liveAgents }: Props) {
         <section>
           <h3>Nesta abertura</h3>
           {status.notices.map((text) => (
-            <div key={text} className={`inline-notice${isWarning(text) ? " warn" : ""}`}>
+            <div key={text} className={`inline-notice ${isWarning(text) ? "warn" : "ok"}`}>
               {text}
             </div>
           ))}
