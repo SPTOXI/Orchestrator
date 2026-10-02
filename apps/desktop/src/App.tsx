@@ -19,6 +19,7 @@ import { CliSection } from "./components/CliSection";
 import { McpSection } from "./components/McpSection";
 import { OfflineSection } from "./components/OfflineSection";
 import { type SettingsSection, SettingsPage, SettingsView } from "./components/SettingsView";
+import { DataSection } from "./components/DataSection";
 import { terminalRequests } from "./lib/terminalRequests";
 import { TaskView } from "./components/TaskView";
 import { type MemorySection, MemoryView } from "./components/MemoryView";
@@ -962,9 +963,22 @@ export function App() {
                                 onChanged={() => setGithubNonce(Date.now())}
                               />
                             );
+                          case "data":
+                            return (
+                              <SettingsPage title="Dados e backups">
+                                <DataSection
+                                  ready={ready}
+                                  active={shown}
+                                  liveAgents={
+                                    agents.list.filter((a) => a.status === "RUNNING" || a.status === "QUEUED").length
+                                  }
+                                />
+                              </SettingsPage>
+                            );
                           case "about":
                             return (
                               <AboutView
+                                onOpenData={() => openSettings("data")}
                                 active={shown}
                                 ready={ready}
                                 info={info}
@@ -1120,6 +1134,7 @@ export function App() {
         onOpenCost={openCost}
         update={updateChip(updates.status)}
         onOpenAbout={openAbout}
+        onOpenData={() => openSettings("data")}
       />
     </div>
   );

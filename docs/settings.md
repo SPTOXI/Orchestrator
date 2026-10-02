@@ -14,6 +14,7 @@ rodam. Decisão: [ADR-0021](./adr/0021-configuracoes-assinaturas-offline-e-mcp.m
 | Modelos | Modelos offline | modelos no seu computador, pelo Ollama |
 | Integrações | Servidores MCP | ferramentas novas para todas as IAs |
 | Integrações | GitHub | token e servidor ([github.md](./github.md)) |
+| Orchestrator | Dados e backups | backups automáticos e seus, restaurar ([ADR-0022](./adr/0022-dados-preservados-nas-atualizacoes.md)) |
 | Orchestrator | Sobre e atualizações | versão, pastas, atualizações ([release.md](./release.md)) |
 
 O chip de autonomia, o link do GitHub e a versão na barra de status abrem a
@@ -139,6 +140,25 @@ por token. Pelo **Ollama** (gratuito).
 Modelos sem chamada de ferramentas (o Ollama informa) recebem as
 ferramentas por prompt. O endereço é `127.0.0.1:11434`, ou o de
 `OLLAMA_HOST`.
+
+## Dados e backups
+
+Nada do que você construiu se perde numa atualização. Os detalhes estão em
+[release.md](./release.md#seus-dados-nas-atualizações).
+
+- A tela mostra a pasta de dados e a de backups, os avisos da última
+  abertura (backup feito, restauração, arquivo que não pôde ser lido) e a
+  lista de backups. Cada um tem data, motivo, versão, tamanho e
+  quantidade de arquivos.
+- **Fazer backup agora**, com um nome opcional. Esses backups ficam até
+  você apagar.
+- **Restaurar…**: o app reinicia e põe de volta o banco (histórico,
+  sessões, memória, tasks) e os arquivos (conexões, regras, skills, MCP,
+  configurações) do backup. O estado de antes vira um backup ("antes de
+  uma restauração"), então dá para desfazer. Os agentes em execução param
+  antes, com handoff.
+- Os automáticos (antes de uma atualização, ao abrir uma versão nova,
+  antes de atualizar o banco) guardam os 5 mais recentes.
 
 ## IAs na barra lateral
 

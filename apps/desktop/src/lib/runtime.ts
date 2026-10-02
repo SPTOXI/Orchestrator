@@ -7,6 +7,7 @@
 
 import { invoke, isTauri as detectTauri } from "@tauri-apps/api/core";
 import type {
+  BackupStatus,
   BudgetView,
   SecretsView,
   GuidanceSettings,
@@ -450,6 +451,14 @@ export const mcpApi = {
   remove: (id: string) => invoke<McpServerView[]>("mcp_delete", { id }),
   setTool: (id: string, tool: string, enabled: boolean) =>
     invoke<McpServerView[]>("mcp_set_tool", { id, tool, enabled }),
+};
+
+export const backupApi = {
+  status: () => invoke<BackupStatus>("backup_status"),
+  create: (label: string | null) => invoke<BackupStatus>("backup_create", { label }),
+  remove: (id: string) => invoke<BackupStatus>("backup_delete", { id }),
+  /** The app restarts to put the files back. */
+  restore: (id: string) => invoke<void>("backup_restore", { id }),
 };
 
 export const cliApi = {

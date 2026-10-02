@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use tauri::State;
 
 /// Service and account the token is stored under.
-const SERVICE: &str = "dev.orchestrator.desktop";
+pub(crate) const SERVICE: &str = "dev.orchestrator.desktop";
 const ACCOUNT: &str = "github:token";
 
 fn entry() -> Result<keyring::Entry, String> {
@@ -58,7 +58,7 @@ fn save_settings(path: &Path, settings: &GitHubSettings) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let text = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
-    std::fs::write(path, text + "\n").map_err(|e| e.to_string())
+    crate::files::write_atomic(path, (text + "\n").as_bytes())
 }
 
 /// What the GitHub tab shows about the connection (never the token).

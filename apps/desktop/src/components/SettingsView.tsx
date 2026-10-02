@@ -14,6 +14,7 @@ export type SettingsSection =
   | "policies"
   | "context"
   | "github"
+  | "data"
   | "about";
 
 export const SETTINGS_SECTIONS: Array<{ id: SettingsSection; label: string; group: string }> = [
@@ -25,6 +26,7 @@ export const SETTINGS_SECTIONS: Array<{ id: SettingsSection; label: string; grou
   { id: "offline", label: "Modelos offline", group: "Modelos" },
   { id: "mcp", label: "Servidores MCP", group: "Integrações" },
   { id: "github", label: "GitHub", group: "Integrações" },
+  { id: "data", label: "Dados e backups", group: "Orchestrator" },
   { id: "about", label: "Sobre e atualizações", group: "Orchestrator" },
 ];
 

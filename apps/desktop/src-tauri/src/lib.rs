@@ -1,17 +1,19 @@
 //! Orchestrator desktop shell.
 //!
 //! This crate is only an IPC bridge (ADR-0001, ADR-0003, ADR-0009,
-//! ADR-0011, ADR-0013, ADR-0015, ADR-0016, ADR-0019): it turns Tauri commands into
+//! ADR-0011, ADR-0013, ADR-0015, ADR-0016, ADR-0019, ADR-0022): it turns Tauri commands into
 //! `ToolRuntime` / `SessionManager` / `RouterService` / engine / agent /
 //! autonomy calls and runtime events into Tauri events. It contains no
 //! domain logic.
 
 mod agent_commands;
 mod autonomy_commands;
+mod backup_commands;
 mod cli_commands;
 mod commands;
 mod context_commands;
 mod cost_commands;
+mod files;
 mod github_commands;
 mod guidance_commands;
 mod mcp_commands;
@@ -132,6 +134,10 @@ pub struct AppState {
     pub clis: CliManager,
     pub sink: Arc<DesktopSink>,
     pub data_dir: PathBuf,
+    /// What this start did to keep the user's data (backups, a restore,
+    /// files the app could not read kept aside), for "Dados e backups"
+    /// (ADR-0022).
+    pub data_notices: Vec<String>,
 }
 
 /// The development provider `echo` (no AI) is registered in debug builds or
@@ -189,7 +195,36 @@ pub fn run() {
                 .path()
                 .app_data_dir()
                 .unwrap_or_else(|_| std::env::temp_dir().join("orchestrator"));
-            let (store, store_warning) = MemoryStore::open(&data_dir.join("orchestrator.db"));
+            // The user's data survives updates (ADR-0022): a restore the
+            // last run asked for, then a backup when this is a new version
+            // or the database needs migrating — all before anything opens
+            // the files.
+            let version = app.package_info().version.to_string();
+            let mut data_notices = Vec::new();
+            match backup_commands::apply_pending_restore(&data_dir, &version) {
+                Some(Ok(message)) => data_notices.push(message),
+                Some(Err(err)) => data_notices.push(format!("Restauração: {err}")),
+                None => {}
+            }
+            let start = backup_commands::on_start(&data_dir, &version);
+            if let Some(made) = &start.made {
+                data_notices.push(format!("Backup feito ao abrir: {} ({}).", made.label, made.id));
+            }
+            if let Some(err) = &start.error {
+                data_notices.push(format!("O backup ao abrir não foi feito: {err}."));
+            }
+            let (store, store_warning) = if start.hold_database {
+                (
+                    MemoryStore::in_memory(),
+                    Some(format!(
+                        "o banco precisa ser atualizado para esta versão, mas não foi possível copiá-lo antes ({}); \
+                         ele ficou como estava, e o histórico desta execução fica só na memória até o app fechar",
+                        start.error.as_deref().unwrap_or("?")
+                    )),
+                )
+            } else {
+                MemoryStore::open(&data_dir.join("orchestrator.db"))
+            };
             let store = Arc::new(store);
             if let Some(warning) = &store_warning {
                 eprintln!("[orchestrator] {warning}");
@@ -217,8 +252,9 @@ pub fn run() {
             // GitHub (ADR-0017): which server, and the token saved in the
             // vault (the environment and the GitHub CLI are read by the
             // runtime itself).
-            let (github_settings, mut github_warning) =
-                github_commands::load_settings(&github_commands::settings_path(&data_dir));
+            let github_path = github_commands::settings_path(&data_dir);
+            let (github_settings, github_warning) = github_commands::load_settings(&github_path);
+            let mut github_warning = files::guard(&github_path, github_warning);
             runtime.set_github_settings(github_settings);
             match github_commands::vault_token() {
                 Ok(token) => runtime.set_github_token(token),
@@ -246,6 +282,15 @@ pub fn run() {
                 Ok((manager, warnings)) => (Some(Arc::new(manager)), warnings),
                 Err(err) => (None, vec![err.message]),
             };
+            // A connection the app could not use is dropped from the list;
+            // the file as it was is kept before any save writes over it.
+            let connection_warnings: Vec<String> = match connection_warnings.split_first() {
+                Some((first, rest)) => {
+                    let kept = files::guard(&data_dir.join("connections.json"), Some(first.clone()));
+                    kept.into_iter().chain(rest.iter().cloned()).collect()
+                }
+                None => Vec::new(),
+            };
             for warning in &connection_warnings {
                 eprintln!("[orchestrator] {warning}");
             }
@@ -259,6 +304,7 @@ pub fn run() {
                 tool_server,
                 orchestrator_provider_cli::scratch_dir(&data_dir),
             );
+            let clis_warning = files::guard(&data_dir.join("clis.json"), clis_warning);
             if let Some(warning) = &clis_warning {
                 eprintln!("[orchestrator] {warning}");
             }
@@ -269,6 +315,7 @@ pub fn run() {
             );
             let router =
                 router.with_store(Arc::new(persistence::StoreDeliberations(store.clone())));
+            let router_warning = files::guard(&data_dir.join("council.json"), router_warning);
             if let Some(warning) = &router_warning {
                 eprintln!("[orchestrator] {warning}");
             }
@@ -282,6 +329,7 @@ pub fn run() {
                 sink.clone(),
                 Some(data_dir.join("autonomy.json")),
             );
+            let autonomy_warning = files::guard(&data_dir.join("autonomy.json"), autonomy_warning);
             if let Some(warning) = &autonomy_warning {
                 eprintln!("[orchestrator] {warning}");
             }
@@ -291,6 +339,7 @@ pub fn run() {
             let agent_slot = AgentSlot::new();
             // Development rules and skills (ADR-0021).
             let (guidance, guidance_warning) = GuidanceService::new(&data_dir);
+            let guidance_warning = files::guard(&data_dir.join("guidance.json"), guidance_warning);
             let guidance = Arc::new(guidance);
             if let Some(warning) = &guidance_warning {
                 eprintln!("[orchestrator] {warning}");
@@ -304,6 +353,7 @@ pub fn run() {
                 Arc::new(move |text: &str| expand_runtime.expand_secrets(text)),
                 Arc::new(move |text: &str| mask_runtime.mask_secrets(text)),
             );
+            let mcp_warning = files::guard(&data_dir.join("mcp.json"), mcp_warning);
             if let Some(warning) = &mcp_warning {
                 eprintln!("[orchestrator] {warning}");
             }
@@ -343,6 +393,7 @@ pub fn run() {
             );
             let (builder, context_warning) =
                 ContextBuilder::new(store.clone(), Some(data_dir.join("context.json")));
+            let context_warning = files::guard(&data_dir.join("context.json"), context_warning);
             let builder = Arc::new(builder);
             if let Some(warning) = &context_warning {
                 eprintln!("[orchestrator] {warning}");
@@ -382,6 +433,7 @@ pub fn run() {
                 },
                 Some(data_dir.join("agents.json")),
             );
+            let agents_warning = files::guard(&data_dir.join("agents.json"), agents_warning);
             if let Some(warning) = &agents_warning {
                 eprintln!("[orchestrator] {warning}");
             }
@@ -391,6 +443,25 @@ pub fn run() {
             agent_slot.install(agents.clone());
             // Nothing is running after a restart, so no file stays locked.
             agents.recover();
+            // Files kept aside are told on "Dados e backups" too.
+            data_notices.extend(
+                [
+                    &github_warning,
+                    &secrets_warning,
+                    &clis_warning,
+                    &router_warning,
+                    &autonomy_warning,
+                    &guidance_warning,
+                    &mcp_warning,
+                    &context_warning,
+                    &agents_warning,
+                ]
+                .into_iter()
+                .flatten()
+                .chain(connection_warnings.iter())
+                .filter(|w| w.contains(".unreadable-") || w.contains("guardar uma cópia"))
+                .cloned(),
+            );
             app.manage(AppState {
                 runtime,
                 sessions,
@@ -414,10 +485,10 @@ pub fn run() {
                 clis,
                 sink,
                 data_dir,
+                data_notices,
             });
             // Updates (ADR-0019): the version this run is, and a new one
             // in the history when it changed.
-            let version = app.package_info().version.to_string();
             let data_dir = app.state::<AppState>().data_dir.clone();
             let (updates, change) = update_commands::Updates::open(&data_dir, &version);
             update_commands::record_change(app.state::<AppState>().sink.as_ref(), change, &version);
@@ -436,6 +507,10 @@ pub fn run() {
             commands::history_recent,
             commands::app_info,
             commands::pick_folder,
+            backup_commands::backup_status,
+            backup_commands::backup_create,
+            backup_commands::backup_delete,
+            backup_commands::backup_restore,
             provider_commands::providers_list,
             provider_commands::provider_inspect,
             provider_commands::provider_select,

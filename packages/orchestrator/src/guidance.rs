@@ -212,8 +212,7 @@ impl GuidanceService {
         if text.chars().count() > MAX_USER_RULES {
             return Err(format!("as regras passam de {MAX_USER_RULES} caracteres"));
         }
-        std::fs::create_dir_all(&self.data_dir).map_err(|e| e.to_string())?;
-        std::fs::write(self.rules_path(), text).map_err(|e| e.to_string())
+        write_text(&self.rules_path(), text)
     }
 
     pub fn view(&self, project: Option<&Path>) -> GuidanceView {
@@ -325,7 +324,7 @@ impl GuidanceService {
             input.body.trim_end()
         );
         let path = dir.join("SKILL.md");
-        std::fs::write(&path, text).map_err(|e| e.to_string())?;
+        write_text(&path, &text)?;
         let settings = self.settings();
         Ok(SkillInfo {
             name: name.to_owned(),
@@ -833,13 +832,23 @@ pub fn project_rule_files(project: &Path) -> Vec<RuleFile> {
 }
 
 fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
+    let text = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
+    write_text(path, &text)
+}
+
+/// Through a temporary file and a rename: never half written (ADR-0022).
+fn write_text(path: &Path, text: &str) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    let text = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
-    let tmp = path.with_extension("json.tmp");
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
     std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, path).map_err(|e| e.to_string())
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        e.to_string()
+    })
 }
 
 fn home_dir() -> Option<PathBuf> {

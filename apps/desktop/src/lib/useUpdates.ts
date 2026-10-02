@@ -12,6 +12,8 @@ export interface Updates {
   progress: { downloaded: number; total: number | null } | null;
   busy: "check" | "install" | null;
   error: string | null;
+  /** The backup made before installing (ADR-0022). */
+  backedUp: string | null;
   /** Result of the last check the user asked for: null = up to date. */
   checked: UpdateInfo | null | undefined;
   check: () => Promise<void>;
@@ -26,6 +28,7 @@ export function useUpdates(enabled: boolean): Updates {
   const [busy, setBusy] = useState<Updates["busy"]>(null);
   const [error, setError] = useState<string | null>(null);
   const [checked, setChecked] = useState<UpdateInfo | null | undefined>(undefined);
+  const [backedUp, setBackedUp] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -41,6 +44,10 @@ export function useUpdates(enabled: boolean): Updates {
     return updateEvents.subscribe((event) => {
       if (event.kind === "progress") {
         setProgress({ downloaded: event.downloaded, total: event.total });
+        return;
+      }
+      if (event.kind === "backedUp") {
+        setBackedUp(event.label);
         return;
       }
       if (event.kind === "failed") setError(event.message);
@@ -65,6 +72,7 @@ export function useUpdates(enabled: boolean): Updates {
   const install = useCallback(async () => {
     setBusy("install");
     setError(null);
+    setBackedUp(null);
     setProgress({ downloaded: 0, total: null });
     try {
       await updateApi.install();
@@ -93,5 +101,5 @@ export function useUpdates(enabled: boolean): Updates {
     }
   }, []);
 
-  return { status, progress, busy, error, checked, check, install, restart, setAutoCheck };
+  return { status, progress, busy, error, backedUp, checked, check, install, restart, setAutoCheck };
 }

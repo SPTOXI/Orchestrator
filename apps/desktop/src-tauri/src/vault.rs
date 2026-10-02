@@ -4,7 +4,7 @@
 use orchestrator_provider_api::SecretStore;
 
 /// Service name the keys are stored under.
-const SERVICE: &str = "dev.orchestrator.desktop";
+pub(crate) const SERVICE: &str = "dev.orchestrator.desktop";
 
 pub struct OsVault;
 

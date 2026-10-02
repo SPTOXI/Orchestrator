@@ -2832,6 +2832,7 @@ dependencies = [
  "orchestrator-router",
  "orchestrator-runtime",
  "parking_lot",
+ "rusqlite",
  "serde",
  "serde_json",
  "tauri",

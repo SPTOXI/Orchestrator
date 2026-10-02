@@ -3,7 +3,7 @@
 //! these commands, like everything else. The app looks for updates and
 //! says so; installing one is always the user's call.
 
-use crate::AppState;
+use crate::{backup_commands, AppState};
 use chrono::{DateTime, Utc};
 use orchestrator_core::{AuditEvent, CallOrigin, EventKind, EventSink};
 use parking_lot::Mutex;
@@ -96,7 +96,7 @@ fn save_settings(path: &Path, settings: &UpdateSettings) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let text = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
-    std::fs::write(path, text + "\n").map_err(|e| e.to_string())
+    crate::files::write_atomic(path, (text + "\n").as_bytes())
 }
 
 /// The version changed since the last run: from which one, and whether the
@@ -182,6 +182,11 @@ pub enum UpdateEvent {
     Available {
         info: UpdateInfo,
     },
+    /// The user's data was backed up before installing (ADR-0022).
+    BackedUp {
+        id: String,
+        label: String,
+    },
     Progress {
         downloaded: u64,
         total: Option<u64>,
@@ -211,6 +216,7 @@ impl Updates {
     pub fn open(data_dir: &Path, current: &str) -> (Self, Option<(String, &'static str)>) {
         let path = settings_path(data_dir);
         let (mut settings, warning) = load_settings(&path);
+        let warning = crate::files::guard(&path, warning);
         let change = version_change(&settings, current);
         let before = settings.clone();
         settings.last_version = Some(current.to_owned());
@@ -386,8 +392,10 @@ pub async fn update_check(app: AppHandle) -> Result<Option<UpdateInfo>, String> 
 }
 
 /// Downloads, verifies and installs the update found by the last check.
-/// Running agents stop first, with a handoff, as "Parar todos" does. On
-/// Windows the installer closes the app and opens the new version.
+/// Running agents stop first, with a handoff, as "Parar todos" does; then
+/// the user's data is backed up, and without that backup nothing is
+/// installed (ADR-0022). On Windows the installer closes the app and opens
+/// the new version.
 #[tauri::command]
 pub async fn update_install(
     app: AppHandle,
@@ -415,6 +423,52 @@ pub async fn update_install(
         eprintln!("[orchestrator] {stopped} agent(s) stopped before the update");
     }
     let version = update.version.clone();
+    let current = app.package_info().version.to_string();
+    let data_dir = state.data_dir.clone();
+    let store = state.store.clone();
+    let label = format!("Antes de atualizar da {current} para a {version}");
+    let backup = tauri::async_runtime::spawn_blocking(move || {
+        let made = backup_commands::create(
+            &data_dir,
+            Some(&store),
+            backup_commands::Reason::Update,
+            &label,
+            &current,
+        );
+        if made.is_ok() {
+            backup_commands::prune(&data_dir, backup_commands::KEEP_AUTOMATIC);
+        }
+        made
+    })
+    .await
+    .map_err(|e| e.to_string())
+    .and_then(|made| made);
+    match backup {
+        Ok(info) => {
+            let _ = app.emit(
+                UPDATE_EVENT,
+                UpdateEvent::BackedUp {
+                    id: info.id,
+                    label: info.label,
+                },
+            );
+        }
+        Err(err) => {
+            *updates.phase.lock() = Phase::Idle;
+            let message = format!(
+                "A atualização não foi instalada: não foi possível fazer antes o backup dos seus dados ({err}). \
+                 Libere espaço em disco e tente de novo."
+            );
+            *updates.last_error.lock() = Some(message.clone());
+            let _ = app.emit(
+                UPDATE_EVENT,
+                UpdateEvent::Failed {
+                    message: message.clone(),
+                },
+            );
+            return Err(message);
+        }
+    }
     updates.update_settings(|s| s.pending = Some(version.clone()))?;
 
     let emitter = app.clone();

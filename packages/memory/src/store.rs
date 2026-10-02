@@ -123,6 +123,16 @@ impl MemoryStore {
         self.db.path()
     }
 
+    /// Writes a consistent copy of the database to `dest` (which must not
+    /// exist) while the app keeps using it (ADR-0022). An in-memory store
+    /// has nothing to copy.
+    pub fn backup_to(&self, dest: &Path) -> Result<(), String> {
+        if self.db.path().is_none() {
+            return Err("the database is in memory".into());
+        }
+        crate::db::vacuum_into(&self.db.conn.lock(), dest)
+    }
+
     // ------------------------------------------------------------ history
 
     /// Records an event. Returns the follow-up events it caused

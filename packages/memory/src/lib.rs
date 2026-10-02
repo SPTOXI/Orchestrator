@@ -36,7 +36,7 @@ mod store;
 mod tasks;
 mod working;
 
-pub use db::SCHEMA_VERSION;
+pub use db::{schema_of, snapshot_file, SCHEMA_VERSION};
 pub use model::{
     Decision, DecisionInput, DecisionStatus, HistoryPage, HistoryQuery, MemoryEntry, MemoryInput,
     MemoryKind, MemoryOverview, Project, RecentImport, SearchHit, SessionFacts, Source,

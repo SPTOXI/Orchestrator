@@ -253,7 +253,10 @@ impl CliManager {
                 std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
             }
             let text = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
-            std::fs::write(path, text).map_err(|e| e.to_string())?;
+            // Through a rename: never half written (ADR-0022).
+            let tmp = path.with_extension("json.tmp");
+            std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
+            std::fs::rename(&tmp, path).map_err(|e| e.to_string())?;
         }
         *self.settings.write() = file;
         self.apply(kind, CallOrigin::User);

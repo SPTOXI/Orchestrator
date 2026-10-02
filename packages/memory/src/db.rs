@@ -1,7 +1,7 @@
 //! Opening the database and migrating its schema (`PRAGMA user_version`).
 
 use parking_lot::Mutex;
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 use std::path::{Path, PathBuf};
 
 /// Schema version this build writes.
@@ -241,6 +241,51 @@ impl Database {
     }
 }
 
+/// The schema of the database file at `path`, without changing it: `None`
+/// when there is no file (or it is empty), `Some(0)` for a file that was
+/// never migrated. Lets the app copy the data before a migration
+/// (ADR-0022).
+pub fn schema_of(path: &Path) -> Result<Option<i64>, String> {
+    match std::fs::metadata(path) {
+        Ok(meta) if meta.len() == 0 => return Ok(None),
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(format!("cannot read {}: {err}", path.display())),
+    }
+    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+    conn.pragma_query_value(None, "user_version", |row| row.get(0))
+        .map(Some)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))
+}
+
+/// Writes a consistent copy of the database file `src` to `dest` (which
+/// must not exist), including what is still in its WAL. What `src` holds
+/// is not changed, and its schema may be newer than this build's.
+pub fn snapshot_file(src: &Path, dest: &Path) -> Result<(), String> {
+    // Read-write without create: a WAL database may need its `-shm`.
+    let conn = Connection::open_with_flags(src, OpenFlags::SQLITE_OPEN_READ_WRITE)
+        .map_err(|e| format!("cannot open {}: {e}", src.display()))?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(|e| e.to_string())?;
+    vacuum_into(&conn, dest)
+}
+
+/// `VACUUM INTO`: a compact, consistent copy made by SQLite itself, safe
+/// while the database is in use.
+pub(crate) fn vacuum_into(conn: &Connection, dest: &Path) -> Result<(), String> {
+    if let Some(dir) = dest.parent() {
+        std::fs::create_dir_all(dir)
+            .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    }
+    let target = dest
+        .to_str()
+        .ok_or_else(|| format!("{} is not valid UTF-8", dest.display()))?;
+    conn.execute("VACUUM INTO ?1", [target])
+        .map(|_| ())
+        .map_err(|e| format!("cannot copy the database to {}: {e}", dest.display()))
+}
+
 fn migrate(conn: &Connection) -> Result<(), String> {
     let version: i64 = conn
         .pragma_query_value(None, "user_version", |row| row.get(0))
@@ -414,6 +459,51 @@ mod tests {
         }
         let err = Database::open(&path).err().unwrap();
         assert!(err.contains("newer Orchestrator"), "{err}");
+    }
+
+    #[test]
+    fn snapshots_keep_everything_and_leave_the_file_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("orchestrator.db");
+        assert_eq!(schema_of(&path).unwrap(), None);
+        let db = Database::open(&path).unwrap();
+        db.conn
+            .lock()
+            .execute(
+                "INSERT INTO projects (id, path, name, created_at, last_opened_at) VALUES ('p', '/x', 'x', 'a', 'a')",
+                [],
+            )
+            .unwrap();
+        // Still open, the row only in the WAL: the copy has it anyway.
+        let copy = dir.path().join("backup").join("orchestrator.db");
+        snapshot_file(&path, &copy).unwrap();
+        assert_eq!(schema_of(&copy).unwrap(), Some(SCHEMA_VERSION));
+        let conn = Connection::open(&copy).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM projects", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+        // A copy never overwrites.
+        assert!(snapshot_file(&path, &copy).is_err());
+        drop(db);
+        assert_eq!(schema_of(&path).unwrap(), Some(SCHEMA_VERSION));
+    }
+
+    #[test]
+    fn a_newer_schema_can_still_be_copied() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("orchestrator.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch("CREATE TABLE future (x); INSERT INTO future VALUES (1);")
+                .unwrap();
+            conn.pragma_update(None, "user_version", 99).unwrap();
+        }
+        assert_eq!(schema_of(&path).unwrap(), Some(99));
+        let copy = dir.path().join("copy.db");
+        snapshot_file(&path, &copy).unwrap();
+        assert_eq!(schema_of(&copy).unwrap(), Some(99));
+        assert!(Database::open(&path).is_err(), "never migrated down");
     }
 
     #[test]

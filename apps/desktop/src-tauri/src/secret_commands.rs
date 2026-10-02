@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use tauri::State;
 
 /// Service the values are stored under (account `secret:<NAME>`).
-const SERVICE: &str = "dev.orchestrator.desktop";
+pub(crate) const SERVICE: &str = "dev.orchestrator.desktop";
 const MAX_NAME: usize = 64;
 
 fn entry(name: &str) -> Result<keyring::Entry, String> {
@@ -56,7 +56,7 @@ fn write_index(path: &Path, secrets: &[SecretEntry]) -> Result<(), String> {
         secrets: secrets.to_vec(),
     };
     let text = serde_json::to_string_pretty(&index).map_err(|e| e.to_string())?;
-    std::fs::write(path, text + "\n").map_err(|e| e.to_string())
+    crate::files::write_atomic(path, (text + "\n").as_bytes())
 }
 
 /// A name the AIs can write inside `{{secret:…}}`: letters, digits, `_`,
@@ -83,7 +83,13 @@ pub fn validate_name(name: &str) -> Result<String, String> {
 pub fn load(data_dir: &Path) -> (Secrets, Option<String>) {
     let entries = match read_index(&index_path(data_dir)) {
         Ok(entries) => entries,
-        Err(err) => return (Secrets::new(), Some(err)),
+        // The names are kept before the next save writes over them.
+        Err(err) => {
+            return (
+                Secrets::new(),
+                crate::files::guard(&index_path(data_dir), Some(err)),
+            )
+        }
     };
     let mut secrets = Secrets::new();
     let mut missing = Vec::new();

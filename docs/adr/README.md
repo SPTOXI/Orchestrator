@@ -26,5 +26,6 @@ adiciona algo fora dela, é registrada aqui **antes** de ser implementada.
 | [0019](./0019-instaladores-release-e-atualizacao.md) | Instaladores, release e atualização automática | Aceita |
 | [0020](./0020-acesso-total-da-ia.md) | Acesso total da IA: internet, APIs e segredos | Aceita |
 | [0021](./0021-configuracoes-assinaturas-offline-e-mcp.md) | Configurações, regras e skills, MCP, assinaturas por CLI e modelos offline | Aceita |
+| [0022](./0022-dados-preservados-nas-atualizacoes.md) | Os dados do usuário sobrevivem às atualizações | Aceita |
 
 Formato: Contexto → Decisão → Consequências.

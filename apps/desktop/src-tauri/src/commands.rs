@@ -91,6 +91,8 @@ pub struct AppInfo {
     /// Problem opening the database, if any.
     pub database_warning: Option<String>,
     pub default_shell: String,
+    /// What this start did to keep the data (ADR-0022).
+    pub data_notices: Vec<String>,
 }
 
 #[tauri::command]
@@ -107,5 +109,6 @@ pub fn app_info(state: State<'_, AppState>) -> AppInfo {
             .map_or_else(|| "(memória)".to_owned(), |p| p.display().to_string()),
         database_warning: state.store_warning.clone(),
         default_shell: state.runtime.shells().default_id().to_owned(),
+        data_notices: state.data_notices.clone(),
     }
 }

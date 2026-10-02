@@ -1017,3 +1017,50 @@ fn tasks_keep_their_dependencies_and_order() {
     );
     assert!(store.task_of_session(SessionId::new().as_str()).is_none());
 }
+
+#[test]
+fn a_backup_of_the_open_store_has_everything_and_reopens() {
+    let dir = tempfile::tempdir().unwrap();
+    let (store, _) = MemoryStore::open(&dir.path().join("orchestrator.db"));
+    record(&store, &opened("/p/kept", "kept", &["Rust"]));
+    let project = store.project_by_path("/p/kept").unwrap();
+    store
+        .memory_save(
+            MemoryInput {
+                id: None,
+                project_id: project.id.clone(),
+                kind: MemoryKind::Rule,
+                title: "Sempre testar".into(),
+                content: "Rodar os testes antes do commit".into(),
+                tags: vec![],
+                pinned: false,
+            },
+            &CallOrigin::User,
+        )
+        .unwrap();
+    let entries = store.memory_list(&project.id).unwrap().len();
+
+    let copy = dir
+        .path()
+        .join("backups")
+        .join("b1")
+        .join("orchestrator.db");
+    store.backup_to(&copy).unwrap();
+    // The store keeps working after the copy.
+    record(&store, &opened("/p/later", "later", &[]));
+
+    let (restored, warning) = MemoryStore::open(&copy);
+    assert!(warning.is_none());
+    let project = restored.project_by_path("/p/kept").unwrap();
+    assert_eq!(restored.memory_list(&project.id).unwrap().len(), entries);
+    assert!(restored
+        .memory_list(&project.id)
+        .unwrap()
+        .iter()
+        .any(|m| m.title == "Sempre testar"));
+    assert!(restored.project_by_path("/p/later").is_none());
+    // An in-memory store has nothing to copy.
+    assert!(MemoryStore::in_memory()
+        .backup_to(&dir.path().join("x.db"))
+        .is_err());
+}

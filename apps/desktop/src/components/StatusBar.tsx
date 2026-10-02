@@ -1,5 +1,6 @@
 // Bottom status bar.
 
+import { dataChip } from "../lib/backups";
 import { formatUsd } from "../lib/format";
 import type { AppInfo, BudgetView } from "../lib/types";
 import { Elapsed } from "./Activity";
@@ -26,6 +27,8 @@ interface Props {
   /** Something to do about updates ("Atualização 0.2.0"), if any (ADR-0019). */
   update: string | null;
   onOpenAbout: () => void;
+  /** Opens "Dados e backups" (ADR-0022). */
+  onOpenData: () => void;
 }
 
 export function StatusBar({
@@ -37,10 +40,12 @@ export function StatusBar({
   onOpenCost,
   update,
   onOpenAbout,
+  onOpenData,
   working = [],
   onOpenSession,
 }: Props) {
   const first = working[0];
+  const data = dataChip(info?.dataNotices ?? []);
   return (
     <footer className="status-bar">
       <span className={`status ${ready ? "ok" : "err"}`}>
@@ -82,6 +87,15 @@ export function StatusBar({
       {update && (
         <button className="status-link update" title="Abre Sobre e atualizações" onClick={onOpenAbout}>
           ⬆ {update}
+        </button>
+      )}
+      {data && (
+        <button
+          className={`status-link${data.warn ? " err" : ""}`}
+          title={`${(info?.dataNotices ?? []).join("\n")}\n— abre Dados e backups`}
+          onClick={onOpenData}
+        >
+          {data.text}
         </button>
       )}
       {info?.databaseWarning && (

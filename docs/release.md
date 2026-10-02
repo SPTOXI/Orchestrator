@@ -48,21 +48,55 @@ As chaves de API e o token do GitHub ficam no cofre do sistema.
 - **A consulta** manda ao GitHub só a versão, o sistema e a arquitetura.
 - **Instalar** (aba "Sobre e atualizações" → "Baixar e instalar…"):
   1. os agentes em execução param, com handoff, como em "Parar todos";
-  2. o pacote é baixado e a **assinatura é conferida** com a chave pública
+  2. é feito um **backup de todos os seus dados** (banco, configurações,
+     regras, skills) em `<app-data>/backups/`; sem ele, nada é instalado
+     (veja "Seus dados nas atualizações", abaixo);
+  3. o pacote é baixado e a **assinatura é conferida** com a chave pública
      embutida no app — uma assinatura errada é recusada e nada é
      instalado;
-  3. a instalação usa o mesmo tipo de pacote que você instalou: o
+  4. a instalação usa o mesmo tipo de pacote que você instalou: o
      instalador `.exe`/`.msi` no Windows (o app fecha e o instalador abre
      a versão nova), o `.app` no macOS, o AppImage, ou o `deb`/`rpm` pelo
      gerenciador de pacotes (que pode pedir a senha de administrador);
-  4. "Reiniciar agora" abre a versão nova. As sessões voltam encerradas,
-     com a conversa ("Retomar" continua).
+  5. "Reiniciar agora" abre a versão nova com tudo o que você tinha. As
+     sessões voltam encerradas, com a conversa ("Retomar" continua).
 - **O histórico** registra `APP_UPDATED` (de qual para qual versão, e se
   foi pelo app ou por um instalador) na primeira abertura da versão nova.
 - **Builds locais e de desenvolvimento** não procuram atualizações: só os
   instaladores do release trazem a chave pública. A aba diz isso.
 - `<app-data>/updates.json`:
   `{ "autoCheck": true, "lastVersion": "0.2.0", "pending": null }`.
+
+## Seus dados nas atualizações
+
+Atualizar não apaga nada do que você construiu
+([ADR-0022](./adr/0022-dados-preservados-nas-atualizacoes.md)). Sessões e
+conversas, histórico, memória dos projetos, decisões, tasks, conexões,
+assinaturas, regras, skills, servidores MCP e configurações ficam na pasta
+de dados (`<app-data>`), que nenhum instalador apaga. As chaves e os
+segredos ficam no cofre do sistema. Os seus projetos nunca são alterados
+por uma atualização.
+
+- **Backup antes de instalar.** O atualizador copia tudo para
+  `<app-data>/backups/` antes de baixar a versão nova. Se a cópia falhar
+  (disco cheio, por exemplo), a atualização não é instalada.
+- **Backup ao abrir uma versão nova** que veio por fora do atualizador
+  (instalador baixado, `dpkg -i`, voltar para uma versão anterior).
+- **Backup antes de migrar o banco.** Sem a cópia, o banco não é migrado
+  nem aberto: o app usa um banco em memória e avisa, e o arquivo fica
+  como estava.
+- **Configuração que a versão não lê** não é apagada: o original fica ao
+  lado como `<nome>.unreadable-<data>`, e a barra de status avisa.
+- **Gravação atômica:** os arquivos de configuração são gravados num
+  temporário e renomeados, então nunca ficam pela metade, nem quando o app
+  fecha para instalar.
+- **Restaurar:** Configurações → Dados e backups → Restaurar. O app
+  reinicia, guarda antes o estado atual (dá para desfazer) e põe o banco e
+  os arquivos do backup no lugar.
+- Os 5 backups automáticos mais recentes ficam guardados; os que você faz
+  em "Fazer backup agora" ficam até você apagar.
+- **Desinstalar** no Windows pergunta se você quer apagar também os dados
+  do app; a opção vem desmarcada, e uma atualização nunca a usa.
 
 ## Fazer um release
 

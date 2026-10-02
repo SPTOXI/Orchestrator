@@ -8,6 +8,8 @@ import { bundleLabel, checkedText, progressText } from "../lib/updates";
 import type { Updates } from "../lib/useUpdates";
 
 interface Props {
+  /** Opens "Dados e backups". */
+  onOpenData?: () => void;
   active: boolean;
   ready: boolean;
   info: AppInfo | null;
@@ -22,8 +24,8 @@ function releasesPage(endpoint: string | null): string | null {
   return match ? `${match[1]}/releases` : null;
 }
 
-export function AboutView({ active, ready, info, updates, liveAgents }: Props) {
-  const { status, progress, busy, error, checked } = updates;
+export function AboutView({ active, ready, info, updates, liveAgents, onOpenData }: Props) {
+  const { status, progress, busy, error, checked, backedUp } = updates;
   const [confirming, setConfirming] = useState(false);
   const available = status?.available ?? null;
   const releases = releasesPage(status?.endpoint ?? null);
@@ -106,8 +108,10 @@ export function AboutView({ active, ready, info, updates, liveAgents }: Props) {
               {status?.phase === "installed" ? (
                 <div className="inline-notice ok">
                   <p>
-                    A versão {available?.version ?? ""} foi instalada. Ela abre quando o Orchestrator reiniciar; as
-                    sessões voltam encerradas, com a conversa ("Retomar" continua).
+                    A versão {available?.version ?? ""} foi instalada. Ela abre quando o Orchestrator reiniciar com
+                    tudo o que você já tinha: projetos, histórico, memória, tasks, conexões e configurações; as sessões
+                    voltam encerradas, com a conversa ("Retomar" continua).
+                    {backedUp && ` Antes de instalar foi feito o backup "${backedUp}".`}
                   </p>
                   <button className="button small primary" onClick={() => void updates.restart()}>
                     Reiniciar agora
@@ -132,13 +136,17 @@ export function AboutView({ active, ready, info, updates, liveAgents }: Props) {
                       <span className="meta">
                         {progress && progress.downloaded > 0
                           ? `Baixando ${progressText(progress.downloaded, progress.total)}`
-                          : "Preparando…"}
+                          : backedUp
+                            ? "Backup dos seus dados feito; baixando…"
+                            : "Fazendo o backup dos seus dados…"}
                       </span>
                     </div>
                   ) : confirming ? (
                     <div className="inline-notice">
                       <p>
-                        O Orchestrator baixa a versão {available.version}, confere a assinatura e instala.
+                        O Orchestrator faz um backup dos seus dados, baixa a versão {available.version}, confere a
+                        assinatura e instala. Nada do que você construiu se perde: projetos, histórico, memória, tasks,
+                        conexões, regras, skills e configurações continuam na versão nova.
                         {liveAgents > 0 &&
                           ` ${liveAgents === 1 ? "O agente em execução para" : `Os ${liveAgents} agentes em execução param`} antes, com handoff.`}
                         {status?.os === "windows" && " O app fecha e o instalador abre a versão nova."}
@@ -168,6 +176,14 @@ export function AboutView({ active, ready, info, updates, liveAgents }: Props) {
               )}
             </>
           )}
+          <p className="meta">
+            Antes de cada atualização é feito um backup de todos os seus dados.{" "}
+            {onOpenData && (
+              <button className="link" onClick={onOpenData}>
+                Ver dados e backups
+              </button>
+            )}
+          </p>
           {releases && (
             <p className="meta">
               Os instaladores de cada versão também ficam na{" "}

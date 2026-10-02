@@ -288,9 +288,23 @@ no Rust; a webview não tem as permissões dele.
 | ------- | ---------- | ------- | --------- |
 | `update_status` | — | `UpdateStatus` (versão, commit, sistema, tipo de instalação, se o build procura atualizações e por que não, procura automática, última procura e erro, fase, versão disponível) | — |
 | `update_check` | — | `UpdateInfo \| null` (versão, data, notas); recusa em build sem a chave | — |
-| `update_install` | — | — ; para os agentes (com handoff), baixa, confere a assinatura e instala; o progresso chega por `runtime://update` | `AGENT_FINISHED` dos agentes parados; `APP_UPDATED` na abertura seguinte |
+| `update_install` | — | — ; para os agentes (com handoff), faz o backup dos dados (sem ele, recusa), baixa, confere a assinatura e instala; o progresso chega por `runtime://update` | `AGENT_FINISHED` dos agentes parados; `APP_UPDATED` na abertura seguinte |
 | `update_restart` | — | reinicia o app (abre a versão instalada) | — |
 | `update_settings_save` | `autoCheck` | `UpdateStatus` | — |
+
+### Dados e backups (ADR-0022)
+
+Referência: [ADR-0022](./adr/0022-dados-preservados-nas-atualizacoes.md).
+
+| Comando | Argumentos | Retorno | Histórico |
+| ------- | ---------- | ------- | --------- |
+| `backup_status` | — | `BackupStatus` (pasta de dados e de backups, quantos automáticos ficam, backups do mais novo ao mais antigo, avisos da abertura) | — |
+| `backup_create` | `label?` | `BackupStatus`; banco por `VACUUM INTO`, configurações e skills | — |
+| `backup_delete` | `id` | `BackupStatus` | — |
+| `backup_restore` | `id` | — ; para os agentes (com handoff) e reinicia; a abertura seguinte guarda o estado atual e restaura | `AGENT_FINISHED` dos agentes parados |
+
+`app_info.dataNotices` traz o que a abertura fez com os dados (backup,
+restauração, arquivo guardado como `.unreadable-…`).
 
 ## Eventos
 
@@ -298,7 +312,7 @@ no Rust; a webview não tem as permissões dele.
 | ------ | ------- | --- |
 | `runtime://stream` | `StreamEvent` | saída de terminal/processo ao vivo, término; eventos de sessão de provider |
 | `runtime://audit` | `AuditEvent` | painel HISTORY, atualização de listas e do explorer |
-| `runtime://update` | `UpdateEvent` (`checked`, `available`, `progress`, `installed`, `failed`) | aba "Sobre e atualizações" e chip da barra de status (Fase 12) |
+| `runtime://update` | `UpdateEvent` (`checked`, `available`, `backedUp`, `progress`, `installed`, `failed`) | aba "Sobre e atualizações" e chip da barra de status (Fase 12) |
 | `runtime://offline` | `OfflineEvent` (`progress`, `done`, `failed`) | downloads de modelos offline (ADR-0021) |
 
 `StreamEvent`:
@@ -357,6 +371,11 @@ entrada "Stack" da memória) seguem o mesmo caminho
 - Agentes e as travas de arquivo ficam no banco (migração 4, ADR-0015), e a
   configuração deles em `<app-data>/agents.json`. Ao abrir o app, agentes
   que ficaram em execução são encerrados e as travas, liberadas.
+- Backups ficam em `<app-data>/backups/` (ADR-0022): antes de uma
+  atualização, ao abrir uma versão nova, antes de migrar o banco e quando
+  o usuário pede. Os arquivos de configuração são gravados de forma
+  atômica, e um que não pôde ser lido é guardado como
+  `<nome>.unreadable-<data>` antes de qualquer gravação.
 - Se o arquivo não abrir, o app usa um banco em memória e avisa
   (`app_info.databaseWarning`, na barra de status; o rodapé do HISTORY
   mostra `banco: (memória)`).

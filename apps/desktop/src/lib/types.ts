@@ -471,6 +471,8 @@ export interface AppInfo {
   database: string;
   databaseWarning: string | null;
   defaultShell: string;
+  /** What this start did to keep the data: backups, a restore, files kept aside (ADR-0022). */
+  dataNotices: string[];
 }
 
 // ------------------------------------------------------------- providers ---
@@ -1675,6 +1677,7 @@ export interface UpdateStatus {
 export type UpdateEvent =
   | { kind: "checked" }
   | { kind: "available"; info: UpdateInfo }
+  | { kind: "backedUp"; id: string; label: string }
   | { kind: "progress"; downloaded: number; total: number | null }
   | { kind: "installed"; version: string }
   | { kind: "failed"; message: string };
@@ -1844,4 +1847,31 @@ export interface CliStatus {
   loginHint: string;
   suggestedModels: string[];
   settings: CliSettings;
+}
+
+// ---- Data and backups (ADR-0022) ---------------------------------------
+
+export type BackupReason = "manual" | "update" | "newVersion" | "migration" | "beforeRestore";
+
+export interface BackupInfo {
+  /** Folder name in `backups/`. */
+  id: string;
+  createdAt: string;
+  reason: BackupReason;
+  label: string;
+  appVersion: string;
+  /** Database schema in it; null = no database yet. */
+  schema: number | null;
+  /** Settings files, `skills/…` included. */
+  files: string[];
+  sizeBytes: number;
+}
+
+export interface BackupStatus {
+  dataDir: string;
+  backupsDir: string;
+  keepAutomatic: number;
+  /** Newest first. */
+  backups: BackupInfo[];
+  notices: string[];
 }
