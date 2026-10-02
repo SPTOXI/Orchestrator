@@ -66,7 +66,7 @@ fn missing_secret(name: &str, secrets: &Secrets) -> ToolError {
     };
     ToolError::invalid_args(format!(
         "the secret \"{name}\" does not exist ({known}). The user saves secrets in the Orchestrator: \
-         Autonomia tab, \"Segredos\"."
+         Configurações tab, \"Políticas e segredos\" (or the Autonomia chip)."
     ))
 }
 

@@ -9,6 +9,10 @@ import { invoke, isTauri as detectTauri } from "@tauri-apps/api/core";
 import type {
   BudgetView,
   SecretsView,
+  GuidanceSettings,
+  GuidanceView,
+  SkillDoc,
+  SkillInfo,
   SpendReport,
   AppInfo,
   ContextOptions,
@@ -420,6 +424,18 @@ export const secretsApi = {
   list: () => invoke<SecretsView>("secrets_list"),
   save: (name: string, value: string) => invoke<SecretsView>("secret_save", { name, value }),
   remove: (name: string) => invoke<SecretsView>("secret_delete", { name }),
+};
+
+export const guidanceApi = {
+  get: () => invoke<GuidanceView>("guidance_get"),
+  saveSettings: (settings: GuidanceSettings) => invoke<GuidanceSettings>("guidance_settings_save", { settings }),
+  saveRules: (text: string) => invoke<void>("rules_save", { text }),
+  skill: (name: string) => invoke<SkillDoc>("skill_get", { name }),
+  saveSkill: (skill: { name: string; description: string; body: string; previousName: string | null }) =>
+    invoke<SkillInfo>("skill_save", { skill }),
+  deleteSkill: (name: string) => invoke<void>("skill_delete", { name }),
+  setSkillEnabled: (name: string, enabled: boolean) =>
+    invoke<GuidanceSettings>("skill_set_enabled", { name, enabled }),
 };
 
 export const githubApi = {

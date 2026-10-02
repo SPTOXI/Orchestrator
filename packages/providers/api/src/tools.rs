@@ -127,7 +127,7 @@ pub fn capabilities_note(tools: &[ToolDefinition]) -> Option<String> {
              secrets.list gives their names, and you use one by writing {{secret:NAME}} in a URL, header or \
              body (or in an env value of shell.execute). You never see the value; never ask the user to paste \
              a key in the chat. If the service needs a secret that is not saved, say which one and ask the \
-             user to add it in the Autonomia tab, \"Segredos\".",
+             user to add it in Configurações, \"Políticas e segredos\".",
         );
     }
     if has(&["github."]) {
@@ -410,7 +410,7 @@ mod tests {
             "{note}"
         );
         assert!(note.contains("never refuse in advance") && note.contains("{{secret:NAME}}"));
-        assert!(note.contains("Conectar ao GitHub") && note.contains("Segredos"));
+        assert!(note.contains("Conectar ao GitHub") && note.contains("Políticas e segredos"));
         assert!(!note.contains("run any command"), "{note}");
         // The connection test's ping, or no tools: nothing to say.
         assert_eq!(capabilities_note(&[ping_tool()]), None);

@@ -3180,3 +3180,190 @@ input.narrow {
   flex: 1 1 200px;
   min-width: 0;
 }
+
+/* Collapsible sidebar sections. */
+.collapsible-head {
+  gap: 6px;
+}
+
+.collapsible-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.collapsible-toggle:hover {
+  color: var(--text);
+}
+
+.collapsible-title {
+  flex: none;
+}
+
+.collapsible-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+
+.provider-card .card-toggle {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  display: inline-flex;
+}
+
+/* ------------------------------------------------ Configurações -- */
+
+.settings-view {
+  flex-direction: row;
+}
+
+.settings-nav {
+  flex: none;
+  width: 210px;
+  overflow: auto;
+  padding: 8px 0 16px;
+  border-right: 1px solid var(--border);
+  background: var(--bg-deep);
+}
+
+.settings-group {
+  padding: 10px 14px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+}
+
+.settings-link {
+  display: block;
+  width: 100%;
+  padding: 5px 14px 5px 18px;
+  border: 0;
+  border-left: 2px solid transparent;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-link:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.04));
+}
+
+.settings-link.active {
+  border-left-color: var(--accent);
+  background: rgba(255, 255, 255, 0.06);
+  font-weight: 600;
+}
+
+.settings-content,
+.settings-embedded {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.settings-embedded[hidden] {
+  display: none;
+}
+
+.settings-view .task-body section > h3 {
+  margin: 0 0 4px;
+  font-size: 13px;
+}
+
+.check-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 13px;
+}
+
+.list.plain {
+  margin: 6px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rules-text {
+  width: 100%;
+  min-height: 220px;
+  margin: 8px 0;
+  box-sizing: border-box;
+  resize: vertical;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 8px 10px;
+  line-height: 1.45;
+}
+
+.skill-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.skill-item.off .title,
+.skill-item.off .meta {
+  opacity: 0.6;
+}
+
+.skill-item input[type="checkbox"] {
+  margin-top: 3px;
+}
+
+textarea.skill-body {
+  min-height: 260px;
+}
+
+.skill-preview {
+  max-height: 360px;
+  overflow: auto;
+  padding: 8px 10px;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  white-space: pre-wrap;
+  font-size: 12px;
+}
+
+.link.danger {
+  color: var(--err);
+}
+
+.inline-notice.ok {
+  background: rgba(63, 185, 80, 0.1);
+  border-color: rgba(63, 185, 80, 0.35);
+}
+
+.activity.settings-activity {
+  margin-top: auto;
+  margin-bottom: 6px;
+}

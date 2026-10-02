@@ -15,12 +15,14 @@ import { HandoffView } from "./components/HandoffView";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { MemoryPanel } from "./components/MemoryPanel";
 import { TasksPanel } from "./components/TasksPanel";
+import { type SettingsSection, SettingsView } from "./components/SettingsView";
 import { TaskView } from "./components/TaskView";
 import { type MemorySection, MemoryView } from "./components/MemoryView";
 import {
   AgentsIcon,
   CloseIcon,
   FolderIcon,
+  GearIcon,
   GitIcon,
   HistoryIcon,
   MemoryIcon,
@@ -95,16 +97,13 @@ type Tab =
   | { id: string; kind: "task"; taskId: string | null; nonce: number }
   /** Agent Board: the tasks of the project in columns (ADR-0015). */
   | { id: "board"; kind: "board" }
-  /** Mode, requests, rules and pause (ADR-0016). */
-  | { id: "autonomy"; kind: "autonomy" }
   /** A pull request; `number` null is the form of a new one (ADR-0017). */
   | { id: string; kind: "pr"; number: number | null; nonce: number }
-  /** GitHub connection: token and server (ADR-0017). */
-  | { id: "github"; kind: "github" }
   /** What the AIs spent (ADR-0018). */
   | { id: "cost"; kind: "cost" }
-  /** This copy of the app and its updates (ADR-0019). */
-  | { id: "about"; kind: "about" };
+  /** "Configurações" (ADR-0021): rules, skills, policies, MCP, CLIs, offline
+   * models, GitHub, about. A single tab. */
+  | { id: "settings"; kind: "settings" };
 
 const ACTIVITIES: Array<{ id: PanelId; label: string; icon: () => ReactNode }> = [
   { id: "project", label: "PROJECT", icon: FolderIcon },
@@ -162,16 +161,12 @@ function tabTitle(tab: Tab, sessions: Map<string, SessionInfo>, connections: Con
       return tab.taskId ? "Task" : "Nova task";
     case "board":
       return "Agent Board";
-    case "autonomy":
-      return "Autonomia";
     case "pr":
       return tab.number === null ? "Novo pull request" : `PR #${tab.number}`;
-    case "github":
-      return "GitHub";
     case "cost":
       return "Tokens e custo";
-    case "about":
-      return "Sobre e atualizações";
+    case "settings":
+      return "Configurações";
     case "connection":
       if (!tab.connectionId) return "Nova API";
       return `API · ${connections?.connections.find((c) => c.connection.id === tab.connectionId)?.connection.name ?? tab.connectionId}`;
@@ -377,16 +372,22 @@ export function App() {
   };
   /** The Agent Board is a single tab (section 25). */
   const openBoard = () => showTab({ id: "board", kind: "board" });
-  /** The autonomy tab is a single tab (ADR-0016). */
-  const openAutonomy = () => showTab({ id: "autonomy", kind: "autonomy" });
+  /** Configurações is a single tab; the older tabs are sections of it
+   * (ADR-0021). */
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("rules");
+  const openSettings = (section?: SettingsSection) => {
+    if (section) setSettingsSection(section);
+    showTab({ id: "settings", kind: "settings" });
+  };
+  const openAutonomy = () => openSettings("policies");
   /** One tab per pull request; the new-PR form has its own (ADR-0017). */
   const openPull = (number: number | null) =>
     showTab({ id: number === null ? "pr:new" : `pr:${number}`, kind: "pr", number, nonce: Date.now() });
-  const openGitHub = () => showTab({ id: "github", kind: "github" });
+  const openGitHub = () => openSettings("github");
   /** Tokens and cost (ADR-0018). */
   const openCost = () => showTab({ id: "cost", kind: "cost" });
   /** About and updates (ADR-0019). */
-  const openAbout = () => showTab({ id: "about", kind: "about" });
+  const openAbout = () => openSettings("about");
   const providerName = (id: string) => providers.view?.providers.find((p) => p.id === id)?.name ?? id;
   const pauseAgent = async (id: string, paused: boolean) => {
     if (paused) await agentApi.resume(id);
@@ -661,6 +662,14 @@ export function App() {
               {id === "providers" && runningSessions > 0 && <span className="activity-badge">{runningSessions}</span>}
             </button>
           ))}
+          <button
+            className={`activity settings-activity ${tabs.some((t) => t.id === "settings") && activeTab === "settings" ? "active" : ""}`}
+            title="Configurações"
+            aria-label="Configurações"
+            onClick={() => openSettings()}
+          >
+            <GearIcon />
+          </button>
         </nav>
         <aside className="sidebar">{sidebar}</aside>
         <main className="main" style={{ gridTemplateRows: `minmax(0, 1fr) 5px ${bottomHeight}px` }}>
@@ -890,25 +899,52 @@ export function App() {
                       }}
                     />
                   );
-                case "github":
+                case "settings":
                   return (
-                    <GitHubView
+                    <SettingsView
                       key={tab.id}
-                      active={active}
                       ready={ready}
-                      repo={profile?.path ?? undefined}
-                      onChanged={() => setGithubNonce(Date.now())}
-                    />
-                  );
-                case "about":
-                  return (
-                    <AboutView
-                      key={tab.id}
                       active={active}
-                      ready={ready}
-                      info={info}
-                      updates={updates}
-                      liveAgents={agents.list.filter((a) => a.status === "RUNNING" || a.status === "QUEUED").length}
+                      section={settingsSection}
+                      onSection={setSettingsSection}
+                      embedded={(section, shown) => {
+                        switch (section) {
+                          case "policies":
+                            return (
+                              <AutonomyView
+                                active={shown}
+                                ready={ready}
+                                projectName={projectId ? (profile?.name ?? null) : null}
+                                autonomy={autonomy}
+                              />
+                            );
+                          case "context":
+                            return <ContextView ready={ready} active={shown} request={{}} nonce={0} />;
+                          case "github":
+                            return (
+                              <GitHubView
+                                active={shown}
+                                ready={ready}
+                                repo={profile?.path ?? undefined}
+                                onChanged={() => setGithubNonce(Date.now())}
+                              />
+                            );
+                          case "about":
+                            return (
+                              <AboutView
+                                active={shown}
+                                ready={ready}
+                                info={info}
+                                updates={updates}
+                                liveAgents={
+                                  agents.list.filter((a) => a.status === "RUNNING" || a.status === "QUEUED").length
+                                }
+                              />
+                            );
+                          default:
+                            return null;
+                        }
+                      }}
                     />
                   );
                 case "cost":
@@ -920,16 +956,6 @@ export function App() {
                       projectName={projectId ? (profile?.name ?? null) : null}
                       providerName={providerName}
                       onOpenAgents={() => setPanel("agents")}
-                    />
-                  );
-                case "autonomy":
-                  return (
-                    <AutonomyView
-                      key={tab.id}
-                      active={active}
-                      ready={ready}
-                      projectName={projectId ? (profile?.name ?? null) : null}
-                      autonomy={autonomy}
                     />
                   );
                 case "handoff":

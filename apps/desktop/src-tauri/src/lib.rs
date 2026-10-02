@@ -12,6 +12,7 @@ mod commands;
 mod context_commands;
 mod cost_commands;
 mod github_commands;
+mod guidance_commands;
 mod memory_commands;
 mod persistence;
 mod provider_commands;
@@ -24,8 +25,8 @@ mod vault;
 use orchestrator_agents::{AgentDeps, AgentService, AgentSlot, AgentTools, LockManager};
 use orchestrator_core::{AuditEvent, EventSink, StreamEvent};
 use orchestrator_engine::{
-    AutonomyGate, AutonomyService, ContextBuilder, EngineTools, HandoffService, StoreSessions,
-    TaskService,
+    AutonomyGate, AutonomyService, ContextBuilder, EngineTools, GuidanceService, GuidedContext,
+    HandoffService, SkillTools, StoreSessions, TaskService,
 };
 use orchestrator_memory::{HistoryQuery, MemoryStore};
 use orchestrator_provider_api::ConnectionManager;
@@ -118,6 +119,8 @@ pub struct AppState {
     /// Problem loading `github.json` or reading the token, if any
     /// (ADR-0017).
     pub github_warning: Option<String>,
+    /// Development rules and skills (ADR-0021).
+    pub guidance: Arc<GuidanceService>,
     pub sink: Arc<DesktopSink>,
     pub data_dir: PathBuf,
 }
@@ -264,16 +267,27 @@ pub fn run() {
             autonomy.set_workdir(Arc::new(move || base.base_dir()));
             let locks = Arc::new(LockManager::new(store.clone()));
             let agent_slot = AgentSlot::new();
+            // Development rules and skills (ADR-0021).
+            let (guidance, guidance_warning) = GuidanceService::new(&data_dir);
+            let guidance = Arc::new(guidance);
+            if let Some(warning) = &guidance_warning {
+                eprintln!("[orchestrator] {warning}");
+            }
             let tools = AutonomyGate::new(
-                Arc::new(AgentTools::new(
-                    Arc::new(EngineTools::new(
-                        Arc::new(RuntimeTools(runtime.clone())),
+                Arc::new(SkillTools::new(
+                    Arc::new(AgentTools::new(
+                        Arc::new(EngineTools::new(
+                            Arc::new(RuntimeTools(runtime.clone())),
+                            store.clone(),
+                            sink.clone(),
+                        )),
                         store.clone(),
+                        locks.clone(),
+                        agent_slot.clone(),
                         sink.clone(),
                     )),
+                    guidance.clone(),
                     store.clone(),
-                    locks.clone(),
-                    agent_slot.clone(),
                     sink.clone(),
                 )),
                 autonomy.clone(),
@@ -291,7 +305,11 @@ pub fn run() {
             if let Some(warning) = &context_warning {
                 eprintln!("[orchestrator] {warning}");
             }
-            sessions.set_context_source(builder.clone());
+            // The project context plus the rules and skills (ADR-0021).
+            sessions.set_context_source(Arc::new(GuidedContext::new(
+                builder.clone(),
+                guidance.clone(),
+            )));
             sessions.set_compaction(builder.settings().compaction);
             let handoffs = HandoffService::new(
                 sessions.clone(),
@@ -349,6 +367,7 @@ pub fn run() {
                 autonomy,
                 autonomy_warning,
                 github_warning,
+                guidance,
                 sink,
                 data_dir,
             });
@@ -416,6 +435,13 @@ pub fn run() {
             context_commands::handoff_start,
             context_commands::handoffs_list,
             context_commands::handoff_get,
+            guidance_commands::guidance_get,
+            guidance_commands::guidance_settings_save,
+            guidance_commands::rules_save,
+            guidance_commands::skill_get,
+            guidance_commands::skill_save,
+            guidance_commands::skill_delete,
+            guidance_commands::skill_set_enabled,
             cost_commands::spend_report,
             cost_commands::agents_budget,
             cost_commands::session_compact,

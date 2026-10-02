@@ -51,8 +51,17 @@ impl ToolExecutor for AutonomyGate {
         if !matches!(call.origin, CallOrigin::Agent { .. }) {
             return self.inner.execute_with(call, cancel).await;
         }
-        // An unknown tool changes nothing; the executor says it is unknown.
-        let Some(read_only) = self.service.read_only(&call.tool) else {
+        // Tools can appear after startup (MCP servers, ADR-0021): an
+        // unknown name is looked up again before it is let through. One
+        // still unknown changes nothing; the executor says it is unknown.
+        let read_only = match self.service.read_only(&call.tool) {
+            Some(read_only) => Some(read_only),
+            None => {
+                self.service.learn_tools(&self.inner.tools());
+                self.service.read_only(&call.tool)
+            }
+        };
+        let Some(read_only) = read_only else {
             return self.inner.execute_with(call, cancel).await;
         };
         let started = Utc::now();

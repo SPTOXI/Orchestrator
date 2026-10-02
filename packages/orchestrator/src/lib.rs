@@ -14,11 +14,15 @@
 //! - [`AutonomyGate`] / [`AutonomyService`]: Assisted, Autonomous and
 //!   Unrestricted, the requests for the user's authorization and the pause
 //!   (ADR-0016).
+//! - [`GuidanceService`] / [`GuidedContext`] / [`SkillTools`]: development
+//!   rules and skills in every session's instructions, `skill.read`
+//!   (ADR-0021).
 //!
 //! Depends on `core`, `providers`, `memory` and `git`; the app wires it.
 
 pub mod autonomy;
 mod builder;
+mod guidance;
 mod handoff;
 pub mod packet;
 mod persistence;
@@ -32,6 +36,10 @@ pub use autonomy::{
     SessionGrant, Trial, TrialTarget, Workdir,
 };
 pub use builder::{BuildRequest, ContextBuilder, ContextPack, ContextSection, SectionKind};
+pub use guidance::{
+    project_rule_files, GuidanceService, GuidanceSettings, GuidanceView, GuidedContext, RuleFile,
+    SkillDoc, SkillInfo, SkillInput, SkillSource, SkillTools, MAX_USER_RULES, PROJECT_RULE_FILES,
+};
 pub use handoff::{
     CreateRequest, HandoffDraft, HandoffService, PrepareRequest, PreviewRequest, StartHandoff,
     StartedHandoff,

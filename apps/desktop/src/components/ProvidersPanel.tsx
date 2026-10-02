@@ -12,8 +12,10 @@ import type { Connections } from "../lib/useConnections";
 import type { Council } from "../lib/useCouncil";
 import type { ProviderHealth, Providers } from "../lib/useProviders";
 import type { ConnectionView, ProviderCapabilities, ProviderInfo, SessionInfo, SessionStatus } from "../lib/types";
+import { usePersistentToggle } from "../lib/usePersistentToggle";
 import { Elapsed } from "./Activity";
-import { EditIcon, PlusIcon, RefreshIcon } from "./icons";
+import { Collapsible } from "./Collapsible";
+import { ChevronIcon, EditIcon, PlusIcon, RefreshIcon } from "./icons";
 
 interface Props {
   ready: boolean;
@@ -93,9 +95,18 @@ function ProviderCard({
   const available = health && "status" in health ? health.status.available : null;
   const caps = provider.capabilities;
   const missingKey = connection && connection.key.source !== "none" && !connection.key.present;
+  const [open, setOpen] = usePersistentToggle(`provider.${provider.id}`, false);
   return (
     <li className={`provider-card ${provider.active ? "active" : ""}`}>
       <div className="row">
+        <button
+          className="card-toggle"
+          title={open ? "Recolher detalhes" : "Mostrar detalhes"}
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+        >
+          <ChevronIcon open={open} />
+        </button>
         <span className={`dot ${available === null ? "" : available ? "ok" : "err"}`} />
         <strong className="grow ellipsis" title={provider.description}>
           {provider.name}
@@ -116,25 +127,32 @@ function ProviderCard({
           </button>
         )}
       </div>
-      <div className="meta mono ellipsis" title={connection?.connection.baseUrl}>
-        {provider.id} · {provider.vendor}
-        {caps.defaultModel ? ` · ${caps.defaultModel}` : ""}
-      </div>
-      <div className="meta">
-        {caps.models.length} {caps.models.length === 1 ? "modelo" : "modelos"}
-        {connection && ` · ferramentas ${TOOL_MODES[connection.connection.toolMode ?? (connection.connection.kind === "generic" ? "prompt" : "native")]}`}
-      </div>
+      {!open && caps.defaultModel && <div className="meta mono ellipsis">{caps.defaultModel}</div>}
+      {open && (
+        <>
+          <div className="meta mono ellipsis" title={connection?.connection.baseUrl}>
+            {provider.id} · {provider.vendor}
+            {caps.defaultModel ? ` · ${caps.defaultModel}` : ""}
+          </div>
+          <div className="meta">
+            {caps.models.length} {caps.models.length === 1 ? "modelo" : "modelos"}
+            {connection && ` · ferramentas ${TOOL_MODES[connection.connection.toolMode ?? (connection.connection.kind === "generic" ? "prompt" : "native")]}`}
+          </div>
+        </>
+      )}
       {missingKey && (
         <div className="meta err-text">{connection.key.detail ?? "sem chave de API — edite a conexão"}</div>
       )}
-      <HealthLine health={health} />
-      <div className="chip-list">
-        {CAPABILITY_LABELS.filter(([key]) => caps[key] === true).map(([key, label]) => (
-          <span key={key} className="tag small">
-            {label}
-          </span>
-        ))}
-      </div>
+      {(open || available === false) && <HealthLine health={health} />}
+      {open && (
+        <div className="chip-list">
+          {CAPABILITY_LABELS.filter(([key]) => caps[key] === true).map(([key, label]) => (
+            <span key={key} className="tag small">
+              {label}
+            </span>
+          ))}
+        </div>
+      )}
     </li>
   );
 }
@@ -325,27 +343,28 @@ export function ProvidersPanel({
             </button>
           </div>
         )}
-        <ul className="list provider-list">
-          {list.map((provider) => (
-            <ProviderCard
-              key={provider.id}
-              provider={provider}
-              health={providers.health[provider.id]}
-              connection={byId.get(provider.id)}
-              onSelect={() => void providers.select(provider.id)}
-              onInspect={() => void providers.inspect(provider.id)}
-              onEdit={byId.has(provider.id) ? () => onEditConnection(provider.id) : null}
-            />
-          ))}
-        </ul>
         {list.length > 0 && (
-          <button className="link add-connection" disabled={!ready} onClick={() => onEditConnection(null)}>
-            + Adicionar API
-          </button>
+          <Collapsible id="providers.list" title={`IAs (${list.length})`} summary={list.find((p) => p.active)?.name}>
+            <ul className="list provider-list">
+              {list.map((provider) => (
+                <ProviderCard
+                  key={provider.id}
+                  provider={provider}
+                  health={providers.health[provider.id]}
+                  connection={byId.get(provider.id)}
+                  onSelect={() => void providers.select(provider.id)}
+                  onInspect={() => void providers.inspect(provider.id)}
+                  onEdit={byId.has(provider.id) ? () => onEditConnection(provider.id) : null}
+                />
+              ))}
+            </ul>
+            <button className="link add-connection" disabled={!ready} onClick={() => onEditConnection(null)}>
+              + Adicionar API
+            </button>
+          </Collapsible>
         )}
         {disabled.length > 0 && (
-          <>
-            <div className="section-title">Conexões desativadas</div>
+          <Collapsible id="providers.disabled" title={`Conexões desativadas (${disabled.length})`} defaultOpen={false}>
             <ul className="list">
               {disabled.map(({ connection }) => (
                 <li key={connection.id} className="list-item" onClick={() => onEditConnection(connection.id)}>
@@ -358,17 +377,20 @@ export function ProvidersPanel({
                 </li>
               ))}
             </ul>
-          </>
+          </Collapsible>
         )}
 
         {list.length > 0 && (
-          <>
-            <div className="section-title row">
-              <span className="grow">Conselho</span>
+          <Collapsible
+            id="providers.council"
+            title="Conselho"
+            summary={council.view ? MODE_LABELS[council.view.settings.mode] : null}
+            actions={
               <button className="link" disabled={!ready} onClick={onOpenCouncil}>
                 Configurar
               </button>
-            </div>
+            }
+          >
             <div className="council-summary">
               {council.error && <div className="meta err-text">{council.error}</div>}
               {council.view && (
@@ -388,7 +410,7 @@ export function ProvidersPanel({
                 Nova sessão com o Conselho
               </button>
             </div>
-          </>
+          </Collapsible>
         )}
 
         <div className="section-title">Sessões {sessions.length > 0 && `(${sessions.length})`}</div>

@@ -1678,3 +1678,47 @@ export type UpdateEvent =
   | { kind: "progress"; downloaded: number; total: number | null }
   | { kind: "installed"; version: string }
   | { kind: "failed"; message: string };
+
+// ---- Development rules and skills (ADR-0021) ----------------------------
+
+export interface GuidanceSettings {
+  rulesEnabled: boolean;
+  projectRuleFiles: boolean;
+  skillsEnabled: boolean;
+  projectSkills: boolean;
+  claudeUserSkills: boolean;
+  disabledSkills: string[];
+}
+
+export type SkillSource = "orchestrator" | "project" | "claudeUser";
+
+export interface SkillInfo {
+  name: string;
+  description: string;
+  source: SkillSource;
+  path: string;
+  enabled: boolean;
+  shadowed: boolean;
+}
+
+export interface SkillDoc extends SkillInfo {
+  body: string;
+  files: string[];
+}
+
+export interface RuleFile {
+  name: string;
+  path: string;
+  chars: number;
+  truncated: boolean;
+}
+
+export interface GuidanceView {
+  settings: GuidanceSettings;
+  userRules: string;
+  rulesPath: string;
+  skillsDir: string;
+  projectFiles: RuleFile[];
+  skills: SkillInfo[];
+  projectPath: string | null;
+}
