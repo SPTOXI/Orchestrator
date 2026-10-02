@@ -382,6 +382,16 @@ impl ApiProvider {
         model
     }
 
+    /// The connection's tool mode, except that a model marked without
+    /// tool calls (a small local model, say) gets the tools by prompt
+    /// instead of a request the API would refuse.
+    fn mode_for(&self, model: &ModelEntry) -> ToolMode {
+        match self.conn.tool_mode() {
+            ToolMode::Native if model.supports_tools == Some(false) => ToolMode::Prompt,
+            mode => mode,
+        }
+    }
+
     /// Usage plus cost from the prices of the model that answered
     /// (ADR-0018): `model` here, or the fallback's.
     pub(crate) fn priced(&self, model: &ModelEntry, reply: &Reply) -> TokenUsage {
@@ -428,7 +438,7 @@ impl ApiProvider {
             .or_else(|| self.conn.default_model_id())
             .ok_or_else(|| ProviderError::invalid("this connection has no model"))?;
         let model = self.model_entry(&model_id);
-        let mode = self.conn.tool_mode();
+        let mode = self.mode_for(&model);
         let definitions = if mode == ToolMode::None {
             Vec::new()
         } else {
@@ -738,7 +748,7 @@ impl ApiProvider {
             )));
         }
 
-        let mode = self.conn.tool_mode();
+        let mode = self.mode_for(&model);
         if mode == ToolMode::None {
             return Ok(());
         }

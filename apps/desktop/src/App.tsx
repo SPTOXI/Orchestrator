@@ -15,7 +15,9 @@ import { HandoffView } from "./components/HandoffView";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { MemoryPanel } from "./components/MemoryPanel";
 import { TasksPanel } from "./components/TasksPanel";
-import { type SettingsSection, SettingsView } from "./components/SettingsView";
+import { OfflineSection } from "./components/OfflineSection";
+import { type SettingsSection, SettingsPage, SettingsView } from "./components/SettingsView";
+import { terminalRequests } from "./lib/terminalRequests";
 import { TaskView } from "./components/TaskView";
 import { type MemorySection, MemoryView } from "./components/MemoryView";
 import {
@@ -181,6 +183,8 @@ export function App() {
   const [opening, setOpening] = useState(false);
   const [panel, setPanel] = useState<PanelId>("project");
   const [bottomTab, setBottomTab] = useState<BottomTab>("terminal");
+  // A command run from elsewhere (install, login) shows in the terminal.
+  useEffect(() => terminalRequests.subscribe(() => setBottomTab("terminal")), []);
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const [dirtyFiles, setDirtyFiles] = useState<Set<string>>(new Set());
@@ -920,6 +924,20 @@ export function App() {
                             );
                           case "context":
                             return <ContextView ready={ready} active={shown} request={{}} nonce={0} />;
+                          case "offline":
+                            return (
+                              <SettingsPage title="Modelos offline">
+                                <OfflineSection
+                                  ready={ready}
+                                  active={shown}
+                                  onOpenConnection={(id) => {
+                                    void providers.refresh();
+                                    void connections.refresh();
+                                    editConnection(id);
+                                  }}
+                                />
+                              </SettingsPage>
+                            );
                           case "github":
                             return (
                               <GitHubView

@@ -83,6 +83,7 @@ fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
 pub enum Method {
     Get,
     Post,
+    Delete,
 }
 
 /// A fully built request. Headers may carry the API key: never log them.
@@ -110,6 +111,15 @@ impl HttpCall {
             url,
             headers: Vec::new(),
             body: None,
+        }
+    }
+
+    pub fn delete(url: String, body: Value) -> Self {
+        Self {
+            method: Method::Delete,
+            url,
+            headers: Vec::new(),
+            body: Some(body),
         }
     }
 
@@ -204,6 +214,7 @@ impl HttpClient {
         let mut request = match call.method {
             Method::Get => self.client.get(&call.url),
             Method::Post => self.client.post(&call.url),
+            Method::Delete => self.client.delete(&call.url),
         };
         for (name, value) in &call.headers {
             request = request.header(name, value);
@@ -450,7 +461,7 @@ impl SseState {
     }
 }
 
-async fn read_all(
+pub(crate) async fn read_all(
     response: reqwest::Response,
     cancel: &CancellationToken,
 ) -> Result<String, ProviderError> {

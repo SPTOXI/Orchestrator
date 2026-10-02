@@ -6,6 +6,7 @@ import { streamEvents } from "../lib/events";
 import { baseName } from "../lib/format";
 import { OutputSync } from "../lib/outputSync";
 import { errorMessage, terminalApi } from "../lib/runtime";
+import { terminalRequests } from "../lib/terminalRequests";
 import type { ShellList, TerminalInfo } from "../lib/types";
 import { CloseIcon, PlusIcon } from "./icons";
 import { XTermView } from "./XTermView";
@@ -71,6 +72,27 @@ export function TerminalPanel({ ready, visible, terminals, loaded, shells, works
         setError(errorMessage(e));
       }
     },
+    [workspace],
+  );
+
+  // A command another part of the UI asked to run: a new terminal with it.
+  useEffect(
+    () =>
+      terminalRequests.subscribe((command) => {
+        void (async () => {
+          setError(null);
+          try {
+            const info = await terminalApi.create({ cwd: workspace || undefined });
+            pendingId.current = info.id;
+            setActiveId(info.id);
+            // Give the shell a moment to print its prompt.
+            await new Promise((resolve) => setTimeout(resolve, 400));
+            await terminalApi.write(info.id, `${command}\r`);
+          } catch (e) {
+            setError(errorMessage(e));
+          }
+        })();
+      }),
     [workspace],
   );
 

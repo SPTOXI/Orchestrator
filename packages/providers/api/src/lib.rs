@@ -21,6 +21,7 @@ mod generic;
 mod http;
 mod jsonpath;
 mod manager;
+pub mod ollama;
 mod openai;
 mod presets;
 mod protocol;

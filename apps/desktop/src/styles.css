@@ -3367,3 +3367,38 @@ textarea.skill-body {
   margin-top: auto;
   margin-bottom: 6px;
 }
+
+.offline-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-deep);
+  font-size: 13px;
+}
+
+.offline-status > span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+}
+
+.offline-install {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.offline-section progress {
+  width: 160px;
+  height: 8px;
+  vertical-align: middle;
+}
+
+.offline-section .row input.grow {
+  flex: 1;
+  min-width: 0;
+}

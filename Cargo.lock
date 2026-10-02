@@ -2838,6 +2838,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tempfile",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

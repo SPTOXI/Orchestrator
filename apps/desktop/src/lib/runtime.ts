@@ -10,6 +10,7 @@ import type {
   BudgetView,
   SecretsView,
   GuidanceSettings,
+  OfflineView,
   GuidanceView,
   SkillDoc,
   SkillInfo,
@@ -424,6 +425,15 @@ export const secretsApi = {
   list: () => invoke<SecretsView>("secrets_list"),
   save: (name: string, value: string) => invoke<SecretsView>("secret_save", { name, value }),
   remove: (name: string) => invoke<SecretsView>("secret_delete", { name }),
+};
+
+export const offlineApi = {
+  status: () => invoke<OfflineView>("offline_status"),
+  start: () => invoke<void>("offline_start"),
+  pull: (model: string) => invoke<void>("offline_pull", { model }),
+  cancel: (model: string) => invoke<void>("offline_cancel", { model }),
+  remove: (model: string) => invoke<void>("offline_delete", { model }),
+  use: () => invoke<string>("offline_use"),
 };
 
 export const guidanceApi = {

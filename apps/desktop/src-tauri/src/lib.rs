@@ -14,6 +14,7 @@ mod cost_commands;
 mod github_commands;
 mod guidance_commands;
 mod memory_commands;
+mod offline_commands;
 mod persistence;
 mod provider_commands;
 mod router_commands;
@@ -378,6 +379,7 @@ pub fn run() {
             let (updates, change) = update_commands::Updates::open(&data_dir, &version);
             update_commands::record_change(app.state::<AppState>().sink.as_ref(), change, &version);
             app.manage(updates);
+            app.manage(offline_commands::Downloads::default());
             update_commands::start_auto_check(app.handle().clone());
             #[cfg(unix)]
             exit_on_termination_signals(app.handle().clone());
@@ -435,6 +437,12 @@ pub fn run() {
             context_commands::handoff_start,
             context_commands::handoffs_list,
             context_commands::handoff_get,
+            offline_commands::offline_status,
+            offline_commands::offline_start,
+            offline_commands::offline_pull,
+            offline_commands::offline_cancel,
+            offline_commands::offline_delete,
+            offline_commands::offline_use,
             guidance_commands::guidance_get,
             guidance_commands::guidance_settings_save,
             guidance_commands::rules_save,

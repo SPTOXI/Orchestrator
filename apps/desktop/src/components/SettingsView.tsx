@@ -83,3 +83,15 @@ export function SettingsView({ ready, active, section, onSection, embedded }: Pr
     </div>
   );
 }
+
+/** A settings section drawn outside this file, with the same header. */
+export function SettingsPage({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="editor">
+      <div className="editor-toolbar">
+        <span className="profile-title">{title}</span>
+      </div>
+      {children}
+    </div>
+  );
+}

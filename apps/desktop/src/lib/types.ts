@@ -1722,3 +1722,58 @@ export interface GuidanceView {
   skills: SkillInfo[];
   projectPath: string | null;
 }
+
+// ---- Offline models (ADR-0021) ------------------------------------------
+
+export interface OllamaStatus {
+  url: string;
+  running: boolean;
+  version: string | null;
+  program: string | null;
+  error: string | null;
+}
+
+export interface LocalModel {
+  name: string;
+  sizeBytes: number;
+  family: string | null;
+  parameterSize: string | null;
+  quantization: string | null;
+  modifiedAt: string | null;
+  tools: boolean | null;
+  vision: boolean | null;
+  contextWindow: number | null;
+}
+
+export interface CatalogModel {
+  name: string;
+  label: string;
+  sizeGb: number;
+  memoryGb: number;
+  tools: boolean;
+  note: string;
+}
+
+export interface OfflineView {
+  status: OllamaStatus;
+  models: LocalModel[];
+  catalog: CatalogModel[];
+  connection: string | null;
+  downloading: string[];
+  installCommand: string | null;
+  downloadPage: string;
+  modelsError: string | null;
+}
+
+export interface PullProgress {
+  model: string;
+  status: string;
+  completed: number | null;
+  total: number | null;
+}
+
+/** Pushed on `runtime://offline`. */
+export type OfflineEvent =
+  | ({ type: "progress" } & PullProgress)
+  | { type: "done"; model: string }
+  | { type: "failed"; model: string; error: string };
