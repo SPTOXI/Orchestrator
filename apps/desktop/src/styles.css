@@ -3402,3 +3402,25 @@ textarea.skill-body {
   flex: 1;
   min-width: 0;
 }
+
+.mcp-server {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.mcp-server .row {
+  gap: 10px;
+}
+
+.mcp-title {
+  min-width: 0;
+  text-align: left;
+}
+
+.mcp-details {
+  margin: 6px 0 0 18px;
+}
+
+.mcp-section .row {
+  flex-wrap: wrap;
+}

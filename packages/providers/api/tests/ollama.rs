@@ -60,22 +60,38 @@ async fn models_are_listed_downloaded_and_removed() {
     let seen: Arc<Mutex<Vec<PullProgress>>> = Arc::default();
     let log = seen.clone();
     ollama
-        .pull("qwen3:8b", &move |p| log.lock().push(p), &CancellationToken::new())
+        .pull(
+            "qwen3:8b",
+            &move |p| log.lock().push(p),
+            &CancellationToken::new(),
+        )
         .await
         .unwrap();
     let seen = seen.lock().clone();
     assert_eq!(seen.last().unwrap().status, "success");
-    assert!(seen.iter().any(|p| p.completed == Some(400) && p.total == Some(1000)));
+    assert!(seen
+        .iter()
+        .any(|p| p.completed == Some(400) && p.total == Some(1000)));
 
     let err = ollama
         .pull("nao-existe:1b", &|_| {}, &CancellationToken::new())
         .await
         .unwrap_err();
-    assert!(err.message.contains("file does not exist"), "{}", err.message);
-    assert!(ollama.pull("dois nomes", &|_| {}, &CancellationToken::new()).await.is_err());
+    assert!(
+        err.message.contains("file does not exist"),
+        "{}",
+        err.message
+    );
+    assert!(ollama
+        .pull("dois nomes", &|_| {}, &CancellationToken::new())
+        .await
+        .is_err());
 
     ollama.delete("gemma3:4b").await.unwrap();
-    assert!(api.requests().iter().any(|r| r.method == "DELETE" && r.body["model"] == "gemma3:4b"));
+    assert!(api
+        .requests()
+        .iter()
+        .any(|r| r.method == "DELETE" && r.body["model"] == "gemma3:4b"));
 
     // The connection: no key, no cost, the capabilities Ollama reported,
     // and the user's choices kept when it is rebuilt.
@@ -105,7 +121,10 @@ async fn nothing_listening_is_not_running() {
     let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = closed.local_addr().unwrap().port();
     drop(closed);
-    let status = Ollama::new(format!("http://127.0.0.1:{port}")).unwrap().status().await;
+    let status = Ollama::new(format!("http://127.0.0.1:{port}"))
+        .unwrap()
+        .status()
+        .await;
     assert!(!status.running);
     assert!(status.error.is_some());
 }

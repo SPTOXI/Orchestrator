@@ -1777,3 +1777,42 @@ export type OfflineEvent =
   | ({ type: "progress" } & PullProgress)
   | { type: "done"; model: string }
   | { type: "failed"; model: string; error: string };
+
+// ---- MCP servers (ADR-0021) ---------------------------------------------
+
+export type McpTransport = "stdio" | "http";
+
+export interface McpServerConfig {
+  id: string;
+  name: string;
+  transport: McpTransport;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  cwd: string | null;
+  url: string;
+  headers: Record<string, string>;
+  enabled: boolean;
+  timeoutSecs: number | null;
+  disabledTools: string[];
+}
+
+export type McpStatus = "disabled" | "starting" | "ready" | "failed";
+
+export interface McpToolView {
+  name: string;
+  remote: string;
+  description: string;
+  readOnly: boolean;
+  enabled: boolean;
+}
+
+export interface McpServerView {
+  config: McpServerConfig;
+  status: McpStatus;
+  error: string | null;
+  serverName: string | null;
+  serverVersion: string | null;
+  tools: McpToolView[];
+  log: string[];
+}

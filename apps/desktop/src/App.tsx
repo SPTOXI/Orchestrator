@@ -15,6 +15,7 @@ import { HandoffView } from "./components/HandoffView";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { MemoryPanel } from "./components/MemoryPanel";
 import { TasksPanel } from "./components/TasksPanel";
+import { McpSection } from "./components/McpSection";
 import { OfflineSection } from "./components/OfflineSection";
 import { type SettingsSection, SettingsPage, SettingsView } from "./components/SettingsView";
 import { terminalRequests } from "./lib/terminalRequests";
@@ -924,6 +925,12 @@ export function App() {
                             );
                           case "context":
                             return <ContextView ready={ready} active={shown} request={{}} nonce={0} />;
+                          case "mcp":
+                            return (
+                              <SettingsPage title="Servidores MCP">
+                                <McpSection ready={ready} active={shown} />
+                              </SettingsPage>
+                            );
                           case "offline":
                             return (
                               <SettingsPage title="Modelos offline">

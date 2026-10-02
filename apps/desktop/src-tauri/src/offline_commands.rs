@@ -6,8 +6,7 @@
 use crate::AppState;
 use orchestrator_core::CallOrigin;
 use orchestrator_provider_api::ollama::{
-    self, catalog, CatalogModel, LocalModel, Ollama, OllamaStatus, PullProgress,
-    OLLAMA_CONNECTION,
+    self, catalog, CatalogModel, LocalModel, Ollama, OllamaStatus, PullProgress, OLLAMA_CONNECTION,
 };
 use orchestrator_provider_api::SaveRequest;
 use parking_lot::Mutex;
@@ -99,8 +98,8 @@ pub async fn offline_status(
 /// Orchestrator closes, like Ollama's own app).
 #[tauri::command]
 pub fn offline_start() -> Result<(), String> {
-    let program = ollama::find_program()
-        .ok_or("o Ollama não está instalado (ou não está no PATH)")?;
+    let program =
+        ollama::find_program().ok_or("o Ollama não está instalado (ou não está no PATH)")?;
     let mut command = std::process::Command::new(program);
     command
         .arg("serve")
@@ -147,7 +146,12 @@ pub async fn offline_pull(app: AppHandle, model: String) -> Result<(), String> {
     app.state::<Downloads>().0.lock().remove(&model);
     match result {
         Ok(()) => {
-            let _ = app.emit(OFFLINE_EVENT, OfflineEvent::Done { model: model.clone() });
+            let _ = app.emit(
+                OFFLINE_EVENT,
+                OfflineEvent::Done {
+                    model: model.clone(),
+                },
+            );
             // Keep the connection in step, if the user already made it.
             let state = app.state::<AppState>();
             if state

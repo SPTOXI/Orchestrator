@@ -142,6 +142,17 @@ impl ToolRuntime {
         *self.inner.secrets.write() = secrets;
     }
 
+    /// `text` with `{{secret:NAME}}` replaced by the values (for settings
+    /// that reach other programs, such as MCP servers, ADR-0021).
+    pub fn expand_secrets(&self, text: &str) -> Result<String, String> {
+        web::expand(text, &self.inner.secrets.read()).map_err(|e| e.message)
+    }
+
+    /// `text` with every secret value masked.
+    pub fn mask_secrets(&self, text: &str) -> String {
+        web::mask(text, &self.inner.secrets.read())
+    }
+
     /// Which GitHub the `github.*` tools talk to (`github.json`).
     pub fn github_settings(&self) -> GitHubSettings {
         self.inner.github.settings()

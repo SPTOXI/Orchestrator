@@ -24,7 +24,10 @@ pub const OLLAMA_CONNECTION: &str = "ollama";
 
 /// Ollama's address: `OLLAMA_HOST` (`host:port` or a URL) or the default.
 pub fn ollama_url() -> String {
-    match std::env::var("OLLAMA_HOST").ok().map(|h| h.trim().to_owned()) {
+    match std::env::var("OLLAMA_HOST")
+        .ok()
+        .map(|h| h.trim().to_owned())
+    {
         Some(host) if !host.is_empty() => {
             let host = host.trim_end_matches('/');
             let with_scheme = if host.contains("://") {
@@ -216,7 +219,10 @@ impl Ollama {
         let (running, version, error) = match asked {
             Ok(Ok(value)) => (
                 true,
-                value.get("version").and_then(Value::as_str).map(str::to_owned),
+                value
+                    .get("version")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
                 None,
             ),
             Ok(Err(err)) => (false, None, Some(err.message)),
@@ -279,11 +285,14 @@ impl Ollama {
                     .collect()
             });
         let has = |cap: &str| capabilities.as_ref().map(|c| c.iter().any(|x| x == cap));
-        let context_window = value.get("model_info").and_then(Value::as_object).and_then(|info| {
-            info.iter()
-                .find(|(key, _)| key.ends_with(".context_length"))
-                .and_then(|(_, v)| v.as_u64())
-        });
+        let context_window = value
+            .get("model_info")
+            .and_then(Value::as_object)
+            .and_then(|info| {
+                info.iter()
+                    .find(|(key, _)| key.ends_with(".context_length"))
+                    .and_then(|(_, v)| v.as_u64())
+            });
         (has("tools"), has("vision"), context_window)
     }
 
@@ -407,7 +416,11 @@ pub fn connection(url: &str, models: &[LocalModel], existing: Option<&Connection
 
 /// The `ollama` program: on the PATH, or where the installers put it.
 pub fn find_program() -> Option<PathBuf> {
-    let exe = if cfg!(windows) { "ollama.exe" } else { "ollama" };
+    let exe = if cfg!(windows) {
+        "ollama.exe"
+    } else {
+        "ollama"
+    };
     if let Some(path) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&path) {
             let candidate = dir.join(exe);
@@ -422,7 +435,9 @@ pub fn find_program() -> Option<PathBuf> {
             known.push(PathBuf::from(local).join("Programs/Ollama/ollama.exe"));
         }
     } else if cfg!(target_os = "macos") {
-        known.push(PathBuf::from("/Applications/Ollama.app/Contents/Resources/ollama"));
+        known.push(PathBuf::from(
+            "/Applications/Ollama.app/Contents/Resources/ollama",
+        ));
         known.push(PathBuf::from("/opt/homebrew/bin/ollama"));
         known.push(PathBuf::from("/usr/local/bin/ollama"));
     } else {

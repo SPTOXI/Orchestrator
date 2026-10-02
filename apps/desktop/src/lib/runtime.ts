@@ -10,6 +10,8 @@ import type {
   BudgetView,
   SecretsView,
   GuidanceSettings,
+  McpServerConfig,
+  McpServerView,
   OfflineView,
   GuidanceView,
   SkillDoc,
@@ -434,6 +436,17 @@ export const offlineApi = {
   cancel: (model: string) => invoke<void>("offline_cancel", { model }),
   remove: (model: string) => invoke<void>("offline_delete", { model }),
   use: () => invoke<string>("offline_use"),
+};
+
+export const mcpApi = {
+  list: () => invoke<McpServerView[]>("mcp_list"),
+  save: (server: McpServerConfig, previousId: string | null) =>
+    invoke<McpServerView[]>("mcp_save", { server, previousId }),
+  importJson: (text: string) => invoke<string[]>("mcp_import", { text }),
+  restart: (id: string) => invoke<void>("mcp_restart", { id }),
+  remove: (id: string) => invoke<McpServerView[]>("mcp_delete", { id }),
+  setTool: (id: string, tool: string, enabled: boolean) =>
+    invoke<McpServerView[]>("mcp_set_tool", { id, tool, enabled }),
 };
 
 export const guidanceApi = {

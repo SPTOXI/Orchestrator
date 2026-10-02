@@ -13,6 +13,7 @@ mod context_commands;
 mod cost_commands;
 mod github_commands;
 mod guidance_commands;
+mod mcp_commands;
 mod memory_commands;
 mod offline_commands;
 mod persistence;
@@ -29,6 +30,7 @@ use orchestrator_engine::{
     AutonomyGate, AutonomyService, ContextBuilder, EngineTools, GuidanceService, GuidedContext,
     HandoffService, SkillTools, StoreSessions, TaskService,
 };
+use orchestrator_mcp::{McpManager, McpTools};
 use orchestrator_memory::{HistoryQuery, MemoryStore};
 use orchestrator_provider_api::ConnectionManager;
 use orchestrator_providers::{EchoProvider, ManagerConfig, ProviderRegistry, SessionManager};
@@ -122,6 +124,8 @@ pub struct AppState {
     pub github_warning: Option<String>,
     /// Development rules and skills (ADR-0021).
     pub guidance: Arc<GuidanceService>,
+    /// The user's MCP servers (ADR-0021).
+    pub mcp: McpManager,
     pub sink: Arc<DesktopSink>,
     pub data_dir: PathBuf,
 }
@@ -274,22 +278,42 @@ pub fn run() {
             if let Some(warning) = &guidance_warning {
                 eprintln!("[orchestrator] {warning}");
             }
+            // MCP servers (ADR-0021): their tools inside the gate too.
+            let expand_runtime = runtime.clone();
+            let mask_runtime = runtime.clone();
+            let (mcp, mcp_warning) = McpManager::open(
+                Some(&data_dir.join("mcp.json")),
+                sink.clone(),
+                Arc::new(move |text: &str| expand_runtime.expand_secrets(text)),
+                Arc::new(move |text: &str| mask_runtime.mask_secrets(text)),
+            );
+            if let Some(warning) = &mcp_warning {
+                eprintln!("[orchestrator] {warning}");
+            }
+            if let Some(project) = store.current_project() {
+                mcp.set_roots(vec![project.path]);
+            }
+            let starting = mcp.clone();
+            tauri::async_runtime::spawn(async move { starting.start_all().await });
             let tools = AutonomyGate::new(
-                Arc::new(SkillTools::new(
-                    Arc::new(AgentTools::new(
-                        Arc::new(EngineTools::new(
-                            Arc::new(RuntimeTools(runtime.clone())),
+                Arc::new(McpTools::new(
+                    Arc::new(SkillTools::new(
+                        Arc::new(AgentTools::new(
+                            Arc::new(EngineTools::new(
+                                Arc::new(RuntimeTools(runtime.clone())),
+                                store.clone(),
+                                sink.clone(),
+                            )),
                             store.clone(),
+                            locks.clone(),
+                            agent_slot.clone(),
                             sink.clone(),
                         )),
+                        guidance.clone(),
                         store.clone(),
-                        locks.clone(),
-                        agent_slot.clone(),
                         sink.clone(),
                     )),
-                    guidance.clone(),
-                    store.clone(),
-                    sink.clone(),
+                    mcp.clone(),
                 )),
                 autonomy.clone(),
             );
@@ -369,6 +393,7 @@ pub fn run() {
                 autonomy_warning,
                 github_warning,
                 guidance,
+                mcp,
                 sink,
                 data_dir,
             });
@@ -443,6 +468,12 @@ pub fn run() {
             offline_commands::offline_cancel,
             offline_commands::offline_delete,
             offline_commands::offline_use,
+            mcp_commands::mcp_list,
+            mcp_commands::mcp_save,
+            mcp_commands::mcp_import,
+            mcp_commands::mcp_restart,
+            mcp_commands::mcp_delete,
+            mcp_commands::mcp_set_tool,
             guidance_commands::guidance_get,
             guidance_commands::guidance_settings_save,
             guidance_commands::rules_save,
@@ -501,6 +532,7 @@ pub fn run() {
         if let RunEvent::Exit = event {
             // Never leave `npm run dev` & co. orphaned when the app closes.
             if let Some(state) = handle.try_state::<AppState>() {
+                state.mcp.shutdown();
                 tauri::async_runtime::block_on(async {
                     state.sessions.shutdown().await;
                     state.runtime.shutdown().await;
