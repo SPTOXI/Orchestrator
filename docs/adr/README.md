@@ -25,5 +25,6 @@ adiciona algo fora dela, é registrada aqui **antes** de ser implementada.
 | [0018](./0018-tokens-cache-compactacao-e-escalonamento.md) | Tokens, cache, compactação de contexto e escalonamento de agentes | Aceita |
 | [0019](./0019-instaladores-release-e-atualizacao.md) | Instaladores, release e atualização automática | Aceita |
 | [0020](./0020-acesso-total-da-ia.md) | Acesso total da IA: internet, APIs e segredos | Aceita |
+| [0021](./0021-configuracoes-assinaturas-offline-e-mcp.md) | Configurações, regras e skills, MCP, assinaturas por CLI e modelos offline | Aceita |
 
 Formato: Contexto → Decisão → Consequências.

@@ -265,8 +265,8 @@ impl AIProvider for CliProvider {
             native_subagents: false,
             reasoning: true,
             token_usage: true,
-            // Subscriptions are not charged per token.
-            cost: false,
+            // Subscriptions are not charged per token: turns cost US$ 0.
+            cost: true,
             completion: true,
             compaction: false,
             default_model: self
@@ -407,6 +407,8 @@ impl AIProvider for CliProvider {
         }
         self.states.lock().insert(native.reference.clone(), state);
         if usage != TokenUsage::default() {
+            // The subscription pays for it: nothing per token.
+            usage.cost_usd = Some(0.0);
             ctx.report_usage(usage);
         }
         Ok(TurnOutput { text: outcome? })
@@ -477,6 +479,7 @@ impl AIProvider for CliProvider {
         };
         let text = self.run(plan, &prompt, cancel, &mut on).await;
         let _ = std::fs::remove_dir_all(&scratch);
+        usage.cost_usd = Some(0.0);
         Ok(Completion {
             text: text?,
             model,

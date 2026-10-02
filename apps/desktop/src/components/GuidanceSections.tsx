@@ -279,6 +279,8 @@ export function SkillsSection({ guidance }: { guidance: Guidance }) {
             <span>Nome</span>
             <input
               className="mono"
+              autoFocus
+              ref={(el) => el?.scrollIntoView({ block: "nearest" })}
               placeholder="revisar-pr"
               value={editing.name}
               onChange={(e) => setEditing({ ...editing, name: e.target.value.toLowerCase().replace(/\s+/g, "-") })}

@@ -110,6 +110,7 @@ export function McpSection({ ready, active }: { ready: boolean; active: boolean 
   const [importText, setImportText] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -211,19 +212,32 @@ export function McpSection({ ready, active }: { ready: boolean; active: boolean 
               className="button small primary"
               disabled={!importText.trim()}
               onClick={() =>
-                void run(async () => {
-                  const added = await mcpApi.importJson(importText);
-                  setImportText(null);
-                  setNotice(`Importados: ${added.join(", ")}. Conectando…`);
-                })
+                void (async () => {
+                  setImportError(null);
+                  try {
+                    const added = await mcpApi.importJson(importText);
+                    setImportText(null);
+                    setNotice(`Importados: ${added.join(", ")}. Conectando…`);
+                    await load();
+                  } catch (e) {
+                    setImportError(errorMessage(e));
+                  }
+                })()
               }
             >
               Importar
             </button>
-            <button className="button small" onClick={() => setImportText(null)}>
+            <button
+              className="button small"
+              onClick={() => {
+                setImportText(null);
+                setImportError(null);
+              }}
+            >
               Cancelar
             </button>
           </div>
+          {importError && <div className="inline-error">{importError}</div>}
         </section>
       )}
 

@@ -253,6 +253,32 @@ para o cofre do sistema (conta `secret:<NOME>` do serviço
 | `secret_save` | `name`, `value` | `SecretsView`; nome: letras sem acento, números, `_`, `-`, `.` (até 64) |
 | `secret_delete` | `name` | `SecretsView` |
 
+### Configurações (ADR-0021)
+
+Referência: [`docs/settings.md`](./settings.md).
+
+| Comando | Argumentos | Retorno |
+| ------- | ---------- | ------- |
+| `guidance_get` | — | `GuidanceView` (opções, regras do usuário, arquivos de instruções do projeto aberto, skills encontradas, pastas) |
+| `guidance_settings_save` | `settings` | `GuidanceSettings` |
+| `rules_save` | `text` | — ; até 40.000 caracteres |
+| `skill_get` | `name` | `SkillDoc` (instruções e arquivos da pasta) |
+| `skill_save` | `skill` (`name`, `description`, `body`, `previousName`) | `SkillInfo`; só as do Orchestrator |
+| `skill_delete` | `name` | — ; só as do Orchestrator |
+| `skill_set_enabled` | `name`, `enabled` | `GuidanceSettings` |
+| `mcp_list` | — | `ServerView[]` (configuração, estado, erro, servidor, ferramentas, saída do servidor) |
+| `mcp_save` | `server`, `previousId` | `ServerView[]`; conecta em segundo plano |
+| `mcp_import` | `text` (JSON do Claude/Cursor) | ids adicionados |
+| `mcp_restart` / `mcp_delete` | `id` | — / `ServerView[]` |
+| `mcp_set_tool` | `id`, `tool`, `enabled` | `ServerView[]` |
+| `clis_list` | — | `CliStatus[]` (instalado, versão, login, comandos de instalar e entrar, opções) |
+| `cli_save` | `kind`, `settings` | `CliStatus[]`; liga ou desliga o provider |
+| `offline_status` | — | `OfflineView` (Ollama, modelos, catálogo, conexão, downloads, comando de instalação) |
+| `offline_start` | — | inicia `ollama serve` |
+| `offline_pull` | `model` | termina com o download; progresso por `runtime://offline` |
+| `offline_cancel` / `offline_delete` | `model` | — |
+| `offline_use` | — | id da conexão `ollama`, criada ou atualizada |
+
 ### Atualizações (Fase 12, ADR-0019)
 
 Referência: [`docs/release.md`](./release.md). O plugin de atualização fica
@@ -273,6 +299,7 @@ no Rust; a webview não tem as permissões dele.
 | `runtime://stream` | `StreamEvent` | saída de terminal/processo ao vivo, término; eventos de sessão de provider |
 | `runtime://audit` | `AuditEvent` | painel HISTORY, atualização de listas e do explorer |
 | `runtime://update` | `UpdateEvent` (`checked`, `available`, `progress`, `installed`, `failed`) | aba "Sobre e atualizações" e chip da barra de status (Fase 12) |
+| `runtime://offline` | `OfflineEvent` (`progress`, `done`, `failed`) | downloads de modelos offline (ADR-0021) |
 
 `StreamEvent`:
 

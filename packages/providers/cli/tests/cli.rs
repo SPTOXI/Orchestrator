@@ -210,6 +210,11 @@ async fn each_cli_works_through_the_orchestrators_tools() {
 
         let info = h.sessions.info(&session.id).unwrap();
         assert!(info.usage.input_tokens > 0, "{kind:?} reported usage");
+        assert_eq!(
+            info.usage.cost_usd,
+            Some(0.0),
+            "{kind:?}: no cost per token"
+        );
     }
 
     // Every run kept the CLIs' own tools off and pointed them at us.
@@ -313,7 +318,7 @@ async fn no_login_cancel_council_and_settings() {
     assert!(h.registry.get(&"claude-code".into()).is_some());
     let caps = provider.capabilities();
     assert_eq!(caps.default_model.as_deref(), Some("sonnet"));
-    assert!(!caps.cost, "subscriptions are not charged per token");
+    assert!(caps.cost, "a subscription turn costs US$ 0");
 }
 
 /// The real Claude Code against a fake Anthropic API (run by hand:

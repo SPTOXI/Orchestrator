@@ -465,6 +465,18 @@ Consultas executadas no shell padrão (timeout de 15 s cada):
 
 ---
 
+## Ferramentas fora do runtime (ADR-0013, ADR-0015, ADR-0021)
+
+O motor acrescenta, pelo mesmo caminho auditado e atrás do gate de
+autonomia, ferramentas que não moram no runtime:
+
+- `memory.*` e `decision.*` — memória do projeto ([memory.md](./memory.md));
+- `agent.finish` e `agent.delegate` — agentes ([agents.md](./agents.md));
+- `skill.list` e `skill.read` — skills ([settings.md](./settings.md#skills));
+- `mcp.<servidor>.<ferramenta>` — as dos servidores MCP do usuário
+  ([settings.md](./settings.md#servidores-mcp)); aparecem e somem conforme
+  os servidores conectam.
+
 ## Encerramento do app
 
 Ao fechar o Orchestrator, `ToolRuntime::shutdown` fecha todos os terminais e

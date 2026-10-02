@@ -3,9 +3,11 @@
 > **A IA é substituível. O projeto é permanente.**
 
 Orchestrator é uma plataforma desktop/local de desenvolvimento assistido e
-autônomo por múltiplas IAs. O usuário conecta **quantas APIs de IA quiser**:
-OpenAI e compatíveis, Anthropic, Gemini, modelos locais ou qualquer API
-HTTP. Os agentes trabalham sobre o **mesmo projeto**, compartilham memória,
+autônomo por múltiplas IAs. O usuário conecta **quantas APIs de IA quiser**
+(OpenAI e compatíveis, Anthropic, Gemini ou qualquer API HTTP), usa as
+**assinaturas** que já tem (Claude Pro/Max, ChatGPT, conta Google) pelas
+CLIs oficiais, ou baixa **modelos offline** que rodam no próprio
+computador. Os agentes trabalham sobre o **mesmo projeto**, compartilham memória,
 assumem tarefas uns dos outros e operam sobre um ambiente real de
 desenvolvimento — sempre através do runtime do Orchestrator.
 
@@ -39,6 +41,8 @@ cada fase em [`docs/phases/`](./docs/phases).
 | 10 | GitHub, pull requests e operações remotas | ✅ concluída |
 | 11 | Otimização de tokens, cache, compactação, agent scheduling | ✅ concluída |
 | 12 | Instaladores, release e atualização automática (escolhida depois do plano do documento mestre) | ✅ concluída |
+| — | Acesso total da IA: internet, APIs e segredos ([ADR-0020](./docs/adr/0020-acesso-total-da-ia.md)) | ✅ concluída |
+| — | Configurações, regras e skills, servidores MCP, assinaturas por CLI e modelos offline ([ADR-0021](./docs/adr/0021-configuracoes-assinaturas-offline-e-mcp.md), [docs/settings.md](./docs/settings.md)) | ✅ concluída |
 
 A ordem das Fases 4–5 foi redefinida na
 [ADR-0010](./docs/adr/0010-providers-por-api-com-cadastro-livre.md):
@@ -62,8 +66,10 @@ orchestrator/
 │   │                       #        memória L1/L2/L3, decisões, deliberações
 │   ├── git/                # [Rust] Git local via `git` do sistema e GitHub pela API REST
 │   ├── providers/          # [Rust] AIProvider, Provider Registry, Provider Sessions
-│   │   └── api/            # [Rust] conexões de API: OpenAI e compatíveis, Anthropic,
-│   │                       #        Gemini e perfil genérico (qualquer API HTTP/JSON)
+│   │   ├── api/            # [Rust] conexões de API: OpenAI e compatíveis, Anthropic,
+│   │   │                   #        Gemini e perfil genérico; modelos offline (Ollama)
+│   │   └── cli/            # [Rust] assinaturas pelas CLIs: Claude Code, Codex, Gemini CLI
+│   ├── mcp/                # [Rust] servidores MCP como ferramentas e o endpoint MCP local
 │   └── router/             # [Rust] roteador de modelos e Conselho de IAs
 ├── docs/                   # ADRs, relatórios de fase, referência de IPC e ferramentas
 ├── ARCHITECTURE.md

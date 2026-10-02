@@ -31,9 +31,9 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: cargo fmt --all --check
       - name: Clippy
-        run: cargo clippy -p orchestrator-core -p orchestrator-git -p orchestrator-runtime -p orchestrator-providers -p orchestrator-provider-api -p orchestrator-router -p orchestrator-memory -p orchestrator-engine -p orchestrator-agents --all-targets -- -D warnings
+        run: cargo clippy -p orchestrator-core -p orchestrator-git -p orchestrator-runtime -p orchestrator-providers -p orchestrator-provider-api -p orchestrator-router -p orchestrator-memory -p orchestrator-engine -p orchestrator-agents -p orchestrator-mcp -p orchestrator-provider-cli --all-targets -- -D warnings
       - name: Test
-        run: cargo test -p orchestrator-core -p orchestrator-git -p orchestrator-runtime -p orchestrator-providers -p orchestrator-provider-api -p orchestrator-router -p orchestrator-memory -p orchestrator-engine -p orchestrator-agents
+        run: cargo test -p orchestrator-core -p orchestrator-git -p orchestrator-runtime -p orchestrator-providers -p orchestrator-provider-api -p orchestrator-router -p orchestrator-memory -p orchestrator-engine -p orchestrator-agents -p orchestrator-mcp -p orchestrator-provider-cli
 
   desktop:
     name: Desktop (ubuntu-latest)

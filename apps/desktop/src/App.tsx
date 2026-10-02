@@ -1219,6 +1219,14 @@ function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenPr
                   quando há versão nova — você decide quando instalar (clique na versão, na barra de status).
                 </li>
                 <li>
+                  <strong>Assinaturas e modelos offline</strong>: use Claude Pro/Max, ChatGPT ou a conta Google pelas
+                  CLIs oficiais, ou modelos que rodam no seu computador pelo Ollama.
+                </li>
+                <li>
+                  <strong>Configurações</strong> (engrenagem): regras de desenvolvimento, skills, servidores MCP,
+                  políticas e segredos — tudo o que as IAs recebem, num lugar só.
+                </li>
+                <li>
                   <strong>HISTORY</strong>: toda chamada de ferramenta é auditada, inclusive as feitas por IAs.
                 </li>
               </ul>
@@ -1230,6 +1238,7 @@ function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenPr
           <ul>
             <li>0 a 11 concluídas: o plano do documento mestre está completo.</li>
             <li>12 — instaladores, release e atualização automática.</li>
+            <li>Depois: acesso total à internet, Configurações, assinaturas por CLI, modelos offline e MCP.</li>
           </ul>
         </div>
       </div>
