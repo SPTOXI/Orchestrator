@@ -8,6 +8,7 @@
 
 mod agent_commands;
 mod autonomy_commands;
+mod cli_commands;
 mod commands;
 mod context_commands;
 mod cost_commands;
@@ -30,9 +31,10 @@ use orchestrator_engine::{
     AutonomyGate, AutonomyService, ContextBuilder, EngineTools, GuidanceService, GuidedContext,
     HandoffService, SkillTools, StoreSessions, TaskService,
 };
-use orchestrator_mcp::{McpManager, McpTools};
+use orchestrator_mcp::{McpManager, McpTools, ToolServer};
 use orchestrator_memory::{HistoryQuery, MemoryStore};
 use orchestrator_provider_api::ConnectionManager;
+use orchestrator_provider_cli::CliManager;
 use orchestrator_providers::{EchoProvider, ManagerConfig, ProviderRegistry, SessionManager};
 use orchestrator_router::RouterService;
 use orchestrator_runtime::{RuntimeConfig, ToolRuntime};
@@ -126,6 +128,8 @@ pub struct AppState {
     pub guidance: Arc<GuidanceService>,
     /// The user's MCP servers (ADR-0021).
     pub mcp: McpManager,
+    /// Subscriptions through CLIs: Claude Code, Codex, Gemini (ADR-0021).
+    pub clis: CliManager,
     pub sink: Arc<DesktopSink>,
     pub data_dir: PathBuf,
 }
@@ -243,6 +247,19 @@ pub fn run() {
                 Err(err) => (None, vec![err.message]),
             };
             for warning in &connection_warnings {
+                eprintln!("[orchestrator] {warning}");
+            }
+            // Subscriptions through CLIs (ADR-0021): their tools come from
+            // a local MCP endpoint that runs each call through the session.
+            let tool_server = tauri::async_runtime::block_on(ToolServer::start())
+                .map_err(|e| format!("cannot start the local MCP endpoint: {e}"))?;
+            let (clis, clis_warning) = CliManager::open(
+                Some(&data_dir.join("clis.json")),
+                registry.clone(),
+                tool_server,
+                orchestrator_provider_cli::scratch_dir(&data_dir),
+            );
+            if let Some(warning) = &clis_warning {
                 eprintln!("[orchestrator] {warning}");
             }
             let (router, router_warning) = RouterService::open(
@@ -394,6 +411,7 @@ pub fn run() {
                 github_warning,
                 guidance,
                 mcp,
+                clis,
                 sink,
                 data_dir,
             });
@@ -468,6 +486,8 @@ pub fn run() {
             offline_commands::offline_cancel,
             offline_commands::offline_delete,
             offline_commands::offline_use,
+            cli_commands::clis_list,
+            cli_commands::cli_save,
             mcp_commands::mcp_list,
             mcp_commands::mcp_save,
             mcp_commands::mcp_import,

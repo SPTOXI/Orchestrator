@@ -15,3 +15,4 @@ pub mod serve;
 pub use client::{CallOutcome, Expand, McpClient, McpError, RemoteTool, PROTOCOL_VERSION};
 pub use config::{ServerConfig, Transport};
 pub use manager::{McpManager, McpTools, ServerStatus, ServerView, ToolView};
+pub use serve::{wire_name, Route, ToolServer};

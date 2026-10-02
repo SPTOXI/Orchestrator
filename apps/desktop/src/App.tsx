@@ -15,6 +15,7 @@ import { HandoffView } from "./components/HandoffView";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { MemoryPanel } from "./components/MemoryPanel";
 import { TasksPanel } from "./components/TasksPanel";
+import { CliSection } from "./components/CliSection";
 import { McpSection } from "./components/McpSection";
 import { OfflineSection } from "./components/OfflineSection";
 import { type SettingsSection, SettingsPage, SettingsView } from "./components/SettingsView";
@@ -526,6 +527,7 @@ export function App() {
             onNewSession={(provider, model) => void newSession(provider, model)}
             onOpenSession={openSession}
             onEditConnection={editConnection}
+            onOpenSettings={openSettings}
             council={council}
             onOpenCouncil={openCouncil}
             onOpenRoute={() => openRoute()}
@@ -925,6 +927,12 @@ export function App() {
                             );
                           case "context":
                             return <ContextView ready={ready} active={shown} request={{}} nonce={0} />;
+                          case "clis":
+                            return (
+                              <SettingsPage title="Assinaturas (CLI)">
+                                <CliSection ready={ready} active={shown} onChanged={() => void providers.refresh()} />
+                              </SettingsPage>
+                            );
                           case "mcp":
                             return (
                               <SettingsPage title="Servidores MCP">

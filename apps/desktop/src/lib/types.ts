@@ -1816,3 +1816,32 @@ export interface McpServerView {
   tools: McpToolView[];
   log: string[];
 }
+
+// ---- Subscriptions through CLIs (ADR-0021) ------------------------------
+
+export type CliKind = "claudeCode" | "codex" | "gemini";
+
+export interface CliSettings {
+  enabled: boolean;
+  program: string | null;
+  models: string[];
+  defaultModel: string | null;
+  ownTools: boolean;
+  extraArgs: string[];
+}
+
+export interface CliStatus {
+  kind: CliKind;
+  id: string;
+  name: string;
+  subscription: string;
+  program: string | null;
+  version: string | null;
+  loggedIn: boolean | null;
+  detail: string | null;
+  installCommand: string;
+  loginCommand: string;
+  loginHint: string;
+  suggestedModels: string[];
+  settings: CliSettings;
+}

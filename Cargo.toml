@@ -9,6 +9,7 @@ members = [
     "packages/orchestrator",
     "packages/providers",
     "packages/providers/api",
+    "packages/providers/cli",
     "packages/router",
     "packages/runtime",
     "apps/desktop/src-tauri",
@@ -29,6 +30,7 @@ orchestrator-mcp = { path = "packages/mcp" }
 orchestrator-memory = { path = "packages/memory" }
 orchestrator-providers = { path = "packages/providers" }
 orchestrator-provider-api = { path = "packages/providers/api" }
+orchestrator-provider-cli = { path = "packages/providers/cli" }
 orchestrator-router = { path = "packages/router" }
 orchestrator-runtime = { path = "packages/runtime" }
 

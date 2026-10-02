@@ -24,6 +24,7 @@ orchestrator-git.workspace = true
 orchestrator-mcp.workspace = true
 orchestrator-memory.workspace = true
 orchestrator-provider-api.workspace = true
+orchestrator-provider-cli.workspace = true
 orchestrator-providers.workspace = true
 orchestrator-router.workspace = true
 orchestrator-runtime.workspace = true

@@ -10,6 +10,9 @@ import type {
   BudgetView,
   SecretsView,
   GuidanceSettings,
+  CliKind,
+  CliSettings,
+  CliStatus,
   McpServerConfig,
   McpServerView,
   OfflineView,
@@ -447,6 +450,11 @@ export const mcpApi = {
   remove: (id: string) => invoke<McpServerView[]>("mcp_delete", { id }),
   setTool: (id: string, tool: string, enabled: boolean) =>
     invoke<McpServerView[]>("mcp_set_tool", { id, tool, enabled }),
+};
+
+export const cliApi = {
+  list: () => invoke<CliStatus[]>("clis_list"),
+  save: (kind: CliKind, settings: CliSettings) => invoke<CliStatus[]>("cli_save", { kind, settings }),
 };
 
 export const guidanceApi = {

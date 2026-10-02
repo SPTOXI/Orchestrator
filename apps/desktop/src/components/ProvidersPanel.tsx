@@ -37,6 +37,8 @@ interface Props {
   activity?: Record<string, SessionActivity>;
   /** Tool calls waiting for the user's authorization. */
   waitingCalls?: ReadonlySet<string>;
+  /** Opens Configurações: subscriptions through CLIs or offline models. */
+  onOpenSettings?: (section: "clis" | "offline") => void;
 }
 
 const CAPABILITY_LABELS: Array<[keyof ProviderCapabilities, string]> = [
@@ -291,6 +293,7 @@ export function ProvidersPanel({
   onOpenRoute,
   activity = {},
   waitingCalls,
+  onOpenSettings,
 }: Props) {
   const list = providers.view?.providers ?? [];
   const byId = new Map((connections.view?.connections ?? []).map((c) => [c.connection.id, c]));
@@ -333,14 +336,25 @@ export function ProvidersPanel({
       <div className="scroll">
         {providers.view && list.length === 0 && (
           <div className="placeholder">
-            <p>Nenhuma API cadastrada.</p>
+            <p>Nenhuma IA ainda.</p>
             <p className="meta">
-              Cadastre quantas APIs quiser — OpenAI e compatíveis (OpenRouter, Groq, Ollama…), Anthropic, Gemini ou
-              qualquer outra descrita por um perfil genérico.
+              Três jeitos de ter IAs aqui: uma <strong>API</strong> (OpenAI e compatíveis, Anthropic, Gemini, DeepSeek,
+              OpenRouter… ou qualquer outra por perfil genérico), a sua <strong>assinatura</strong> (Claude, ChatGPT,
+              conta Google) pela CLI oficial, ou <strong>modelos offline</strong> no seu computador.
             </p>
             <button className="button primary" disabled={!ready} onClick={() => onEditConnection(null)}>
               <PlusIcon /> Adicionar API
             </button>
+            {onOpenSettings && (
+              <div className="row">
+                <button className="button small" disabled={!ready} onClick={() => onOpenSettings("clis")}>
+                  Usar uma assinatura
+                </button>
+                <button className="button small" disabled={!ready} onClick={() => onOpenSettings("offline")}>
+                  Modelos offline
+                </button>
+              </div>
+            )}
           </div>
         )}
         {list.length > 0 && (
@@ -358,9 +372,21 @@ export function ProvidersPanel({
                 />
               ))}
             </ul>
-            <button className="link add-connection" disabled={!ready} onClick={() => onEditConnection(null)}>
-              + Adicionar API
-            </button>
+            <div className="row add-connection">
+              <button className="link" disabled={!ready} onClick={() => onEditConnection(null)}>
+                + API
+              </button>
+              {onOpenSettings && (
+                <>
+                  <button className="link" disabled={!ready} onClick={() => onOpenSettings("clis")}>
+                    + Assinatura (CLI)
+                  </button>
+                  <button className="link" disabled={!ready} onClick={() => onOpenSettings("offline")}>
+                    + Offline
+                  </button>
+                </>
+              )}
+            </div>
           </Collapsible>
         )}
         {disabled.length > 0 && (

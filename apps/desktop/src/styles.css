@@ -3424,3 +3424,32 @@ textarea.skill-body {
 .mcp-section .row {
   flex-wrap: wrap;
 }
+
+.cli-card {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.cli-card .row {
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.cli-actions {
+  margin: 6px 0 0 18px;
+  flex-wrap: wrap;
+  align-items: center !important;
+}
+
+.cli-options {
+  margin: 8px 0 0 18px;
+}
+
+.cli-card .check-line span {
+  font-size: 12px;
+}
+
+.row.add-connection {
+  display: flex;
+  gap: 12px;
+}
