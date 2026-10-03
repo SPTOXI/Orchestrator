@@ -66,7 +66,7 @@ impl ToolExecutor for AutonomyGate {
         };
         let started = Utc::now();
         let service = &self.service;
-        let context = service.context_of(&call.origin);
+        let context = service.context_of(&call);
         let agent_id = context.agent.as_ref().map(|a| a.id.to_string());
 
         if !service
@@ -83,7 +83,7 @@ impl ToolExecutor for AutonomyGate {
             );
         }
         // The mode may have changed during the pause.
-        let context = service.context_of(&call.origin);
+        let context = service.context_of(&call);
         if context.mode != AutonomyMode::Unrestricted {
             let verdict = service.judge(&call, read_only, &context);
             match verdict.decision {

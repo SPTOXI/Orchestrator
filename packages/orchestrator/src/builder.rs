@@ -2,8 +2,8 @@
 //! project's memory that matters for its task, within a token budget.
 //!
 //! Sections, in the master document's order: task, working memory, project
-//! memory, relevant files, recent errors, relevant history, Git state and
-//! handoff. Chosen by rules and full-text search (no AI call), with paths
+//! memory, related projects (ADR-0023), relevant files, recent errors,
+//! relevant history, Git state and handoff. Chosen by rules and full-text search (no AI call), with paths
 //! but never file contents, and never the whole history.
 
 use crate::packet;
@@ -28,6 +28,7 @@ pub enum SectionKind {
     Task,
     Working,
     Project,
+    Related,
     Files,
     Errors,
     History,
@@ -41,6 +42,7 @@ impl SectionKind {
             Self::Task => "TASK",
             Self::Working => "WORKING MEMORY",
             Self::Project => "PROJECT MEMORY",
+            Self::Related => "RELATED PROJECTS",
             Self::Files => "RELEVANT FILES",
             Self::Errors => "RECENT ERRORS",
             Self::History => "RELEVANT HISTORY",
@@ -54,6 +56,7 @@ impl SectionKind {
             Self::Task => "task",
             Self::Working => "working",
             Self::Project => "project",
+            Self::Related => "related",
             Self::Files => "files",
             Self::Errors => "errors",
             Self::History => "history",
@@ -75,6 +78,7 @@ mod priority {
     pub const PROJECT: u8 = 4;
     pub const WORKING: u8 = 5;
     pub const PINNED: u8 = 6;
+    pub const RELATED: u8 = 6;
     pub const GIT: u8 = 7;
 }
 
@@ -91,6 +95,7 @@ const ERRORS: usize = 4;
 const ERROR_DAYS: i64 = 7;
 const HISTORY: usize = 4;
 const GIT_FILES: usize = 10;
+const RELATED_PROJECTS: usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Item {
@@ -302,6 +307,7 @@ impl ContextBuilder {
                 let task = task_text(request);
                 drafts.push(self.working_section(&project.id, request.session_id.as_deref()));
                 drafts.push(self.project_section(&project.id, &task));
+                drafts.push(self.related_section(&project.id, !request.no_tools));
                 drafts.push(self.files_section(&project.id, root, &task, &git_paths));
                 drafts.push(self.errors_section(&project.id));
                 drafts.push(self.history_section(&project.id, &task, request));
@@ -357,6 +363,47 @@ impl ContextBuilder {
             notes,
             text,
         }
+    }
+
+    /// The projects that work with this one (ADR-0023): what they are and
+    /// how they relate, so the AI knows whom to consult.
+    fn related_section(&self, project_id: &str, tools: bool) -> Draft {
+        let links = self.store.project_links(project_id);
+        let mut items: Vec<Item> = links
+            .iter()
+            .take(RELATED_PROJECTS)
+            .map(|link| {
+                let note = if link.note.is_empty() {
+                    String::new()
+                } else {
+                    format!(" — {}", line(&link.note, 200))
+                };
+                let stack = link
+                    .project
+                    .stack
+                    .as_ref()
+                    .map(stack_words)
+                    .filter(|words| !words.is_empty())
+                    .map(|words| format!(" ({words})"))
+                    .unwrap_or_default();
+                Item::bullet(
+                    format!(
+                        "{} at {}{stack}{note}",
+                        link.project.name, link.project.path
+                    ),
+                    priority::RELATED,
+                )
+            })
+            .collect();
+        if !items.is_empty() && tools {
+            items.push(Item::plain(
+                "Their files can be read by absolute path. projects.related tells more about \
+                 them, projects.ask asks the AI that works on one of them, and \
+                 projects.request leaves it a task.",
+                priority::RELATED,
+            ));
+        }
+        Draft::with(SectionKind::Related, items)
     }
 
     fn working_section(&self, project_id: &str, session_id: Option<&str>) -> Draft {
@@ -609,6 +656,18 @@ impl Draft {
             removed: 0,
         }
     }
+}
+
+/// Languages and frameworks of a stored stack, for one line.
+fn stack_words(stack: &serde_json::Value) -> String {
+    ["languages", "frameworks"]
+        .iter()
+        .filter_map(|key| stack.get(key).and_then(|v| v.as_array()))
+        .flatten()
+        .filter_map(|v| v.as_str())
+        .take(5)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn order(kind: SectionKind) -> u8 {

@@ -251,6 +251,17 @@ pub fn summary(call: &ToolCall) -> String {
             line(arg(call, "title").unwrap_or(""), 120)
         ),
         "agent.finish" => "Entregar o resultado da task".to_owned(),
+        "projects.ask" => format!(
+            "Perguntar à IA do projeto {}: {}",
+            arg(call, "project").unwrap_or("?"),
+            line(arg(call, "question").unwrap_or(""), 120)
+        ),
+        "projects.request" => format!(
+            "Deixar uma task no projeto {}: {}",
+            arg(call, "project").unwrap_or("?"),
+            line(arg(call, "title").unwrap_or(""), 120)
+        ),
+        "projects.related" => "Consultar os projetos relacionados".to_owned(),
         other => other.to_owned(),
     }
 }
@@ -336,6 +347,13 @@ mod tests {
         assert_eq!(
             summary(&call("web.fetch", json!({"url": "https://example.com"}))),
             "Ler a página https://example.com"
+        );
+        assert_eq!(
+            summary(&call(
+                "projects.ask",
+                json!({"project": "api", "question": "Qual a rota de usuários?"})
+            )),
+            "Perguntar à IA do projeto api: Qual a rota de usuários?"
         );
         // GitHub (ADR-0017).
         assert_eq!(

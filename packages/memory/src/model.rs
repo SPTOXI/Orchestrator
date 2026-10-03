@@ -16,6 +16,20 @@ pub struct Project {
     pub last_opened_at: DateTime<Utc>,
     /// What the detector found the last time the project was opened.
     pub stack: Option<Value>,
+    /// Place in the sidebar while the project is open in the app; `None`
+    /// when closed (ADR-0023).
+    #[serde(default)]
+    pub open_rank: Option<i64>,
+}
+
+/// A project that works with another one (ADR-0023), seen from that one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectLink {
+    pub project: Project,
+    /// How the two relate, in the user's words.
+    pub note: String,
+    pub created_at: DateTime<Utc>,
 }
 
 /// A recent project coming from the UI's old list (`localStorage`).

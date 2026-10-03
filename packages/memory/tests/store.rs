@@ -1064,3 +1064,61 @@ fn a_backup_of_the_open_store_has_everything_and_reopens() {
         .backup_to(&dir.path().join("x.db"))
         .is_err());
 }
+
+/// ADR-0023: projects open side by side, and the ones that work together.
+#[test]
+fn projects_open_side_by_side_and_link_to_each_other() {
+    let store = MemoryStore::in_memory();
+    record(&store, &opened("/p/api", "api", &["Rust"]));
+    record(&store, &opened("/p/app", "app", &["TypeScript"]));
+    record(&store, &opened("/p/site", "site", &["TypeScript"]));
+    // Opening one again keeps its place.
+    record(&store, &opened("/p/api", "api", &["Rust"]));
+    let names = |list: Vec<orchestrator_memory::Project>| {
+        list.into_iter().map(|p| p.name).collect::<Vec<_>>()
+    };
+    assert_eq!(names(store.projects_open()), ["api", "app", "site"]);
+    assert_eq!(store.current_project().unwrap().name, "api");
+    let id = |path: &str| store.project_by_path(path).unwrap().id;
+    let (api, app, site) = (id("/p/api"), id("/p/app"), id("/p/site"));
+
+    store
+        .projects_reorder(&[site.clone(), api.clone(), "nope".into()])
+        .unwrap();
+    assert_eq!(names(store.projects_open()), ["site", "api", "app"]);
+
+    // Closing the project the app shows: the next one in the list.
+    let next = store.project_close(&api).unwrap().unwrap();
+    assert_eq!(next.name, "site");
+    assert!(store.current_project().is_none());
+    assert_eq!(names(store.projects_open()), ["site", "app"]);
+    assert_eq!(store.project(&api).unwrap().open_rank, None);
+    // Reopened, it goes to the end.
+    record(&store, &opened("/p/api", "api", &["Rust"]));
+    assert_eq!(names(store.projects_open()), ["site", "app", "api"]);
+
+    // Links, read from either side; the note changes in place.
+    let link = store.project_link(&app, &api, "o app usa a API").unwrap();
+    assert_eq!(link.project.name, "api");
+    assert_eq!(link.note, "o app usa a API");
+    store
+        .project_link(&api, &app, "  o app consome a API  ")
+        .unwrap();
+    store.project_link(&site, &api, "").unwrap();
+    let from_api = store.project_links(&api);
+    assert_eq!(
+        from_api
+            .iter()
+            .map(|l| (l.project.name.as_str(), l.note.as_str()))
+            .collect::<Vec<_>>(),
+        [("app", "o app consome a API"), ("site", "")]
+    );
+    assert_eq!(store.project_links(&app).len(), 1);
+    assert!(store.project_link(&api, &api, "x").is_err());
+    assert!(store.project_link(&api, "nope", "x").is_err());
+
+    assert!(store.project_unlink(&api, &app).unwrap());
+    assert!(!store.project_unlink(&app, &api).unwrap());
+    assert!(store.project_links(&app).is_empty());
+    assert_eq!(store.project_links(&api).len(), 1);
+}

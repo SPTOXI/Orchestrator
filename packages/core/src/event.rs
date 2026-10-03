@@ -94,6 +94,12 @@ pub enum EventKind {
     ContextCompacted,
     /// The app opened in a new version (ADR-0019).
     AppUpdated,
+    /// Two projects were linked, or unlinked, as working together
+    /// (ADR-0023).
+    ProjectLinked,
+    /// The AI of one project asked the AI of a related one, and got its
+    /// answer (ADR-0023).
+    ProjectAsked,
 }
 
 /// A durable, provider-independent history entry.

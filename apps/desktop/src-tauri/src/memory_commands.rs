@@ -3,11 +3,12 @@
 //! with origin `user`.
 
 use crate::AppState;
-use orchestrator_core::{CallOrigin, EventSink};
+use orchestrator_core::{AuditEvent, CallOrigin, EventKind, EventSink};
 use orchestrator_memory::{
     Decision, DecisionInput, HistoryPage, HistoryQuery, MemoryEntry, MemoryInput, MemoryOverview,
-    Project, RecentImport, SearchHit,
+    Project, ProjectLink, RecentImport, SearchHit,
 };
+use serde_json::json;
 use tauri::State;
 
 /// A page of history (filters and cursor in `query`).
@@ -34,6 +35,87 @@ pub fn project_current(state: State<'_, AppState>) -> Option<Project> {
 #[tauri::command]
 pub fn project_forget(state: State<'_, AppState>, id: String) -> Result<(), String> {
     state.store.project_forget(&id)
+}
+
+/// Projects open side by side in the app, in sidebar order (ADR-0023).
+#[tauri::command]
+pub fn projects_open(state: State<'_, AppState>) -> Vec<Project> {
+    state.store.projects_open()
+}
+
+/// Closes a project in the app: it leaves the sidebar, its sessions,
+/// memory and history stay. Returns the project to show next, if any.
+#[tauri::command]
+pub fn project_close(state: State<'_, AppState>, id: String) -> Result<Option<Project>, String> {
+    state.store.project_close(&id)
+}
+
+/// Orders the open projects as the sidebar shows them.
+#[tauri::command]
+pub fn projects_reorder(state: State<'_, AppState>, ids: Vec<String>) -> Result<(), String> {
+    state.store.projects_reorder(&ids)
+}
+
+/// The projects that work with `id` (ADR-0023).
+#[tauri::command]
+pub fn project_links(state: State<'_, AppState>, id: String) -> Vec<ProjectLink> {
+    state.store.project_links(&id)
+}
+
+fn link_event(state: &AppState, id: &str, other: &str, note: &str, linked: bool) {
+    let name = |id: &str| {
+        state
+            .store
+            .project(id)
+            .map(|p| p.name)
+            .unwrap_or_else(|| id.to_owned())
+    };
+    let summary = if linked {
+        format!("projetos relacionados: {} ↔ {}", name(id), name(other))
+    } else {
+        format!("relação desfeita: {} ↔ {}", name(id), name(other))
+    };
+    state.sink.audit(AuditEvent::new(
+        EventKind::ProjectLinked,
+        CallOrigin::User,
+        summary,
+        json!({
+            "projectId": id,
+            "otherProjectId": other,
+            "note": note,
+            "linked": linked,
+        }),
+    ));
+}
+
+/// Links two projects, or changes the note of their link
+/// (`PROJECT_LINKED`). Returns the links of `id`.
+#[tauri::command]
+pub fn project_link(
+    state: State<'_, AppState>,
+    id: String,
+    other: String,
+    note: Option<String>,
+) -> Result<Vec<ProjectLink>, String> {
+    let link = state
+        .store
+        .project_link(&id, &other, note.as_deref().unwrap_or(""))?;
+    link_event(&state, &id, &other, &link.note, true);
+    Ok(state.store.project_links(&id))
+}
+
+/// Unlinks two projects; their data stays (`PROJECT_LINKED`, linked
+/// false). Returns the links of `id`.
+#[tauri::command]
+pub fn project_unlink(
+    state: State<'_, AppState>,
+    id: String,
+    other: String,
+) -> Result<Vec<ProjectLink>, String> {
+    if state.store.project_unlink(&id, &other)? {
+        link_event(&state, &id, &other, "", false);
+    }
+    Ok(state.store.project_links(&id))
 }
 
 /// Imports the recent list the UI kept in `localStorage` before Phase 6.

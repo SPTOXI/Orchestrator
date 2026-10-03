@@ -1,4 +1,4 @@
-import { type MouseEvent as ReactMouseEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type MouseEvent as ReactMouseEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow, UserAttentionType } from "@tauri-apps/api/window";
 import { CommandPanel } from "./components/CommandPanel";
 import { ConnectionEditor } from "./components/ConnectionEditor";
@@ -53,7 +53,16 @@ import { TerminalPanel } from "./components/TerminalPanel";
 import { baseName, joinPath } from "./lib/format";
 import type { RecentProject } from "./lib/recent";
 import { agentApi, appApi, errorMessage, isTauri, projectApi, sessionApi, shellApi } from "./lib/runtime";
-import type { AppInfo, ConnectionsView, Deliberation, ProjectProfile, SessionInfo, ShellList } from "./lib/types";
+import type { AppInfo, ConnectionsView, Deliberation, Project, ProjectProfile, SessionInfo, ShellList } from "./lib/types";
+import {
+  linkCandidates,
+  pathKey,
+  runningByProject,
+  samePath,
+  scopeOf,
+  tabAfterSwitch,
+  visibleTabs,
+} from "./lib/workspace";
 import { useConnections } from "./lib/useConnections";
 import { useCouncil } from "./lib/useCouncil";
 import { useMemory } from "./lib/useMemory";
@@ -83,25 +92,26 @@ interface FinishToast {
 type PanelId = "project" | "providers" | "tasks" | "agents" | "terminal" | "git" | "memory" | "history";
 type BottomTab = "terminal" | "processes" | "command";
 
-/** Main-area tabs. */
-type Tab =
+/** Main-area tabs. Tabs that a project has once (memory, board…) get an
+ * id per project (`memory@<path>`), ADR-0023. */
+type TabBody =
   | { id: string; kind: "file"; path: string }
   | { id: string; kind: "diff"; repo: string; file: string; staged: boolean }
-  | { id: "profile"; kind: "profile" }
+  | { id: string; kind: "profile" }
   | { id: "discovery"; kind: "discovery" }
   | { id: string; kind: "session"; sessionId: string }
   | { id: string; kind: "connection"; connectionId: string | null }
   | { id: "council"; kind: "council" }
   /** Pick a model with the router / Council; `deliberation` from the history. */
-  | { id: "route"; kind: "route"; deliberation: Deliberation | null }
+  | { id: string; kind: "route"; deliberation: Deliberation | null }
   /** Project memory; `nonce` changes when the sidebar asks again. */
-  | { id: "memory"; kind: "memory"; section: MemorySection; query: string; nonce: number }
-  | { id: "context"; kind: "context"; request: ContextTabRequest; nonce: number }
+  | { id: string; kind: "memory"; section: MemorySection; query: string; nonce: number }
+  | { id: string; kind: "context"; request: ContextTabRequest; nonce: number }
   | { id: string; kind: "handoff"; sessionId: string | null; handoffId: string | null }
   /** One task; `taskId` null is the form of a new one. */
   | { id: string; kind: "task"; taskId: string | null; nonce: number }
   /** Agent Board: the tasks of the project in columns (ADR-0015). */
-  | { id: "board"; kind: "board" }
+  | { id: string; kind: "board" }
   /** A pull request; `number` null is the form of a new one (ADR-0017). */
   | { id: string; kind: "pr"; number: number | null; nonce: number }
   /** What the AIs spent (ADR-0018). */
@@ -109,6 +119,9 @@ type Tab =
   /** "Configurações" (ADR-0021): rules, skills, policies, MCP, CLIs, offline
    * models, GitHub, about. A single tab. */
   | { id: "settings"; kind: "settings" };
+
+/** A tab and the project it belongs to (`null`: every project), ADR-0023. */
+type Tab = TabBody & { scope: string | null };
 
 const ACTIVITIES: Array<{ id: PanelId; label: string; icon: () => ReactNode }> = [
   { id: "project", label: "PROJECT", icon: FolderIcon },
@@ -233,28 +246,54 @@ export function App() {
     agents.list.find((agent) => agent.session !== null && agent.session === openSessionId) ??
     agentOfTask(agents.list, currentTask?.id ?? null);
   const sessionsById = new Map(providers.sessions.map((s) => [s.id, s]));
+  const sessionsRef = useRef(sessionsById);
+  sessionsRef.current = sessionsById;
   const activeProvider = providers.view?.providers.find((p) => p.active) ?? null;
   const runningSessions = providers.sessions.filter((s) => s.status === "running").length;
 
   /** Working directory for terminals, processes and commands. */
   const workspace = profile?.path ?? info?.baseDir ?? "";
-
-  const showTab = useCallback((tab: Tab) => {
-    setTabs((all) => (all.some((t) => t.id === tab.id) ? all : [...all, tab]));
-    setActiveTab(tab.id);
-  }, []);
+  /** The open project: tabs, terminals and new sessions belong to it; the
+   * others stay open in the sidebar, their AIs working (ADR-0023). */
+  const activePath = profile?.path ?? null;
+  const activePathRef = useRef(activePath);
+  activePathRef.current = activePath;
+  /** The tab each project showed last. */
+  const lastTab = useRef(new Map<string, string>());
+  const tabsRef = useRef<Tab[]>([]);
+  tabsRef.current = tabs;
+  /** Profiles of the projects opened in this run: switching shows one at
+   * once while it is read again. */
+  const profiles = useRef(new Map<string, ProjectProfile>());
+  /** Id of a tab a project has once (memory, board…). */
+  const scopedId = (base: string) => (activePathRef.current ? `${base}@${activePathRef.current}` : base);
 
   const openProject = useCallback(
     async (path: string, options: { quiet?: boolean } = {}) => {
       setOpening(true);
       setStartupError(null);
+      const known = profiles.current.get(pathKey(path));
+      const before = activePathRef.current ? (profiles.current.get(pathKey(activePathRef.current)) ?? null) : null;
+      if (known) {
+        setProfile(known);
+        activePathRef.current = known.path;
+      }
       try {
         const opened = await projectApi.open(path);
+        profiles.current.set(pathKey(opened.path), opened);
         setProfile(opened);
+        activePathRef.current = opened.path;
         storeProject(opened.path);
         setPanel("project");
         return true;
       } catch (e) {
+        if (known) {
+          // It could not be opened again (a folder that is gone): back to the
+          // project shown before.
+          profiles.current.delete(pathKey(path));
+          setProfile(before);
+          activePathRef.current = before?.path ?? null;
+        }
         if (!options.quiet) setStartupError(`Não foi possível abrir ${path}: ${errorMessage(e)}`);
         return false;
       } finally {
@@ -263,6 +302,45 @@ export function App() {
     },
     [],
   );
+
+  /** Shows a tab in its project; a session of another project switches to
+   * that project (ADR-0023). */
+  const showTab = useCallback(
+    (tab: TabBody) => {
+      const sessionProject = tab.kind === "session" ? (sessionsRef.current.get(tab.sessionId)?.projectPath ?? null) : null;
+      const scope = scopeOf(tab.kind, activePathRef.current, sessionProject);
+      setTabs((all) => (all.some((t) => t.id === tab.id) ? all : [...all, { ...tab, scope }]));
+      setActiveTab(tab.id);
+      if (scope && !samePath(scope, activePathRef.current)) {
+        lastTab.current.set(pathKey(scope), tab.id);
+        void openProject(scope);
+      }
+    },
+    [openProject],
+  );
+  /** Shows `tab`, replacing the tab with its id (a reused tab). */
+  const replaceTab = (tab: TabBody) => {
+    const scope = scopeOf(tab.kind, activePathRef.current);
+    setTabs((all) =>
+      all.some((t) => t.id === tab.id)
+        ? all.map((t) => (t.id === tab.id ? { ...tab, scope } : t))
+        : [...all, { ...tab, scope }],
+    );
+    setActiveTab(tab.id);
+  };
+
+  // Another project: its tabs, on the one it showed last.
+  useEffect(() => {
+    setActiveTab((current) => {
+      const shown = tabsRef.current.find((t) => t.id === current);
+      if (shown?.scope && samePath(shown.scope, activePath)) return current;
+      return tabAfterSwitch(tabsRef.current, activePath, activePath ? lastTab.current.get(pathKey(activePath)) : null);
+    });
+  }, [activePath]);
+  useEffect(() => {
+    const tab = tabsRef.current.find((t) => t.id === activeTab);
+    if (tab?.scope) lastTab.current.set(pathKey(tab.scope), tab.id);
+  }, [activeTab]);
 
   useEffect(() => {
     if (!ready) return;
@@ -372,13 +450,10 @@ export function App() {
   };
   const openCouncil = () => showTab({ id: "council", kind: "council" });
   /** The context tab is reused; each request refreshes it. */
-  const openContext = (request: ContextTabRequest) => {
-    const tab = { id: "context" as const, kind: "context" as const, request, nonce: Date.now() };
-    setTabs((all) => (all.some((t) => t.id === "context") ? all.map((t) => (t.id === "context" ? tab : t)) : [...all, tab]));
-    setActiveTab("context");
-  };
+  const openContext = (request: ContextTabRequest) =>
+    replaceTab({ id: scopedId("context"), kind: "context", request, nonce: Date.now() });
   /** The Agent Board is a single tab (section 25). */
-  const openBoard = () => showTab({ id: "board", kind: "board" });
+  const openBoard = () => showTab({ id: scopedId("board"), kind: "board" });
   /** Configurações is a single tab; the older tabs are sections of it
    * (ADR-0021). */
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("rules");
@@ -389,7 +464,7 @@ export function App() {
   const openAutonomy = () => openSettings("policies");
   /** One tab per pull request; the new-PR form has its own (ADR-0017). */
   const openPull = (number: number | null) =>
-    showTab({ id: number === null ? "pr:new" : `pr:${number}`, kind: "pr", number, nonce: Date.now() });
+    showTab({ id: scopedId(number === null ? "pr:new" : `pr:${number}`), kind: "pr", number, nonce: Date.now() });
   const openGitHub = () => openSettings("github");
   /** Tokens and cost (ADR-0018). */
   const openCost = () => showTab({ id: "cost", kind: "cost" });
@@ -403,7 +478,7 @@ export function App() {
   };
   /** One tab per task; the new-task form has its own. */
   const openTask = (taskId: string | null) => {
-    const id = taskId ? `task:${taskId}` : "task:new";
+    const id = taskId ? `task:${taskId}` : scopedId("task:new");
     showTab({ id, kind: "task", taskId, nonce: Date.now() });
   };
   /** One handoff tab per source session (new) or saved handoff. */
@@ -413,20 +488,12 @@ export function App() {
   };
   /** The route tab is reused; opening a past deliberation shows it there. */
   /** The memory tab is reused; the sidebar picks its section. */
-  const openMemory = (section: MemorySection, query = "") => {
-    const tab = { id: "memory" as const, kind: "memory" as const, section, query, nonce: Date.now() };
-    setTabs((all) => (all.some((t) => t.id === "memory") ? all.map((t) => (t.id === "memory" ? tab : t)) : [...all, tab]));
-    setActiveTab("memory");
-  };
+  const openMemory = (section: MemorySection, query = "") =>
+    replaceTab({ id: scopedId("memory"), kind: "memory", section, query, nonce: Date.now() });
   const openRoute = (deliberation: Deliberation | null = null) => {
-    setTabs((all) =>
-      all.some((t) => t.id === "route")
-        ? deliberation
-          ? all.map((t) => (t.id === "route" ? { ...t, deliberation } : t))
-          : all
-        : [...all, { id: "route", kind: "route", deliberation }],
-    );
-    setActiveTab("route");
+    const id = scopedId("route");
+    const open = tabs.find((t) => t.id === id);
+    replaceTab({ id, kind: "route", deliberation: deliberation ?? (open?.kind === "route" ? open.deliberation : null) });
   };
   const routedSession = (session: SessionInfo) => {
     void providers.refresh();
@@ -443,7 +510,7 @@ export function App() {
     setTabs((all) => all.map((t) => (t.id === tabId && t.kind === "connection" ? { ...t, connectionId } : t)));
   const openDiff = (file: string, staged: boolean) => {
     const repo = git.status?.root ?? profile?.path;
-    if (repo) showTab({ id: `diff:${staged ? "s" : "u"}:${file}`, kind: "diff", repo, file, staged });
+    if (repo) showTab({ id: `diff:${staged ? "s" : "u"}:${repo}:${file}`, kind: "diff", repo, file, staged });
   };
 
   const closeTab = (id: string) => {
@@ -454,10 +521,13 @@ export function App() {
       return;
     }
     setConfirmClose(null);
-    const index = tabs.findIndex((t) => t.id === id);
-    const next = tabs.filter((t) => t.id !== id);
-    setTabs(next);
-    if (activeTab === id) setActiveTab(next[Math.min(index, next.length - 1)]?.id ?? null);
+    const shown = visibleTabs(tabs, activePath);
+    const index = shown.findIndex((t) => t.id === id);
+    setTabs(tabs.filter((t) => t.id !== id));
+    if (activeTab === id) {
+      const rest = shown.filter((t) => t.id !== id);
+      setActiveTab(rest[Math.min(index, rest.length - 1)]?.id ?? null);
+    }
     if (tab?.kind === "file") {
       setDirtyFiles((all) => {
         const rest = new Set(all);
@@ -496,6 +566,37 @@ export function App() {
     if (id === "terminal") setBottomTab("terminal");
   };
 
+  /** The tabs of the open project, and the ones of every project. */
+  const shownTabs = visibleTabs(tabs, activePath);
+  /** Sessions working now, per project (the sidebar shows them). */
+  const runningPerProject = useMemo(() => runningByProject(providers.sessions), [providers.sessions]);
+
+  /** Takes a project off the sidebar (ADR-0023): its tabs close, its AIs
+   * keep working, nothing of it is deleted. */
+  const closeProject = async (project: Project) => {
+    const own = tabs.filter((t) => samePath(t.scope, project.path));
+    const unsaved = own.filter((t) => t.kind === "file" && dirtyFiles.has(t.path));
+    if (unsaved.length > 0) {
+      setStartupError(
+        `Salve ou descarte antes as alterações de ${unsaved.length === 1 ? "um arquivo" : `${unsaved.length} arquivos`} de ${project.name}.`,
+      );
+      return;
+    }
+    const next = await projects.close(project.id);
+    setTabs((all) => all.filter((t) => !samePath(t.scope, project.path)));
+    lastTab.current.delete(pathKey(project.path));
+    profiles.current.delete(pathKey(project.path));
+    if (samePath(project.path, activePath)) {
+      if (next) {
+        await openProject(next.path);
+      } else {
+        setProfile(null);
+        activePathRef.current = null;
+        storeProject(null);
+      }
+    }
+  };
+
   const gitVersion = `${git.status?.head ?? ""}:${git.status?.files.map((f) => `${f.path}${f.staged}${f.unstaged}`).join("|") ?? ""}`;
 
   const sidebar = (() => {
@@ -508,10 +609,18 @@ export function App() {
             gitStatus={git.status}
             recent={recent}
             opening={opening}
+            openProjects={projects.open}
+            running={runningPerProject}
+            links={projectId ? projects.links : []}
+            linkCandidates={linkCandidates(projectId ? projects.current : null, projects.open, projects.recentProjects, projects.links)}
+            linkError={projects.error}
             onPickFolder={() => void pickFolder()}
             onOpenProject={(path) => void openProject(path)}
+            onCloseProject={(project) => void closeProject(project)}
+            onLink={projects.link}
+            onUnlink={(other) => void projects.unlink(other)}
             onRemoveRecent={forgetRecent}
-            onShowProfile={() => showTab({ id: "profile", kind: "profile" })}
+            onShowProfile={() => showTab({ id: scopedId("profile"), kind: "profile" })}
             onShowDiscovery={() => showTab({ id: "discovery", kind: "discovery" })}
             onOpenFile={openFile}
           />
@@ -689,9 +798,9 @@ export function App() {
               </div>
             )}
             {startupError && <div className="inline-error">{startupError}</div>}
-            {tabs.length > 0 && (
+            {shownTabs.length > 0 && (
               <div className="tabs">
-                {tabs.map((tab) => {
+                {shownTabs.map((tab) => {
                   const dirty = tab.kind === "file" && dirtyFiles.has(tab.path);
                   return (
                     <div
@@ -746,7 +855,7 @@ export function App() {
                 })}
               </div>
             )}
-            {tabs.length === 0 && (
+            {shownTabs.length === 0 && (
               <Welcome
                 ready={ready}
                 hasProject={profile !== null}
@@ -758,7 +867,11 @@ export function App() {
               />
             )}
             {tabs.map((tab) => {
-              const active = tab.id === activeTab;
+              // Another project's tabs wait hidden; only files stay mounted,
+              // so what is not saved is not lost (ADR-0023).
+              const shown = tab.scope === null || samePath(tab.scope, activePath);
+              if (!shown && tab.kind !== "file") return null;
+              const active = shown && tab.id === activeTab;
               switch (tab.kind) {
                 case "file":
                   return <FileEditor key={tab.id} path={tab.path} active={active} onDirtyChange={onDirtyChange} />;
@@ -1042,7 +1155,7 @@ export function App() {
                       key={tab.id}
                       active={active}
                       onOpenProject={(path) => {
-                        void openProject(path).then((ok) => ok && showTab({ id: "profile", kind: "profile" }));
+                        void openProject(path).then((ok) => ok && showTab({ id: scopedId("profile"), kind: "profile" }));
                       }}
                     />
                   );
@@ -1177,8 +1290,8 @@ function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenPr
               <h2>O que já funciona</h2>
               <ul>
                 <li>
-                  <strong>PROJECT</strong>: abrir e descobrir projetos, perfil (stack, runtimes, Docker, bancos, Git) e
-                  arquivos.
+                  <strong>PROJECT</strong>: abrir e descobrir projetos, vários lado a lado na barra lateral, perfil
+                  (stack, runtimes, Docker, bancos, Git) e arquivos; projetos relacionados, cujas IAs se consultam.
                 </li>
                 <li>
                   <strong>GIT</strong>: branch, stage, diff, commit, pull, push, stash e histórico.
@@ -1253,7 +1366,10 @@ function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenPr
           <ul>
             <li>0 a 11 concluídas: o plano do documento mestre está completo.</li>
             <li>12 — instaladores, release e atualização automática.</li>
-            <li>Depois: acesso total à internet, Configurações, assinaturas por CLI, modelos offline e MCP.</li>
+            <li>
+              Depois: acesso total à internet, Configurações, assinaturas por CLI, modelos offline, MCP, dados
+              preservados nas atualizações e vários projetos com IAs que se consultam.
+            </li>
           </ul>
         </div>
       </div>

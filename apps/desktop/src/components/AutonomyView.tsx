@@ -32,7 +32,8 @@ import type {
   Trial,
 } from "../lib/types";
 
-/** Tools the AIs have besides the runtime's (ADR-0013, ADR-0015). */
+/** Tools the AIs have besides the runtime's (ADR-0013, ADR-0015,
+ * ADR-0023). */
 const ENGINE_TOOLS = [
   "memory.working",
   "memory.search",
@@ -42,6 +43,9 @@ const ENGINE_TOOLS = [
   "decision.save",
   "agent.finish",
   "agent.delegate",
+  "projects.related",
+  "projects.ask",
+  "projects.request",
 ];
 
 interface Props {

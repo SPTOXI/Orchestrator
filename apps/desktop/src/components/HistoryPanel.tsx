@@ -76,6 +76,8 @@ const KIND_FILTERS: Array<{ value: EventKind | ""; label: string }> = [
   { value: "GITHUB_ISSUE_CREATED", label: "GITHUB_ISSUE_CREATED" },
   { value: "CONTEXT_COMPACTED", label: "CONTEXT_COMPACTED" },
   { value: "APP_UPDATED", label: "APP_UPDATED" },
+  { value: "PROJECT_LINKED", label: "PROJECT_LINKED" },
+  { value: "PROJECT_ASKED", label: "PROJECT_ASKED" },
 ];
 
 const PAGE = 500;

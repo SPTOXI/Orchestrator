@@ -31,7 +31,7 @@ use orchestrator_agents::{AgentDeps, AgentService, AgentSlot, AgentTools, LockMa
 use orchestrator_core::{AuditEvent, EventSink, StreamEvent};
 use orchestrator_engine::{
     AutonomyGate, AutonomyService, ContextBuilder, EngineTools, GuidanceService, GuidedContext,
-    HandoffService, SkillTools, StoreSessions, TaskService,
+    HandoffService, ProjectTools, SkillTools, StoreSessions, TaskService,
 };
 use orchestrator_mcp::{McpManager, McpTools, ToolServer};
 use orchestrator_memory::{HistoryQuery, MemoryStore};
@@ -362,15 +362,23 @@ pub fn run() {
             }
             let starting = mcp.clone();
             tauri::async_runtime::spawn(async move { starting.start_all().await });
+            // The tools between related projects (ADR-0023) need the
+            // sessions and the tasks, which need these tools: connected
+            // below.
+            let project_tools = Arc::new(ProjectTools::new(
+                Arc::new(EngineTools::new(
+                    Arc::new(RuntimeTools(runtime.clone())),
+                    store.clone(),
+                    sink.clone(),
+                )),
+                store.clone(),
+                sink.clone(),
+            ));
             let tools = AutonomyGate::new(
                 Arc::new(McpTools::new(
                     Arc::new(SkillTools::new(
                         Arc::new(AgentTools::new(
-                            Arc::new(EngineTools::new(
-                                Arc::new(RuntimeTools(runtime.clone())),
-                                store.clone(),
-                                sink.clone(),
-                            )),
+                            project_tools.clone(),
                             store.clone(),
                             locks.clone(),
                             agent_slot.clone(),
@@ -416,6 +424,7 @@ pub fn run() {
                 builder.clone(),
                 sink.clone(),
             );
+            project_tools.connect(sessions.clone(), tasks.clone());
             let (agents, agents_warning) = AgentService::new(
                 AgentDeps {
                     sessions: sessions.clone(),
@@ -540,6 +549,12 @@ pub fn run() {
             memory_commands::project_current,
             memory_commands::project_forget,
             memory_commands::projects_import_recent,
+            memory_commands::projects_open,
+            memory_commands::project_close,
+            memory_commands::projects_reorder,
+            memory_commands::project_links,
+            memory_commands::project_link,
+            memory_commands::project_unlink,
             memory_commands::memory_overview,
             memory_commands::memory_list,
             memory_commands::memory_save,

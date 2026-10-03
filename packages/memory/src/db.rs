@@ -5,12 +5,12 @@ use rusqlite::{Connection, OpenFlags};
 use std::path::{Path, PathBuf};
 
 /// Schema version this build writes.
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 
 /// Every migration, in order; `MIGRATIONS[n]` takes the schema from `n` to
 /// `n + 1`. Tables of later phases come with their own migrations
 /// (ADR-0012).
-const MIGRATIONS: [&str; 4] = [
+const MIGRATIONS: [&str; 5] = [
     r#"
 CREATE TABLE projects (
     id              TEXT PRIMARY KEY,
@@ -190,6 +190,25 @@ CREATE TABLE file_locks (
     PRIMARY KEY (project_id, path)
 );
 CREATE INDEX file_locks_agent ON file_locks(agent_id);
+"#,
+    // 4 → 5 (ADR-0023): projects open side by side, and the projects that
+    // work together.
+    r#"
+-- Place in the sidebar of a project open in the app; NULL when closed.
+ALTER TABLE projects ADD COLUMN open_rank INTEGER;
+
+-- Projects that work together (an API and the app that uses it, a library
+-- and who depends on it): their AIs consult each other. One row per pair,
+-- the smaller id first.
+CREATE TABLE project_links (
+    a           TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    b           TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    note        TEXT NOT NULL DEFAULT '',  -- how they relate, in the user's words
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (a, b),
+    CHECK (a < b)
+);
+CREATE INDEX project_links_b ON project_links(b);
 "#,
 ];
 
@@ -447,6 +466,41 @@ mod tests {
             .query_row("SELECT count(*) FROM file_locks", [], |r| r.get(0))
             .unwrap();
         assert_eq!((tasks, agents, locks), (1, 0, 0));
+    }
+
+    #[test]
+    fn upgrades_a_phase_12_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("orchestrator.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(&format!(
+                "BEGIN;\n{}\nPRAGMA user_version = 4;\nCOMMIT;",
+                MIGRATIONS[..4].join("\n")
+            ))
+            .unwrap();
+            conn.execute(
+                "INSERT INTO projects (id, path, name, created_at, last_opened_at) VALUES ('p', '/x', 'x', 'a', 'a')",
+                [],
+            )
+            .unwrap();
+        }
+        let db = Database::open(&path).unwrap();
+        let conn = db.conn.lock();
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+        // The project is still there, closed, with no links yet.
+        let open: Option<i64> = conn
+            .query_row("SELECT open_rank FROM projects WHERE id = 'p'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let links: i64 = conn
+            .query_row("SELECT count(*) FROM project_links", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!((open, links), (None, 0));
     }
 
     #[test]

@@ -49,6 +49,7 @@ Na ordem do documento mestre. Uma seção vazia não entra.
 | `TASK` | numa sessão comum, só a indicação de que a tarefa é a primeira mensagem (que já vai na conversa, então não se repete); num handoff, "assuma o trabalho do HANDOFF pela NEXT ACTION" | sempre | — |
 | `WORKING MEMORY` | outras sessões do projeto (provider, estado, turnos, última atividade) e os últimos comandos com o código de saída | L1, os mais recentes; a própria sessão fica de fora | 4 sessões, 5 comandos |
 | `PROJECT MEMORY` | entradas L2 e decisões | fixadas sempre; as demais quando casam com a tarefa; decisões que casam com a tarefa e as aceitas mais recentes | 6 fixadas + 4, 3 + 3 decisões |
+| `RELATED PROJECTS` | projetos relacionados: nome, pasta, stack e a relação, e como alcançá-los (`projects.related`, `projects.ask`, `projects.request`) | os que o usuário relacionou ao projeto (ADR-0023) | 8 |
 | `RELEVANT FILES` | caminhos | citados na tarefa (e que existem no projeto) e alterados recentemente pelo L1, sem repetir os do Git | 5 citados + 6 alterados |
 | `RECENT ERRORS` | falhas com o detalhe | L1 dos últimos 7 dias: ferramentas, turnos, comandos e processos | 4 |
 | `RELEVANT HISTORY` | trechos de mensagens, eventos e handoffs anteriores | busca L3 pelas palavras da tarefa, sem a própria sessão e sem repetir `RECENT ERRORS` | 4 |
@@ -143,6 +144,27 @@ com JSON Schema gerado dos tipos Rust:
 - **Sem remoção:** apagar memória continua só com o usuário; decisões nunca
   são apagadas.
 - **Projeto:** o da sessão que chamou; sem ele, o projeto aberto.
+
+## Projetos relacionados (ADR-0023)
+
+O usuário relaciona projetos que trabalham juntos no painel PROJECT
+("Relacionados"). As IAs de um alcançam os relacionados por três
+ferramentas; projetos não relacionados ficam fora delas.
+
+| Ferramenta | Argumentos | O que faz | Consulta |
+| ---------- | ---------- | --------- | -------- |
+| `projects.related` | — | pasta, stack, relação, memória fixada, decisões aceitas, tasks abertas e sessões de cada relacionado | sim |
+| `projects.ask` | `project` (nome ou pasta), `question`, `fresh?` | pergunta à IA do relacionado, numa sessão daquele projeto ("Conversa com <projeto>"), e devolve a resposta | não |
+| `projects.request` | `project`, `title`, `description?`, `priority?` | deixa uma task no relacionado, dizendo quem pediu | não |
+
+- A pergunta roda com o contexto, as regras e a autonomia do outro projeto,
+  com o provider da sessão mais recente dele (ou o de quem pergunta), e
+  fica na lista de sessões dele, onde o usuário a acompanha.
+- A conversa é reaproveitada nas perguntas seguintes; `fresh: true` abre
+  outra. Uma pergunta espera a conversa terminar a anterior.
+- Uma sessão que está respondendo não pergunta de volta (sem laços).
+- `PROJECT_ASKED` registra a pergunta e a resposta; a chamada gera
+  `TOOL_CALLED` como as outras.
 
 ## Handoff entre IAs
 

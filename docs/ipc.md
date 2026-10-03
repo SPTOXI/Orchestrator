@@ -112,6 +112,12 @@ As escritas têm origem `user`. Referência: [`memory.md`](./memory.md).
 | `project_current` | — | `Project \| null` | — |
 | `project_forget` | `id` | `void` (sai da lista; memória e histórico ficam) | — |
 | `projects_import_recent` | `list: { path, name, openedAt }[]` | quantos entraram | — |
+| `projects_open` | — | `Project[]`: os abertos lado a lado, na ordem da barra lateral (ADR-0023) | — |
+| `project_close` | `id` | `Project \| null`: o próximo a mostrar; o projeto sai da barra lateral, nada é apagado | — |
+| `projects_reorder` | `ids` | `void` | — |
+| `project_links` | `id` | `ProjectLink[]` (`project`, `note`, `createdAt`): os relacionados | — |
+| `project_link` | `id`, `other`, `note?` | `ProjectLink[]` de `id`; relaciona ou muda a nota | `PROJECT_LINKED` |
+| `project_unlink` | `id`, `other` | `ProjectLink[]` de `id` | `PROJECT_LINKED` (`linked: false`) |
 | `memory_overview` | `projectId?` (padrão: o aberto) | `MemoryOverview \| null`: L1 e contagens | — |
 | `memory_list` | `projectId` | `MemoryEntry[]` (fixadas primeiro) | — |
 | `memory_save` | `input: { id?, projectId, kind, title, content, tags, pinned }` | `MemoryEntry` | `MEMORY_SAVED` |
@@ -371,6 +377,9 @@ entrada "Stack" da memória) seguem o mesmo caminho
 - Agentes e as travas de arquivo ficam no banco (migração 4, ADR-0015), e a
   configuração deles em `<app-data>/agents.json`. Ao abrir o app, agentes
   que ficaram em execução são encerrados e as travas, liberadas.
+- Os projetos abertos lado a lado (`projects.open_rank`) e os pares de
+  projetos relacionados (`project_links`) ficam no banco (migração 5,
+  ADR-0023).
 - Backups ficam em `<app-data>/backups/` (ADR-0022): antes de uma
   atualização, ao abrir uma versão nova, antes de migrar o banco e quando
   o usuário pede. Os arquivos de configuração são gravados de forma

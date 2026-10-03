@@ -17,7 +17,7 @@ const MAX_PAGE: usize = 1000;
 pub struct MemoryStore {
     pub(crate) db: Database,
     /// Project open in the app: events without their own project get it.
-    current: Mutex<Option<String>>,
+    pub(crate) current: Mutex<Option<String>>,
 }
 
 pub(crate) type Sql<T> = rusqlite::Result<T>;
@@ -82,6 +82,7 @@ pub(crate) fn project_from_row(row: &rusqlite::Row<'_>) -> Sql<Project> {
         created_at: parse_ts(&row.get::<_, String>("created_at")?),
         last_opened_at: parse_ts(&row.get::<_, String>("last_opened_at")?),
         stack: stack.and_then(|s| serde_json::from_str(&s).ok()),
+        open_rank: row.get("open_rank")?,
     })
 }
 
@@ -179,6 +180,9 @@ impl MemoryStore {
                     }
                     if live {
                         *self.current.lock() = Some(project.id.clone());
+                        // Opening a project adds it to the ones open side
+                        // by side (ADR-0023).
+                        crate::workspace::mark_open(conn, &project.id)?;
                         if created {
                             follow.push(AuditEvent::new(
                                 EventKind::ProjectCreated,

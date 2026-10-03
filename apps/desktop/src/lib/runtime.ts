@@ -59,6 +59,7 @@ import type {
   Project,
   ProjectDecision,
   ProjectDecisionInput,
+  ProjectLink,
   SearchHit,
   DeliberateRequest,
   Deliberation,
@@ -538,6 +539,15 @@ export const memoryApi = {
   projectForget: (id: string) => callProvider<void>("project_forget", { id }),
   importRecent: (list: Array<{ path: string; name: string; openedAt: string }>) =>
     callProvider<number>("projects_import_recent", { list }),
+  /** Projects open side by side, in sidebar order (ADR-0023). */
+  projectsOpen: () => callProvider<Project[]>("projects_open"),
+  /** Closes a project in the app; returns the one to show next. */
+  projectClose: (id: string) => callProvider<Project | null>("project_close", { id }),
+  projectsReorder: (ids: string[]) => callProvider<void>("projects_reorder", { ids }),
+  links: (id: string) => callProvider<ProjectLink[]>("project_links", { id }),
+  link: (id: string, other: string, note: string) =>
+    callProvider<ProjectLink[]>("project_link", { id, other, note }),
+  unlink: (id: string, other: string) => callProvider<ProjectLink[]>("project_unlink", { id, other }),
   /** L1 and totals; default: the open project. */
   overview: (projectId?: string) => callProvider<MemoryOverview | null>("memory_overview", { projectId }),
   list: (projectId: string) => callProvider<MemoryEntry[]>("memory_list", { projectId }),

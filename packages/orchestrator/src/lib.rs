@@ -17,6 +17,8 @@
 //! - [`GuidanceService`] / [`GuidedContext`] / [`SkillTools`]: development
 //!   rules and skills in every session's instructions, `skill.read`
 //!   (ADR-0021).
+//! - [`ProjectTools`]: the projects that work together — the AI of one
+//!   knows the others, asks their AI and leaves them tasks (ADR-0023).
 //!
 //! Depends on `core`, `providers`, `memory` and `git`; the app wires it.
 
@@ -26,6 +28,7 @@ mod guidance;
 mod handoff;
 pub mod packet;
 mod persistence;
+mod projects;
 mod settings;
 mod task;
 mod text;
@@ -45,6 +48,7 @@ pub use handoff::{
     StartedHandoff,
 };
 pub use persistence::StoreSessions;
+pub use projects::{definitions as project_tool_definitions, ProjectTools};
 pub use settings::{ContextSettings, DEFAULT_BUDGET, MAX_BUDGET, MIN_BUDGET};
 pub use task::{
     as_task_text, next_states, OpenedTask, StartTaskSession, StartedTask, SubtaskProgress, TaskRef,

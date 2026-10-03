@@ -231,8 +231,8 @@ impl AutonomyService {
 
     // ---- who and where ----------------------------------------------
 
-    pub fn context_of(&self, origin: &CallOrigin) -> CallContext {
-        let session = match origin {
+    pub fn context_of(&self, call: &ToolCall) -> CallContext {
+        let session = match &call.origin {
             CallOrigin::Agent { session_id, .. } => session_id.clone(),
             _ => None,
         };
@@ -261,7 +261,11 @@ impl AutonomyService {
             .as_deref()
             .and_then(|id| store.project(id))
             .map(|p| PathBuf::from(p.path));
-        let workdir = (self.inner.workdir.read())();
+        // A session works in its own project (ADR-0023).
+        let workdir = call
+            .workspace
+            .clone()
+            .unwrap_or_else(|| (self.inner.workdir.read())());
         CallContext {
             session,
             agent,
@@ -571,7 +575,7 @@ impl AutonomyService {
         };
         let mut keep = Vec::new();
         for item in pending {
-            let context = self.context_of(&item.call.origin);
+            let context = self.context_of(&item.call);
             let (decision, reason) = if context.mode == AutonomyMode::Unrestricted {
                 (Decision::Allow, "Acesso Irrestrito".to_owned())
             } else {

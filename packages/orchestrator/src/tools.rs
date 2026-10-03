@@ -231,7 +231,7 @@ fn parse<T: DeserializeOwned>(args: &Value) -> Result<T, ToolError> {
 }
 
 /// The project of the session that called, or the open project.
-fn project_of(store: &MemoryStore, origin: &CallOrigin) -> Result<String, ToolError> {
+pub(crate) fn project_of(store: &MemoryStore, origin: &CallOrigin) -> Result<String, ToolError> {
     let from_session = match origin {
         CallOrigin::Agent {
             session_id: Some(id),

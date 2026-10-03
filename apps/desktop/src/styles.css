@@ -3489,3 +3489,86 @@ textarea.skill-body {
 .backup-item .meta {
   overflow-wrap: anywhere;
 }
+
+/* Projects open side by side and related projects (ADR-0023). */
+.open-projects {
+  flex: none;
+  max-height: 30vh;
+  overflow: auto;
+  margin-bottom: 6px;
+}
+
+.open-projects .list-item {
+  padding: 4px 12px;
+}
+
+.open-project.selected {
+  box-shadow: inset 2px 0 0 var(--accent);
+  cursor: default;
+}
+
+.open-project.selected .title {
+  font-weight: 600;
+}
+
+.open-project-work {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.related {
+  flex: none;
+  max-height: 28vh;
+  overflow: auto;
+  margin-bottom: 4px;
+}
+
+.related .section-title {
+  padding-top: 2px;
+}
+
+.related .list-item {
+  padding: 4px 12px;
+  align-items: flex-start;
+}
+
+.related-note {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.related-empty {
+  padding: 0 12px 6px;
+}
+
+.related-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 12px 8px;
+}
+
+.related-form select,
+.related-form input {
+  width: 100%;
+}
+
+.inline-error.small {
+  margin: 0 12px 6px;
+}
+
+/* A question from a related project's AI, and the answer it got. */
+.msg.from-project .msg-text {
+  border-left: 2px solid #b48ead;
+}
+
+.msg.from-project .msg-author {
+  color: #d7b8f3;
+}
+
+.project-answer {
+  margin-top: 4px;
+}

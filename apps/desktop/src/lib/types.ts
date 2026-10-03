@@ -102,7 +102,9 @@ export type EventKind =
   | "GITHUB_PR_MERGED"
   | "GITHUB_ISSUE_CREATED"
   | "CONTEXT_COMPACTED"
-  | "APP_UPDATED";
+  | "APP_UPDATED"
+  | "PROJECT_LINKED"
+  | "PROJECT_ASKED";
 
 export interface AuditEvent {
   id: string;
@@ -934,6 +936,17 @@ export interface Project {
   createdAt: string;
   lastOpenedAt: string;
   stack: Record<string, unknown> | null;
+  /** Place in the sidebar while open in the app; null when closed
+   * (ADR-0023). */
+  openRank: number | null;
+}
+
+/** A project that works with another one, seen from that one (ADR-0023). */
+export interface ProjectLink {
+  project: Project;
+  /** How the two relate, in the user's words. */
+  note: string;
+  createdAt: string;
 }
 
 export interface HistoryQuery {
@@ -1086,7 +1099,16 @@ export interface ContextSummary {
   handoffId: string | null;
 }
 
-export type SectionKind = "task" | "working" | "project" | "files" | "errors" | "history" | "git" | "handoff";
+export type SectionKind =
+  | "task"
+  | "working"
+  | "project"
+  | "related"
+  | "files"
+  | "errors"
+  | "history"
+  | "git"
+  | "handoff";
 
 export interface ContextSection {
   kind: SectionKind;

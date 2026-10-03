@@ -18,7 +18,9 @@
 //! - **tasks** of the project, with their dependencies (ADR-0014);
 //! - **agents** executing tasks and the **file locks** they hold while
 //!   they do (ADR-0015);
-//! - **spending** of the AIs, read from the history (ADR-0018).
+//! - **spending** of the AIs, read from the history (ADR-0018);
+//! - the projects **open side by side** and the ones that **work
+//!   together**, whose AIs consult each other (ADR-0023).
 //!
 //! Depends only on `orchestrator-core`: the other crates see it through
 //! their own traits, wired by the app.
@@ -35,12 +37,14 @@ mod spend;
 mod store;
 mod tasks;
 mod working;
+mod workspace;
 
 pub use db::{schema_of, snapshot_file, SCHEMA_VERSION};
 pub use model::{
     Decision, DecisionInput, DecisionStatus, HistoryPage, HistoryQuery, MemoryEntry, MemoryInput,
-    MemoryKind, MemoryOverview, Project, RecentImport, SearchHit, SessionFacts, Source,
-    StoredSession, WorkingCommand, WorkingError, WorkingFile, WorkingMemory, WorkingSession,
+    MemoryKind, MemoryOverview, Project, ProjectLink, RecentImport, SearchHit, SessionFacts,
+    Source, StoredSession, WorkingCommand, WorkingError, WorkingFile, WorkingMemory,
+    WorkingSession,
 };
 pub use spend::{SpendReport, SpendRow};
 pub use store::MemoryStore;

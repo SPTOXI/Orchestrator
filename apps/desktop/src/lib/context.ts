@@ -10,6 +10,7 @@ export const SECTION_LABELS: Record<SectionKind, string> = {
   task: "Tarefa",
   working: "Memória de trabalho (L1)",
   project: "Memória do projeto (L2) e decisões",
+  related: "Projetos relacionados",
   files: "Arquivos relevantes",
   errors: "Erros recentes",
   history: "Histórico relevante (L3)",

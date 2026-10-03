@@ -37,7 +37,7 @@ Referência da Fase 6, com os acréscimos da Fase 7. Decisões em
 
 | Tabela | Conteúdo |
 | ------ | -------- |
-| `projects` | caminho (único), nome, criado em, último acesso, stack detectada (JSON), `hidden` (fora da lista de recentes) |
+| `projects` | caminho (único), nome, criado em, último acesso, stack detectada (JSON), `hidden` (fora da lista de recentes), `open_rank` (posição entre os abertos lado a lado; `NULL` fechado — migração 5, ADR-0023) |
 | `audit_events` | histórico: cada `AuditEvent`, com `project_id` e `session_id` |
 | `tool_calls` | *view* sobre `audit_events` (`TOOL_CALLED`): ferramenta, ok, duração |
 | `sessions` | sessões de provider: `SessionInfo`, sessão nativa (com a conversa), instruções e modelo pedido |
@@ -50,10 +50,13 @@ Referência da Fase 6, com os acréscimos da Fase 7. Decisões em
 | `tasks`, `task_dependencies` | tasks do projeto e suas dependências (Fase 8a, migração 3) |
 | `agents` | agentes que executaram ou executam tasks (Fase 8b, migração 4) |
 | `file_locks` | um dono por arquivo enquanto um agente trabalha; a chave `(project_id, path)` é o que garante a exclusão |
+| `project_links` | pares de projetos relacionados, com a nota de como se relacionam (migração 5, ADR-0023) |
 
 As migrações 2, 3 e 4 só acrescentam tabelas (`handoffs`; `tasks` e
 `task_dependencies`; `agents` e `file_locks`): um banco das fases
-anteriores é atualizado ao abrir, sem perder nada. As tabelas das próximas
+anteriores é atualizado ao abrir, sem perder nada. A migração 5 acrescenta
+a coluna `projects.open_rank` e a tabela `project_links` (ADR-0023); como
+toda migração, é precedida de um backup do banco (ADR-0022). As tabelas das próximas
 fases (artefatos, operações Git) entram com as migrações dessas fases.
 
 ## Histórico

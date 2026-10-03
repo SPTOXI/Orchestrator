@@ -245,7 +245,12 @@ impl ToolRuntime {
 
     async fn dispatch(&self, call: &ToolCall) -> Result<Dispatched, ToolError> {
         let inner = &self.inner;
-        let base_dir = inner.base_dir.read().clone();
+        // A session works in its own project, whichever one the app shows
+        // (ADR-0023); the UI's calls use the open project.
+        let base_dir = call
+            .workspace
+            .clone()
+            .unwrap_or_else(|| inner.base_dir.read().clone());
         let base = base_dir.as_path();
         let origin = &call.origin;
         let file_changed = |summary: String, data: Value| {

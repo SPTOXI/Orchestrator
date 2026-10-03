@@ -27,5 +27,6 @@ adiciona algo fora dela, é registrada aqui **antes** de ser implementada.
 | [0020](./0020-acesso-total-da-ia.md) | Acesso total da IA: internet, APIs e segredos | Aceita |
 | [0021](./0021-configuracoes-assinaturas-offline-e-mcp.md) | Configurações, regras e skills, MCP, assinaturas por CLI e modelos offline | Aceita |
 | [0022](./0022-dados-preservados-nas-atualizacoes.md) | Os dados do usuário sobrevivem às atualizações | Aceita |
+| [0023](./0023-varios-projetos-e-projetos-relacionados.md) | Vários projetos abertos e projetos relacionados | Aceita |
 
 Formato: Contexto → Decisão → Consequências.

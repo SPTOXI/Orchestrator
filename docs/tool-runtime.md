@@ -26,9 +26,12 @@ componente que executa operações no sistema operacional. Toda chamada entra po
 - JSON em `camelCase`. Campos desconhecidos em `args` são rejeitados
   (`INVALID_ARGS`) para que erros de digitação de uma IA não passem em silêncio.
 - `args: null` equivale a `{}`.
-- Caminhos relativos são resolvidos a partir do diretório base do runtime:
-  a raiz do projeto aberto (`project.open`) ou, sem projeto, a pasta do
-  usuário. `~` e `~/…` são expandidos.
+- Caminhos relativos (e o diretório de comandos, terminais e processos sem
+  `cwd`) são resolvidos a partir da pasta da chamada: o `workspace` do
+  `ToolCall`, que a sessão de uma IA preenche com o seu projeto
+  (ADR-0023). Sem ele, nas chamadas da tela, vale o diretório base do
+  runtime: a raiz do projeto aberto (`project.open`) ou, sem projeto, a
+  pasta do usuário. `~` e `~/…` são expandidos.
 - Erros (`error.kind`): `UNKNOWN_TOOL`, `INVALID_ARGS`, `NOT_FOUND`,
   `ALREADY_EXISTS`, `PERMISSION_DENIED` (negado pelo SO), `IO`, `SPAWN`,
   `NOT_RUNNING`, `COMMAND_FAILED` (um comando externo, ex. `git`, falhou; a

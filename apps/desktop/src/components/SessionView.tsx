@@ -10,6 +10,7 @@ import { contextApi, errorMessage, sessionApi } from "../lib/runtime";
 import { formatUsage, type TranscriptItem } from "../lib/transcript";
 import { useSessionTranscript } from "../lib/useProviders";
 import type { ContextOptions, ContextPack, ProviderInfo, SessionInfo } from "../lib/types";
+import { askingProject } from "../lib/workspace";
 import { ActivityLine } from "./Activity";
 import type { ContextTabRequest } from "./ContextView";
 import { SendIcon, StopIcon, SubagentIcon } from "./icons";
@@ -81,6 +82,17 @@ function Item({
           </div>
         );
       }
+      // The AI of a related project asks (ADR-0023).
+      if (askingProject(item.text)) {
+        return (
+          <div className="msg user from-project">
+            <div className="msg-author">
+              IA do projeto {askingProject(item.text)} <span className="meta">pergunta · {formatTime(item.at)}</span>
+            </div>
+            <div className="msg-text">{item.text}</div>
+          </div>
+        );
+      }
       return (
         <div className="msg user">
           <div className="msg-author">
@@ -106,6 +118,11 @@ function Item({
     case "tool": {
       const result = item.result;
       const state = !result ? "pending" : result.ok ? "ok" : "err";
+      // A question answered by a related project's AI (ADR-0023).
+      const answered =
+        result?.ok && item.tool === "projects.ask"
+          ? (result.output as { project?: string; sessionId?: string } | null)
+          : null;
       return (
         <div className={`tool-call ${state}`}>
           <div className="row">
@@ -125,6 +142,14 @@ function Item({
           {result?.error && (
             <div className="tool-error mono">
               {result.error.kind}: {result.error.message}
+            </div>
+          )}
+          {answered?.sessionId && (
+            <div className="row tight project-answer">
+              <span className="meta grow">respondida pela IA do projeto {answered.project}</span>
+              <button className="link" onClick={() => onOpenSession(answered.sessionId as string)}>
+                Abrir a conversa
+              </button>
             </div>
           )}
           {result?.ok && (

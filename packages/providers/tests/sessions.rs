@@ -265,6 +265,8 @@ async fn tool_calls_run_in_the_runtime_on_behalf_of_the_session() {
         call.origin,
         CallOrigin::session(&info.id, &ProviderId::from("echo"))
     );
+    // It works in the session's project (ADR-0023).
+    assert_eq!(call.workspace.as_deref(), Some(h._dir.path()));
     let result = events
         .iter()
         .find_map(|e| match e {

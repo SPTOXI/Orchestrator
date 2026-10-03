@@ -9,6 +9,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt;
+use std::path::PathBuf;
 
 /// Who asked for an operation. Recorded on every audit event.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,6 +66,11 @@ pub struct ToolCall {
     #[serde(default)]
     pub args: Value,
     pub origin: CallOrigin,
+    /// Where relative paths and commands land: the project of the session
+    /// that made the call (ADR-0023). `None`: the runtime's own directory
+    /// (the project open in the app).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<PathBuf>,
 }
 
 impl ToolCall {
@@ -74,7 +80,14 @@ impl ToolCall {
             tool: tool.into(),
             args,
             origin,
+            workspace: None,
         }
+    }
+
+    /// The same call, working in `workspace`.
+    pub fn in_workspace(mut self, workspace: impl Into<PathBuf>) -> Self {
+        self.workspace = Some(workspace.into());
+        self
     }
 }
 

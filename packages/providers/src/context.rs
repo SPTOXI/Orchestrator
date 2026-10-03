@@ -166,11 +166,14 @@ impl TurnContext {
     /// tool still finishes and is recorded. After cancellation no new tool
     /// is started (`CANCELLED` result).
     pub async fn call_tool(&self, tool: &str, args: Value) -> ToolResult {
+        // The session's project, not whichever one the app shows now
+        // (ADR-0023).
         let call = ToolCall::new(
             tool,
             args,
             CallOrigin::session(&self.session_id, &self.provider),
-        );
+        )
+        .in_workspace(&self.project_path);
         self.tool_calls.fetch_add(1, Ordering::Relaxed);
         self.observer.event(SessionEvent::ToolCallRequested {
             turn_id: self.turn_id.clone(),

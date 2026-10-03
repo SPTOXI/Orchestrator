@@ -530,3 +530,63 @@ async fn shutdown_stops_processes_and_terminals() {
     let terminals = ok(&runtime, "terminal.list", json!({})).await;
     assert_eq!(terminals.as_array().unwrap().len(), 0);
 }
+
+/// Two projects open at once (ADR-0023): a call made in a session works in
+/// the session's project, whichever one the app opened last.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_call_works_in_its_own_workspace() {
+    let first = tempfile::tempdir().unwrap();
+    let second = tempfile::tempdir().unwrap();
+    std::fs::write(first.path().join("notes.md"), "first").unwrap();
+    std::fs::write(second.path().join("notes.md"), "second").unwrap();
+    let (runtime, _sink) = runtime_in(first.path());
+    ok(
+        &runtime,
+        "project.open",
+        json!({"path": second.path().display().to_string()}),
+    )
+    .await;
+
+    // The UI's calls follow the project open now.
+    let read = ok(&runtime, "filesystem.read", json!({"path": "notes.md"})).await;
+    assert_eq!(read["content"], "second");
+
+    // A session of the first project still reads and writes there.
+    let in_first = |tool: &str, args: Value| {
+        ToolCall::new(tool, args, CallOrigin::User).in_workspace(first.path())
+    };
+    let read = runtime
+        .invoke(in_first("filesystem.read", json!({"path": "notes.md"})))
+        .await;
+    assert!(read.ok, "{:?}", read.error);
+    assert_eq!(read.output["content"], "first");
+    let wrote = runtime
+        .invoke(in_first(
+            "filesystem.write",
+            json!({"path": "out.txt", "content": "x"}),
+        ))
+        .await;
+    assert!(wrote.ok, "{:?}", wrote.error);
+    assert!(first.path().join("out.txt").exists());
+    assert!(!second.path().join("out.txt").exists());
+
+    let command = if cfg!(windows) { "cd" } else { "pwd" };
+    let ran = runtime
+        .invoke(in_first(
+            "shell.execute",
+            json!({"shell": SHELL, "command": command}),
+        ))
+        .await;
+    assert!(ran.ok, "{:?}", ran.error);
+    let stdout = ran.output["stdout"]
+        .as_str()
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    let expected = first.path().canonicalize().unwrap();
+    assert_eq!(
+        Path::new(&stdout).canonicalize().unwrap(),
+        expected,
+        "{stdout}"
+    );
+}

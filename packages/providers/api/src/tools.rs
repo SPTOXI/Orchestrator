@@ -110,6 +110,9 @@ pub fn capabilities_note(tools: &[ToolDefinition]) -> Option<String> {
     if has(&["agent."]) {
         can.push("delegate parts of a task to sub-agents");
     }
+    if has(&["projects."]) {
+        can.push("work with the projects the user linked to this one: know them (projects.related), ask the AI that works on one (projects.ask) and leave it a task (projects.request)");
+    }
     if can.is_empty() {
         return None;
     }
