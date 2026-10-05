@@ -22,7 +22,8 @@ pacotes `deb` e `rpm` o recomendam; no Windows e no macOS, instale-o à
 parte.
 
 **Instaladores sem assinatura de código.** Enquanto o projeto não tiver
-certificados:
+certificados (pendência: [issue #3](https://github.com/SPTOXI/Orchestrator/issues/3)
+para o Windows):
 
 - **Windows:** o SmartScreen avisa na primeira execução — "Mais
   informações" → "Executar assim mesmo";
@@ -153,9 +154,19 @@ para rodá-lo à mão em *Actions → Release → Run workflow*.
   `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` e, para
   notarizar, `APPLE_ID`, `APPLE_PASSWORD` (senha de app) e
   `APPLE_TEAM_ID`. Sem eles, o app sai sem assinatura.
-- **Windows:** ainda não configurado. O caminho é
-  `bundle.windows.signCommand` no `tauri.conf.json` (por exemplo com o
-  Azure Trusted Signing) e os segredos do serviço escolhido.
+- **Windows:** ainda não configurado. **Decisão: SignPath Foundation**,
+  que assina de graça projetos de código aberto. É uma pendência do
+  projeto, [issue #3](https://github.com/SPTOXI/Orchestrator/issues/3).
+  Falta:
+  1. adicionar uma licença de código aberto (o repositório não tem uma);
+  2. pedir a entrada no SignPath Foundation;
+  3. com a aprovação, o `release.yml` envia o `.exe` e o `.msi` para o
+     SignPath assinar;
+  4. depois, refazer o `.sig` de atualização, porque assinar muda o
+     arquivo.
+
+  Alternativas pagas: Azure Trusted Signing e certificado OV com
+  assinatura em nuvem.
 
 ## Build local
 
