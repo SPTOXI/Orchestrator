@@ -3,7 +3,9 @@
 
 use orchestrator_core::{SessionId, SessionLogEntry};
 use orchestrator_memory::{MemoryStore, StoredSession};
-use orchestrator_providers::{ContextOptions, NativeSession, PersistedSession, SessionStore};
+use orchestrator_providers::{
+    ContextOptions, NativeSession, PersistedSession, Reserve, SessionStore,
+};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -37,11 +39,18 @@ impl SessionStore for StoreSessions {
                     .get("context")
                     .and_then(|v| serde_json::from_value(v.clone()).ok())
                     .unwrap_or_default();
+                // Only sessions opened by the Council have reserves (ADR-0024).
+                let reserves: Vec<Reserve> = stored
+                    .spec
+                    .get("reserves")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
                 Some((
                     PersistedSession {
                         instructions: text("instructions"),
                         requested_model: text("requestedModel"),
                         context,
+                        reserves,
                         info: stored.info,
                         native,
                     },
@@ -59,6 +68,7 @@ impl SessionStore for StoreSessions {
                 "instructions": session.instructions,
                 "requestedModel": session.requested_model,
                 "context": session.context,
+                "reserves": session.reserves,
             }),
         };
         if let Err(err) = self.0.session_save(&stored) {
@@ -118,6 +128,10 @@ mod tests {
                 budget: Some(900),
                 handoff_id: Some(HandoffId::new()),
             },
+            reserves: vec![Reserve {
+                provider: "outra".into(),
+                model: Some("modelo-b".into()),
+            }],
         };
         sessions.save(&session);
         let entry = SessionLogEntry {
@@ -148,5 +162,6 @@ mod tests {
             .find(|(s, _)| s.info.id == old.info.id)
             .unwrap();
         assert_eq!(restored.0.context, ContextOptions::default());
+        assert!(restored.0.reserves.is_empty());
     }
 }

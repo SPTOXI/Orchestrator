@@ -51,6 +51,7 @@ function Item({
   item,
   sessionId,
   providerName,
+  nameOf,
   sessionTitle,
   onOpenSession,
   waiting,
@@ -59,6 +60,8 @@ function Item({
   item: TranscriptItem;
   sessionId: string;
   providerName: string;
+  /** A provider's name by id. */
+  nameOf: (provider: string) => string;
   sessionTitle: (id: string) => string | null;
   onOpenSession: (id: string) => void;
   /** The call waits for the user's authorization. */
@@ -211,6 +214,17 @@ function Item({
             </div>
           ))}
         </details>
+      );
+    case "failover":
+      return (
+        <div className="inline-notice failover-item">
+          <strong>{nameOf(item.fromProvider)}</strong> falhou: {item.reason}
+          <div>
+            A reserva <strong>{nameOf(item.toProvider)}</strong>
+            {item.toModel && <span className="meta mono"> ({item.toModel})</span>} assumiu a sessão e continua o
+            pedido, com um resumo do que já foi feito.
+          </div>
+        </div>
       );
     case "compacted":
       return (
@@ -366,6 +380,7 @@ export function SessionView({
   const closed = status === "closed";
   const provider = providers.find((p) => p.id === session?.provider);
   const providerName = provider?.name ?? session?.provider ?? "Provider";
+  const nameOf = (id: string) => providers.find((p) => p.id === id)?.name ?? id;
   /** Its provider summarizes its own conversation (ADR-0018). */
   const compacts = provider?.capabilities.compaction === true;
   const [compacting, setCompacting] = useState(false);
@@ -570,6 +585,7 @@ export function SessionView({
             item={item}
             sessionId={sessionId}
             providerName={providerName}
+            nameOf={nameOf}
             sessionTitle={sessionTitle}
             onOpenSession={onOpenSession}
             waiting={item.kind === "tool" && (waitingCalls?.has(item.callId) ?? false)}

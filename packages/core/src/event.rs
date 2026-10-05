@@ -100,6 +100,9 @@ pub enum EventKind {
     /// The AI of one project asked the AI of a related one, and got its
     /// answer (ADR-0023).
     ProjectAsked,
+    /// A session's AI failed a turn and one of its reserves took over
+    /// (ADR-0024).
+    SessionFailover,
 }
 
 /// A durable, provider-independent history entry.

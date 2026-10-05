@@ -1,20 +1,22 @@
-//! Router and Council end to end: scripted providers answer the Council,
-//! the real `SessionManager` opens the chosen sessions, and the history
-//! records every step.
+//! Router and Council end to end: scripted providers analyze as Council
+//! members (ADR-0024), the real `SessionManager` opens the sessions that
+//! carry out the demand and hands them to a reserve when the first member
+//! fails, and the history records every step.
 
 use async_trait::async_trait;
 use orchestrator_core::{
-    AuditEvent, CallOrigin, EventKind, MemorySink, SessionStatus, TokenUsage, ToolCall,
-    ToolDefinition, ToolError, ToolResult,
+    AuditEvent, CallOrigin, ContextSummary, EventKind, MemorySink, SessionEvent, SessionId,
+    SessionStatus, TokenUsage, ToolCall, ToolDefinition, ToolError, ToolResult, TurnStatus,
 };
 use orchestrator_providers::{
-    AIProvider, Completion, CompletionRequest, EchoProvider, ModelInfo, NativeSession,
-    ProviderCapabilities, ProviderDescriptor, ProviderError, ProviderRegistry, ProviderStatus,
-    SessionManager, SessionSpec, ToolExecutor, TurnContext, TurnInput, TurnOutput,
+    AIProvider, AttachedContext, Completion, CompletionRequest, ContextRequest, ContextSource,
+    ModelInfo, NativeSession, ProviderCapabilities, ProviderDescriptor, ProviderError,
+    ProviderRegistry, ProviderStatus, SessionManager, SessionSpec, ToolExecutor, TurnContext,
+    TurnInput, TurnOutput,
 };
 use orchestrator_router::{
     Activity, CouncilMember, CouncilMode, CouncilSettings, DecisionSource, DeliberateRequest,
-    Deliberation, DeliberationStore, ModelRef, RouteRequest, RouteStart, RouterService,
+    Deliberation, DeliberationStore, ModelRef, PlanSource, RouteRequest, RouteStart, RouterService,
 };
 use parking_lot::Mutex;
 use serde_json::json;
@@ -35,6 +37,10 @@ struct Scripted {
     available: bool,
     delay: Duration,
     answer: Box<Answer>,
+    /// Every turn fails with this.
+    turn_error: Option<&'static str>,
+    /// Opening a session fails with this.
+    start_error: Option<&'static str>,
     calls: AtomicUsize,
     requests: Mutex<Vec<CompletionRequest>>,
 }
@@ -49,6 +55,8 @@ impl Scripted {
             available: true,
             delay: Duration::ZERO,
             answer: Box::new(|_| Ok("{}".into())),
+            turn_error: None,
+            start_error: None,
             calls: AtomicUsize::new(0),
             requests: Mutex::new(Vec::new()),
         }
@@ -100,6 +108,9 @@ impl AIProvider for Scripted {
     }
 
     async fn start(&self, spec: &SessionSpec) -> Result<NativeSession, ProviderError> {
+        if let Some(error) = self.start_error {
+            return Err(ProviderError::unavailable(error));
+        }
         Ok(NativeSession {
             reference: format!("{}-{}", self.id, spec.session_id),
             model: spec
@@ -116,8 +127,11 @@ impl AIProvider for Scripted {
         input: &TurnInput,
         _ctx: &TurnContext,
     ) -> Result<TurnOutput, ProviderError> {
+        if let Some(error) = self.turn_error {
+            return Err(ProviderError::failed(error));
+        }
         Ok(TurnOutput {
-            text: format!("feito: {}", input.text),
+            text: format!("{} fez: {}", self.id, input.text),
         })
     }
 
@@ -184,7 +198,25 @@ fn model(id: &str, input: f64, output: f64, tags: &[&str]) -> ModelInfo {
     }
 }
 
-/// Two "APIs" with three models to choose from, plus the judges.
+/// The project context the members get.
+struct ProjectNotes;
+
+#[async_trait]
+impl ContextSource for ProjectNotes {
+    async fn build(&self, request: ContextRequest) -> Result<Option<AttachedContext>, String> {
+        Ok(Some(AttachedContext {
+            text: format!(
+                "## PROJECT
+fila-de-emails ({})",
+                request.session.project_path.display()
+            ),
+            summary: ContextSummary::default(),
+        }))
+    }
+}
+
+/// Registered providers (APIs outside the Council among them) and the
+/// Council's own.
 struct Harness {
     router: RouterService,
     sessions: SessionManager,
@@ -208,6 +240,7 @@ impl Harness {
         );
         assert!(warning.is_none());
         let sessions = SessionManager::new(registry.clone(), Arc::new(NoTools), sink.clone());
+        sessions.set_context_source(Arc::new(ProjectNotes));
         Self {
             router,
             sessions,
@@ -271,28 +304,6 @@ fn task(text: &str) -> DeliberateRequest {
     }
 }
 
-/// The candidate id (`c1`…) the prompt gave to `model`.
-fn id_of(prompt: &str, model: &str) -> String {
-    prompt
-        .lines()
-        .find(|l| l.contains(&format!("/ {model} ·")))
-        .and_then(|l| l.split(' ').next())
-        .unwrap_or_else(|| panic!("{model} not in the prompt:\n{prompt}"))
-        .to_owned()
-}
-
-fn pick(
-    model: &'static str,
-    confidence: f64,
-) -> impl Fn(&CompletionRequest) -> Result<String, ProviderError> {
-    move |request| {
-        Ok(format!(
-            "{{\"choice\": \"{}\", \"confidence\": {confidence}, \"reason\": \"{model} basta.\"}}",
-            id_of(&request.prompt, model)
-        ))
-    }
-}
-
 fn model_ref(provider: &str, model: &str) -> ModelRef {
     ModelRef {
         provider: provider.into(),
@@ -300,262 +311,30 @@ fn model_ref(provider: &str, model: &str) -> ModelRef {
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn off_mode_answers_with_the_router_and_spends_nothing() {
-    let (cloud, cheap) = catalog();
-    let h = Harness::new(vec![cloud.clone(), cheap.clone()]);
-    let d = h
-        .router
-        .deliberate(&task("Implemente o endpoint de pagamentos"))
-        .await;
-    assert_eq!(d.mode, CouncilMode::Off);
-    assert_eq!(d.recommendation.activity, Activity::Code);
-    let decision = d.decision.unwrap();
-    assert_eq!(decision.source, DecisionSource::Router);
-    assert_eq!(decision.model_ref, model_ref("cloud", "coder"));
-    assert!(decision.reason.starts_with("Maior nota do roteador"));
-    assert!(d.votes.is_empty());
-    assert_eq!(d.usage, TokenUsage::default());
-    assert_eq!(cloud.calls() + cheap.calls(), 0);
-    assert!(h.audits(EventKind::CouncilDeliberated).is_empty());
-    assert_eq!(h.router.history()[0].id, d.id);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn the_council_votes_and_bad_answers_do_not_count() {
-    let (cloud, cheap) = catalog();
-    let judge_a = Arc::new(
-        Scripted::new("judge-a", vec![model("j1", 1.0, 1.0, &[])]).answering(pick("mini", 0.9)),
-    );
-    let judge_b = Arc::new(Scripted::new("judge-b", vec![model("j2", 1.0, 1.0, &[])]).answering(
-        |request| {
-            Ok(format!(
-                "Aqui está:\n```json\n{{\"choice\": \"{}\", \"ranking\": [\"{}\", \"{}\"], \"confidence\": 0.6}}\n```",
-                id_of(&request.prompt, "mini"),
-                id_of(&request.prompt, "mini"),
-                id_of(&request.prompt, "coder"),
-            ))
-        },
-    ));
-    let echo: Arc<dyn AIProvider> = Arc::new(EchoProvider::new());
-    let h = Harness::new(vec![cloud, cheap, judge_a.clone(), judge_b.clone(), echo]);
-    h.council(
-        CouncilMode::Suggest,
-        &[
-            ("judge-a", None),
-            ("judge-b", Some("j2")),
-            ("echo", None),
-            ("gone", None),
-        ],
-    );
-
-    let d = h
-        .router
-        .deliberate(&task("Resuma o README em três frases"))
-        .await;
-    assert_eq!(d.recommendation.activity, Activity::Summary);
-    // Every registered model is a candidate, the judges' own included.
-    assert_eq!(d.shortlist.len(), 6);
-    let decision = d.decision.clone().unwrap();
-    assert_eq!(decision.source, DecisionSource::Council);
-    assert_eq!(decision.model_ref, model_ref("cheap", "mini"));
-    assert_eq!(decision.agreement, Some(1.0));
-    assert!(
-        decision
-            .reason
-            .starts_with("2 de 2 membros escolheram este modelo."),
-        "{}",
-        decision.reason
-    );
-    assert!(!d.auto_apply, "Sugerir waits for the user");
-
-    // Votes in member order; the echo and the removed provider abstain.
-    assert_eq!(d.votes.len(), 4);
-    assert_eq!(d.votes[0].choice, Some(model_ref("cheap", "mini")));
-    assert_eq!(d.votes[0].confidence, Some(0.9));
-    assert_eq!(
-        d.votes[1].ranking,
-        vec![model_ref("cheap", "mini"), model_ref("cloud", "coder")]
-    );
-    assert_eq!(d.votes[1].model.as_deref(), Some("j2"));
-    assert_eq!(
-        d.votes[2].error.as_deref(),
-        Some("a resposta não trouxe um objeto JSON")
-    );
-    assert_eq!(
-        d.votes[3].error.as_deref(),
-        Some("provider não registrado (conexão removida ou desativada)")
-    );
-    // Usage and cost of every answer that came back.
-    assert_eq!(d.usage.input_tokens, 200 + d.votes[2].usage.input_tokens);
-    assert!((d.usage.cost_usd.unwrap() - 0.002).abs() < 1e-12);
-
-    // What a member receives: instructions, the task and short ids; no tools.
-    let request = judge_a.requests.lock()[0].clone();
-    assert!(request
+fn is_synthesis(request: &CompletionRequest) -> bool {
+    request
         .system
-        .unwrap()
-        .contains("Answer with ONLY one JSON object"));
-    assert!(request
-        .prompt
-        .starts_with("Tarefa:\nResuma o README em três frases"));
-    assert!(request.prompt.contains("c1 · "));
-    assert!(request.prompt.contains("Atividade: summary"));
-
-    let recorded = h.audits(EventKind::CouncilDeliberated);
-    assert_eq!(recorded.len(), 1);
-    let data = &recorded[0].data;
-    assert_eq!(data["deliberationId"], json!(d.id));
-    assert_eq!(data["decision"]["model"], "mini");
-    assert_eq!(data["decision"]["source"], "council");
-    assert_eq!(data["votes"].as_array().unwrap().len(), 4);
-    assert_eq!(data["cached"], false);
-    assert!(recorded[0]
-        .summary
-        .starts_with("Conselho: mini (CHEAP) · 2/4 membros válidos"));
+        .as_deref()
+        .is_some_and(|s| s.contains("relator"))
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn the_cache_saves_tokens_until_forced_or_reconfigured() {
-    let (cloud, cheap) = catalog();
-    let manager = Arc::new(
-        Scripted::new("manager", vec![model("m", 1.0, 1.0, &[])]).answering(pick("strong", 0.8)),
-    );
-    let h = Harness::new(vec![cloud, cheap, manager.clone()]);
-    h.council(CouncilMode::Suggest, &[("manager", None)]);
-
-    let first = h
-        .router
-        .deliberate(&task("Planeje a arquitetura das filas"))
-        .await;
-    assert_eq!(
-        first.decision.as_ref().unwrap().model_ref,
-        model_ref("cloud", "strong")
-    );
-    assert_eq!(first.decision.as_ref().unwrap().reason, "strong basta.");
-    assert_eq!(manager.calls(), 1);
-
-    // Same question (spacing and case aside): no new call.
-    let again = h
-        .router
-        .deliberate(&task("  planeje a ARQUITETURA das filas "))
-        .await;
-    assert_eq!(manager.calls(), 1);
-    assert!(again.cached);
-    assert_eq!(again.cached_from.as_ref(), Some(&first.id));
-    assert_ne!(again.id, first.id);
-    assert_eq!(again.usage, TokenUsage::default());
-    assert_eq!(again.saved_usage, Some(first.usage));
-    assert_eq!(again.decision, first.decision);
-    assert!(again
-        .notices
-        .iter()
-        .any(|n| n.contains("nenhum token gasto")));
-    let recorded = h.audits(EventKind::CouncilDeliberated);
-    assert_eq!(recorded.len(), 2);
-    assert_eq!(recorded[1].data["cached"], true);
-    assert!(recorded[1].summary.starts_with("Conselho (cache):"));
-
-    // "Deliberar de novo".
-    let mut forced = task("Planeje a arquitetura das filas");
-    forced.force = true;
-    assert!(!h.router.deliberate(&forced).await.cached);
-    assert_eq!(manager.calls(), 2);
-
-    // Another question, and new settings, are not served from the cache.
-    h.router
-        .deliberate(&task("Planeje o cache distribuído"))
-        .await;
-    assert_eq!(manager.calls(), 3);
-    h.council(CouncilMode::Suggest, &[("manager", Some("m"))]);
-    h.router
-        .deliberate(&task("Planeje a arquitetura das filas"))
-        .await;
-    assert_eq!(manager.calls(), 4);
+/// Answers like a Council member: an analysis, or the synthesis.
+fn member(name: &'static str) -> impl Fn(&CompletionRequest) -> Result<String, ProviderError> {
+    move |request| {
+        Ok(if is_synthesis(request) {
+            format!("Plano de {name}: 1. fila")
+        } else {
+            format!("Análise de {name}: usar fila")
+        })
+    }
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn without_valid_votes_the_router_decides_and_full_waits_for_the_user() {
-    let (cloud, cheap) = catalog();
-    let failing = Arc::new(
-        Scripted::new("failing", vec![model("f", 1.0, 1.0, &[])])
-            .answering(|_| Err(ProviderError::unavailable("429 rate limited"))),
-    );
-    let mut mute = Scripted::new("mute", vec![model("x", 1.0, 1.0, &[])]);
-    mute.completion = false;
-    let mut down = Scripted::new("down", vec![model("d", 1.0, 1.0, &[])]);
-    down.available = false;
-    let down = Arc::new(down);
-    let h = Harness::new(vec![cloud, cheap, failing, Arc::new(mute), down.clone()]);
-    h.council(
-        CouncilMode::Full,
-        &[("failing", None), ("mute", None), ("down", None)],
-    );
-
-    let outcome = h
-        .router
-        .run(
-            &h.sessions,
-            &task("Implemente o login"),
-            h.dir.path().to_path_buf(),
-        )
-        .await
-        .unwrap();
-    let d = &outcome.deliberation;
-    assert_eq!(d.decision.as_ref().unwrap().source, DecisionSource::Router);
-    assert!(!d.auto_apply);
-    assert!(
-        outcome.started.is_none(),
-        "Full applies only Council decisions"
-    );
-    assert!(d.notices[0].contains("Nenhum membro do Conselho respondeu de forma válida"));
-    let errors: Vec<_> = d.votes.iter().map(|v| v.error.clone().unwrap()).collect();
-    assert_eq!(
-        errors,
-        [
-            "429 rate limited",
-            "este provider não responde pedidos avulsos",
-            "provider indisponível: 401 authentication failed",
-        ]
-    );
-    // The unavailable provider's models were not candidates either.
-    assert!(d
-        .recommendation
-        .excluded
-        .iter()
-        .any(|e| e.model_ref == model_ref("down", "d") && e.reason.contains("indisponível")));
-    assert_eq!(down.calls(), 0);
-    assert!(h.sessions.list().is_empty());
+/// A member: one model, answering as `member`.
+fn seat(id: &'static str, name: &'static str) -> Scripted {
+    Scripted::new(id, vec![model(&format!("{id}-1"), 1.0, 1.0, &[])]).answering(member(name))
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn a_slow_member_times_out_without_holding_the_others() {
-    let (cloud, cheap) = catalog();
-    let mut slow =
-        Scripted::new("slow", vec![model("s", 1.0, 1.0, &[])]).answering(pick("coder", 1.0));
-    slow.delay = Duration::from_secs(60);
-    let quick =
-        Scripted::new("quick", vec![model("q", 1.0, 1.0, &[])]).answering(pick("coder", 1.0));
-    let h = Harness::new(vec![cloud, cheap, Arc::new(slow), Arc::new(quick)]);
-    h.council(CouncilMode::Suggest, &[("slow", None), ("quick", None)]);
-
-    let clock = Instant::now();
-    let d = h.router.deliberate(&task("Implemente o login")).await;
-    assert!(
-        clock.elapsed() < Duration::from_secs(15),
-        "{:?}",
-        clock.elapsed()
-    );
-    assert_eq!(d.votes[0].error.as_deref(), Some("sem resposta em 5 s"));
-    let decision = d.decision.unwrap();
-    assert_eq!(decision.model_ref, model_ref("cloud", "coder"));
-    assert_eq!(
-        decision.reason, "coder basta.",
-        "one valid vote = the manager's reason"
-    );
-}
-
-async fn wait_idle(h: &Harness, id: &orchestrator_core::SessionId) {
+async fn wait_idle(h: &Harness, id: &SessionId) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         let info = h.sessions.info(id).unwrap();
@@ -567,101 +346,527 @@ async fn wait_idle(h: &Harness, id: &orchestrator_core::SessionId) {
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn full_mode_opens_the_session_and_sends_the_task() {
-    let (cloud, cheap) = catalog();
-    let manager = Arc::new(
-        Scripted::new("manager", vec![model("m", 1.0, 1.0, &[])]).answering(pick("strong", 0.9)),
-    );
-    let h = Harness::new(vec![cloud, cheap, manager]);
-    h.council(CouncilMode::Full, &[("manager", None)]);
-
-    let outcome = h
-        .router
-        .run(
-            &h.sessions,
-            &task("Depure o erro de timeout no worker\nDetalhes: acontece às vezes."),
-            h.dir.path().to_path_buf(),
-        )
-        .await
-        .unwrap();
-    let d = &outcome.deliberation;
-    assert!(d.auto_apply);
-    let started = outcome.started.expect("Full opens the session");
-    let session = &started.session;
-    assert_eq!(session.provider.as_str(), "cloud");
-    assert_eq!(session.model.as_deref(), Some("strong"));
-    assert_eq!(session.title, "Depure o erro de timeout no worker");
-    assert!(started.turn_id.is_some() && started.send_error.is_none());
-    wait_idle(&h, &session.id).await;
-
-    let origin = CallOrigin::Council {
-        deliberation_id: Some(d.id.clone()),
-    };
-    let opened = h.audits(EventKind::SessionStarted);
-    assert_eq!(opened[0].origin, origin);
-    let decided = h.audits(EventKind::RouteDecided);
-    assert_eq!(decided.len(), 1);
-    assert_eq!(decided[0].origin, origin);
-    assert_eq!(decided[0].data["by"], "council");
-    assert_eq!(decided[0].data["followedRecommendation"], true);
-    assert_eq!(decided[0].data["activity"], "debug");
-    assert!(decided[0].summary.ends_with("pelo Conselho (Full)"));
-    let turn = &h.audits(EventKind::TurnCompleted)[0];
-    assert_eq!(turn.origin, origin);
-    assert_eq!(turn.data["sessionId"], json!(session.id));
+/// The first message of a session.
+fn first_input(h: &Harness, id: &SessionId) -> String {
+    h.sessions
+        .snapshot(id)
+        .unwrap()
+        .entries
+        .into_iter()
+        .find_map(|e| match e.event {
+            SessionEvent::TurnStarted { input, .. } => Some(input),
+            _ => None,
+        })
+        .expect("a first message")
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_user_follows_or_overrides_a_suggestion() {
+async fn off_mode_answers_with_the_router_and_spends_nothing() {
     let (cloud, cheap) = catalog();
-    let manager = Arc::new(
-        Scripted::new("manager", vec![model("m", 1.0, 1.0, &[])]).answering(pick("coder", 0.9)),
-    );
-    let h = Harness::new(vec![cloud, cheap, manager]);
-    h.council(CouncilMode::Suggest, &[("manager", None)]);
+    let h = Harness::new(vec![cloud.clone(), cheap.clone()]);
+    let d = h
+        .router
+        .deliberate(
+            &h.sessions,
+            &task("Implemente o endpoint de pagamentos"),
+            Some(h.dir.path().to_path_buf()),
+        )
+        .await;
+    assert_eq!(d.mode, CouncilMode::Off);
+    assert_eq!(d.recommendation.activity, Activity::Code);
+    let decision = d.decision.unwrap();
+    assert_eq!(decision.source, DecisionSource::Router);
+    assert_eq!(decision.model_ref, model_ref("cloud", "coder"));
+    assert!(decision.reason.starts_with("Maior nota do roteador"));
+    assert!(d.analyses.is_empty() && d.seats.is_empty());
+    assert_eq!(d.usage, TokenUsage::default());
+    assert_eq!(cloud.calls() + cheap.calls(), 0);
+    assert!(h.audits(EventKind::CouncilDeliberated).is_empty());
+    assert_eq!(h.router.history()[0].id, d.id);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_council_analyzes_together_and_never_uses_models_outside_it() {
+    let (cloud, cheap) = catalog();
+    let claude = Arc::new(seat("claude", "Claude"));
+    let gemini = Arc::new(seat("gemini", "Gemini"));
+    let h = Harness::new(vec![
+        cloud.clone(),
+        cheap.clone(),
+        claude.clone(),
+        gemini.clone(),
+    ]);
+    h.council(CouncilMode::Suggest, &[("claude", None), ("gemini", None)]);
+
     let outcome = h
         .router
         .run(
             &h.sessions,
-            &task("Escreva testes para o parser"),
+            &task("Corrigir o timeout no worker de e-mails"),
             h.dir.path().to_path_buf(),
         )
-        .await
-        .unwrap();
-    assert!(outcome.started.is_none(), "Sugerir never opens on its own");
+        .await;
+    assert!(outcome.started.is_none(), "Sugerir waits for the user");
     let d = outcome.deliberation;
+    assert!(!d.auto_apply);
 
-    let followed = h
+    // Each member analyzed the demand with the project context.
+    assert_eq!(d.analyses.len(), 2);
+    assert_eq!(
+        d.analyses[0].text.as_deref(),
+        Some("Análise de Claude: usar fila")
+    );
+    assert_eq!(
+        d.analyses[1].text.as_deref(),
+        Some("Análise de Gemini: usar fila")
+    );
+    let asked = gemini.requests.lock()[0].clone();
+    assert!(asked.system.unwrap().contains("Conselho de IAs"));
+    assert!(asked
+        .prompt
+        .starts_with("Demanda:\nCorrigir o timeout no worker de e-mails"));
+    assert!(
+        asked.prompt.contains("## PROJECT\nfila-de-emails"),
+        "{}",
+        asked.prompt
+    );
+
+    // The first member joined both analyses into the plan.
+    let plan = d.plan.clone().unwrap();
+    assert_eq!(plan.source, PlanSource::Synthesis);
+    assert_eq!(plan.by_name.as_deref(), Some("CLAUDE"));
+    assert_eq!(plan.text, "Plano de Claude: 1. fila");
+    let synthesis = claude.requests.lock()[1].clone();
+    assert!(is_synthesis(&synthesis));
+    assert!(synthesis
+        .prompt
+        .contains("### Análise de CLAUDE\nAnálise de Claude: usar fila"));
+    assert!(synthesis
+        .prompt
+        .contains("### Análise de GEMINI\nAnálise de Gemini: usar fila"));
+    assert_eq!(gemini.calls(), 1, "only one member writes the synthesis");
+
+    // The first member carries it out; the other is the reserve. Models
+    // outside the Council are never asked nor chosen.
+    let decision = d.decision.clone().unwrap();
+    assert_eq!(decision.source, DecisionSource::Council);
+    assert_eq!(decision.model_ref, model_ref("claude", "claude-1"));
+    assert_eq!(
+        decision.reason,
+        "Executa: CLAUDE, o 1º membro disponível na ordem do Conselho. Se falhar, a sessão passa para: GEMINI."
+    );
+    let seats: Vec<_> = d.seats.iter().map(|s| s.member.provider.as_str()).collect();
+    assert_eq!(seats, ["claude", "gemini"]);
+    assert_eq!(cloud.calls() + cheap.calls(), 0);
+
+    // Three answers: two analyses and the synthesis.
+    assert_eq!(d.usage.input_tokens, 300);
+    let recorded = h.audits(EventKind::CouncilDeliberated);
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(
+        recorded[0].summary,
+        "Conselho: 2/2 análises · plano conjunto · executa CLAUDE · US$ 0.0030"
+    );
+    assert_eq!(recorded[0].data["seats"][1]["provider"], "gemini");
+    assert_eq!(recorded[0].data["plan"]["source"], "synthesis");
+
+    // The user approves: the session opens with the first member and gets
+    // the demand with the plan.
+    let started = h
         .router
-        .start_session(
-            &h.sessions,
-            RouteStart {
-                deliberation_id: Some(d.id.clone()),
-                provider: "cloud".into(),
-                model: Some("coder".into()),
-                title: None,
-                task: Some(d.task.clone()),
-                send_task: Some(false),
-            },
-            h.dir.path().to_path_buf(),
-            CallOrigin::User,
-        )
+        .execute(&h.sessions, &d.id, CallOrigin::User)
         .await
         .unwrap();
-    assert!(followed.turn_id.is_none());
-    assert_eq!(followed.session.title, "Escreva testes para o parser");
+    assert_eq!(started.session.provider.as_str(), "claude");
+    assert_eq!(
+        started.session.title,
+        "Corrigir o timeout no worker de e-mails"
+    );
+    assert!(started.skipped.is_empty());
+    wait_idle(&h, &started.session.id).await;
+    let input = first_input(&h, &started.session.id);
+    assert!(input.starts_with("Corrigir o timeout no worker de e-mails\n\n---\nPlano do Conselho (os membros (CLAUDE, GEMINI) analisaram juntos; síntese de CLAUDE):\n\nPlano de Claude: 1. fila"), "{input}");
+    let decided = h.audits(EventKind::RouteDecided);
+    assert_eq!(decided.len(), 1);
+    assert!(decided[0]
+        .summary
+        .ends_with("pelo Conselho, com a aprovação do usuário"));
+    assert_eq!(decided[0].data["reserves"][0]["provider"], "gemini");
+    assert!(h
+        .sessions
+        .list()
+        .iter()
+        .all(|s| s.provider.as_str() == "claude"));
+}
 
-    let overridden = h
+#[tokio::test(flavor = "multi_thread")]
+async fn a_member_that_fails_the_analysis_goes_to_the_end_of_the_line() {
+    let claude = Arc::new(
+        Scripted::new("claude", vec![model("claude-1", 1.0, 1.0, &[])])
+            .answering(|_| Err(ProviderError::unavailable("overloaded (http 529)"))),
+    );
+    let gemini = Arc::new(seat("gemini", "Gemini"));
+    let h = Harness::new(vec![claude.clone(), gemini.clone()]);
+    h.council(CouncilMode::Full, &[("claude", None), ("gemini", None)]);
+
+    let outcome = h
+        .router
+        .run(
+            &h.sessions,
+            &task("Agendar os e-mails"),
+            h.dir.path().to_path_buf(),
+        )
+        .await;
+    let d = &outcome.deliberation;
+    assert_eq!(
+        d.analyses[0].error.as_deref(),
+        Some("overloaded (http 529)")
+    );
+    // One analysis: it is the plan, no synthesis.
+    let plan = d.plan.clone().unwrap();
+    assert_eq!(plan.source, PlanSource::Single);
+    assert_eq!(plan.by_name.as_deref(), Some("GEMINI"));
+    assert_eq!(gemini.calls(), 1);
+    assert_eq!(
+        d.decision.as_ref().unwrap().reason,
+        "Executa: GEMINI, o 1º membro disponível na ordem do Conselho. CLAUDE falhou na análise: overloaded (http 529) e fica de reserva. Se falhar, a sessão passa para: CLAUDE."
+    );
+    // Full carries it out on its own, with the member that answered.
+    let started = outcome.started.clone().expect("Full opens the session");
+    assert_eq!(started.session.provider.as_str(), "gemini");
+    wait_idle(&h, &started.session.id).await;
+    assert!(first_input(&h, &started.session.id).contains("Plano do Conselho (análise de GEMINI)"));
+    let decided = h.audits(EventKind::RouteDecided);
+    assert_eq!(decided[0].data["by"], "council");
+    assert_eq!(
+        decided[0].origin,
+        CallOrigin::Council {
+            deliberation_id: Some(d.id.clone())
+        }
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_session_passes_to_the_next_member_when_the_executor_fails() {
+    let mut claude = seat("claude", "Claude");
+    claude.turn_error = Some("o servidor está sobrecarregado (http 529)");
+    let gemini = seat("gemini", "Gemini");
+    let h = Harness::new(vec![Arc::new(claude), Arc::new(gemini)]);
+    h.council(CouncilMode::Full, &[("claude", None), ("gemini", None)]);
+
+    let outcome = h
+        .router
+        .run(
+            &h.sessions,
+            &task("Agendar os e-mails"),
+            h.dir.path().to_path_buf(),
+        )
+        .await;
+    let session = outcome.started.unwrap().session;
+    assert_eq!(session.provider.as_str(), "claude");
+    wait_idle(&h, &session.id).await;
+
+    // Claude failed the turn: Gemini took over the same session and did it.
+    let info = h.sessions.info(&session.id).unwrap();
+    assert_eq!(info.provider.as_str(), "gemini");
+    assert_eq!(info.last_error, None);
+    let entries = h.sessions.snapshot(&session.id).unwrap().entries;
+    let completed = entries
+        .iter()
+        .find_map(|e| match &e.event {
+            SessionEvent::TurnCompleted { status, .. } => Some(*status),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(completed, TurnStatus::Completed);
+    assert!(entries.iter().any(|e| matches!(
+        &e.event,
+        SessionEvent::FailedOver { to_provider, .. } if to_provider.as_str() == "gemini"
+    )));
+    let failover = h.audits(EventKind::SessionFailover);
+    assert_eq!(failover.len(), 1);
+    assert_eq!(
+        failover[0].summary,
+        "CLAUDE falhou; GEMINI assumiu a sessão"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_member_that_cannot_open_the_session_hands_it_to_the_next() {
+    let mut claude = seat("claude", "Claude");
+    claude.start_error = Some("claude: comando não encontrado");
+    let h = Harness::new(vec![Arc::new(claude), Arc::new(seat("gemini", "Gemini"))]);
+    h.council(CouncilMode::Full, &[("claude", None), ("gemini", None)]);
+    let outcome = h
+        .router
+        .run(
+            &h.sessions,
+            &task("Agendar os e-mails"),
+            h.dir.path().to_path_buf(),
+        )
+        .await;
+    let started = outcome.started.unwrap();
+    assert_eq!(started.session.provider.as_str(), "gemini");
+    assert_eq!(started.skipped, ["CLAUDE: claude: comando não encontrado"]);
+
+    // Nobody can open it: Full says why, the deliberation stays.
+    let mut lone = seat("lone", "Lone");
+    lone.start_error = Some("sem login");
+    let h = Harness::new(vec![Arc::new(lone)]);
+    h.council(CouncilMode::Full, &[("lone", None)]);
+    let outcome = h
+        .router
+        .run(
+            &h.sessions,
+            &task("Agendar os e-mails"),
+            h.dir.path().to_path_buf(),
+        )
+        .await;
+    assert!(outcome.started.is_none());
+    assert_eq!(
+        outcome.start_error.as_deref(),
+        Some("nenhum membro do Conselho conseguiu abrir a sessão — LONE: sem login")
+    );
+    assert!(outcome.deliberation.plan.is_some());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_next_member_writes_the_synthesis_when_the_first_cannot() {
+    let claude =
+        Scripted::new("claude", vec![model("claude-1", 1.0, 1.0, &[])]).answering(|request| {
+            if is_synthesis(request) {
+                Err(ProviderError::unavailable("rate limited (http 429)"))
+            } else {
+                Ok("Análise de Claude".into())
+            }
+        });
+    let h = Harness::new(vec![Arc::new(claude), Arc::new(seat("gemini", "Gemini"))]);
+    h.council(CouncilMode::Suggest, &[("claude", None), ("gemini", None)]);
+    let d = h
+        .router
+        .deliberate(
+            &h.sessions,
+            &task("Agendar"),
+            Some(h.dir.path().to_path_buf()),
+        )
+        .await;
+    let plan = d.plan.unwrap();
+    assert_eq!(plan.source, PlanSource::Synthesis);
+    assert_eq!(plan.by_name.as_deref(), Some("GEMINI"));
+    assert_eq!(plan.failures, ["CLAUDE: rate limited (http 429)"]);
+    // Claude analyzed fine: it still carries out the plan.
+    assert_eq!(d.seats[0].member.provider.as_str(), "claude");
+
+    // Nobody can: the analyses side by side.
+    let failing = |name: &'static str| {
+        Scripted::new(name, vec![model("x", 1.0, 1.0, &[])]).answering(move |request| {
+            if is_synthesis(request) {
+                Err(ProviderError::unavailable("caiu"))
+            } else {
+                Ok(format!("Análise {name}"))
+            }
+        })
+    };
+    let h = Harness::new(vec![Arc::new(failing("a")), Arc::new(failing("b"))]);
+    h.council(CouncilMode::Suggest, &[("a", None), ("b", None)]);
+    let d = h
+        .router
+        .deliberate(
+            &h.sessions,
+            &task("Agendar"),
+            Some(h.dir.path().to_path_buf()),
+        )
+        .await;
+    let plan = d.plan.unwrap();
+    assert_eq!(plan.source, PlanSource::Joined);
+    assert_eq!(
+        plan.text,
+        "### Análise de A\nAnálise a\n\n### Análise de B\nAnálise b"
+    );
+    assert!(d.notices[0].starts_with("Nenhum membro conseguiu juntar as análises"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn without_any_analysis_the_demand_goes_alone_and_unusable_members_wait() {
+    let failing = Arc::new(
+        Scripted::new("failing", vec![model("f", 1.0, 1.0, &[])])
+            .answering(|_| Err(ProviderError::unavailable("429 rate limited"))),
+    );
+    let mut mute = Scripted::new("mute", vec![model("x", 1.0, 1.0, &[])]);
+    mute.completion = false;
+    let mut down = Scripted::new("down", vec![model("d", 1.0, 1.0, &[])]);
+    down.available = false;
+    let down = Arc::new(down);
+    let h = Harness::new(vec![failing, Arc::new(mute), down.clone()]);
+    h.council(
+        CouncilMode::Full,
+        &[
+            ("failing", None),
+            ("mute", None),
+            ("down", None),
+            ("gone", None),
+        ],
+    );
+
+    let outcome = h
+        .router
+        .run(
+            &h.sessions,
+            &task("Implemente o login"),
+            h.dir.path().to_path_buf(),
+        )
+        .await;
+    let d = &outcome.deliberation;
+    let errors: Vec<_> = d
+        .analyses
+        .iter()
+        .map(|a| a.error.clone().unwrap())
+        .collect();
+    assert_eq!(
+        errors,
+        [
+            "429 rate limited",
+            "este provider não responde pedidos avulsos",
+            "provider indisponível: 401 authentication failed",
+            "provider não registrado (conexão removida ou desativada)",
+        ]
+    );
+    assert!(d.plan.is_none());
+    assert!(d
+        .notices
+        .iter()
+        .any(|n| n.contains("Nenhum membro conseguiu analisar a demanda")));
+    assert_eq!(down.calls(), 0);
+    // The removed member is left out of the line; the rest wait in order.
+    let seats: Vec<_> = d.seats.iter().map(|s| s.member.provider.as_str()).collect();
+    assert_eq!(seats, ["failing", "mute", "down"]);
+    assert!(d
+        .decision
+        .as_ref()
+        .unwrap()
+        .reason
+        .contains("porque nenhum membro está melhor"));
+    // Full still carries out the bare demand.
+    let started = outcome.started.clone().unwrap();
+    wait_idle(&h, &started.session.id).await;
+    assert_eq!(first_input(&h, &started.session.id), "Implemente o login");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_slow_member_times_out_without_holding_the_others() {
+    let mut slow = seat("slow", "Slow");
+    slow.delay = Duration::from_secs(60);
+    let h = Harness::new(vec![Arc::new(slow), Arc::new(seat("quick", "Quick"))]);
+    h.council(CouncilMode::Suggest, &[("slow", None), ("quick", None)]);
+
+    let clock = Instant::now();
+    let d = h
+        .router
+        .deliberate(
+            &h.sessions,
+            &task("Implemente o login"),
+            Some(h.dir.path().to_path_buf()),
+        )
+        .await;
+    assert!(
+        clock.elapsed() < Duration::from_secs(15),
+        "{:?}",
+        clock.elapsed()
+    );
+    assert_eq!(d.analyses[0].error.as_deref(), Some("sem resposta em 5 s"));
+    assert_eq!(d.plan.unwrap().by_name.as_deref(), Some("QUICK"));
+    assert_eq!(d.seats[0].member.provider.as_str(), "quick");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_cache_saves_tokens_until_forced_or_reconfigured() {
+    let manager = Arc::new(seat("manager", "Manager"));
+    let h = Harness::new(vec![manager.clone()]);
+    h.council(CouncilMode::Suggest, &[("manager", None)]);
+    let here = Some(h.dir.path().to_path_buf());
+
+    let first = h
+        .router
+        .deliberate(
+            &h.sessions,
+            &task("Planeje a arquitetura das filas"),
+            here.clone(),
+        )
+        .await;
+    assert_eq!(manager.calls(), 1);
+
+    // Same demand (spacing and case aside), same project: no new call.
+    let again = h
+        .router
+        .deliberate(
+            &h.sessions,
+            &task("  planeje a ARQUITETURA das filas "),
+            here.clone(),
+        )
+        .await;
+    assert_eq!(manager.calls(), 1);
+    assert!(again.cached);
+    assert_eq!(again.cached_from.as_ref(), Some(&first.id));
+    assert_eq!(again.usage, TokenUsage::default());
+    assert_eq!(again.saved_usage, Some(first.usage));
+    assert_eq!(again.plan, first.plan);
+    assert!(again
+        .notices
+        .iter()
+        .any(|n| n.contains("nenhum token gasto")));
+    let recorded = h.audits(EventKind::CouncilDeliberated);
+    assert_eq!(recorded[1].data["cached"], true);
+    assert!(recorded[1].summary.starts_with("Conselho (cache):"));
+
+    // "Analisar de novo", another project, another demand and new settings
+    // are not served from the cache.
+    let mut forced = task("Planeje a arquitetura das filas");
+    forced.force = true;
+    assert!(
+        !h.router
+            .deliberate(&h.sessions, &forced, here.clone())
+            .await
+            .cached
+    );
+    assert_eq!(manager.calls(), 2);
+    h.router
+        .deliberate(
+            &h.sessions,
+            &task("Planeje a arquitetura das filas"),
+            Some("/outro".into()),
+        )
+        .await;
+    assert_eq!(manager.calls(), 3);
+    h.router
+        .deliberate(
+            &h.sessions,
+            &task("Planeje o cache distribuído"),
+            here.clone(),
+        )
+        .await;
+    assert_eq!(manager.calls(), 4);
+    h.council(CouncilMode::Suggest, &[("manager", Some("manager-1"))]);
+    h.router
+        .deliberate(&h.sessions, &task("Planeje a arquitetura das filas"), here)
+        .await;
+    assert_eq!(manager.calls(), 5);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_user_can_still_pick_any_model_by_hand() {
+    let (cloud, cheap) = catalog();
+    let h = Harness::new(vec![cloud, cheap, Arc::new(seat("claude", "Claude"))]);
+    h.council(CouncilMode::Suggest, &[("claude", None)]);
+    let started = h
         .router
         .start_session(
             &h.sessions,
             RouteStart {
-                deliberation_id: Some(d.id.clone()),
+                deliberation_id: None,
                 provider: "cheap".into(),
                 model: None,
                 title: Some("Testes baratos".into()),
-                task: Some(d.task.clone()),
+                task: Some("Escreva testes".into()),
                 send_task: None,
             },
             h.dir.path().to_path_buf(),
@@ -669,23 +874,14 @@ async fn the_user_follows_or_overrides_a_suggestion() {
         )
         .await
         .unwrap();
-    assert_eq!(overridden.session.model.as_deref(), Some("mini"));
+    assert_eq!(started.session.model.as_deref(), Some("mini"));
     assert!(
-        overridden.turn_id.is_some(),
+        started.turn_id.is_some(),
         "send_task defaults to the setting (on)"
     );
-    wait_idle(&h, &overridden.session.id).await;
-
+    wait_idle(&h, &started.session.id).await;
     let decided = h.audits(EventKind::RouteDecided);
-    assert_eq!(decided.len(), 2);
-    assert_eq!(decided[0].data["followedRecommendation"], true);
-    assert_eq!(decided[0].data["by"], "user");
-    assert!(decided[0]
-        .summary
-        .ends_with("pelo usuário, seguindo a recomendação"));
-    assert_eq!(decided[1].data["followedRecommendation"], false);
-    assert_eq!(decided[1].data["recommended"]["model"], "coder");
-    assert_eq!(decided[1].origin, CallOrigin::User);
+    assert!(decided[0].summary.ends_with("pelo usuário"));
 
     // A provider that is not registered fails before anything is recorded.
     let missing = h
@@ -705,54 +901,7 @@ async fn the_user_follows_or_overrides_a_suggestion() {
         )
         .await;
     assert!(missing.is_err());
-    assert_eq!(h.audits(EventKind::RouteDecided).len(), 2);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn requirements_can_leave_one_or_no_candidate() {
-    let (cloud, cheap) = catalog();
-    let manager = Arc::new(
-        Scripted::new("manager", vec![model("m", 1.0, 1.0, &[])]).answering(pick("coder", 0.9)),
-    );
-    let mut notools = Scripted::new("notools", vec![model("chat", 0.1, 0.1, &[])]);
-    notools.tools = false;
-    let h = Harness::new(vec![cloud, cheap, manager.clone(), Arc::new(notools)]);
-    h.council(CouncilMode::Full, &[("manager", None)]);
-
-    // Only one model has 1M of context: no need to ask the Council, and
-    // Full applies it.
-    h.registry.replace(Arc::new(Scripted::new(
-        "cloud",
-        vec![ModelInfo {
-            context_window: Some(1_000_000),
-            ..model("strong", 15.0, 75.0, &["código"])
-        }],
-    )));
-    let mut request = task("Implemente a migração");
-    request.route.min_context = Some(500_000);
-    let d = h.router.deliberate(&request).await;
-    assert_eq!(d.shortlist, vec![model_ref("cloud", "strong")]);
-    assert!(d.notices[0].contains("o Conselho não precisou ser consultado"));
-    assert!(d.auto_apply);
-    assert_eq!(manager.calls(), 0);
-    assert!(d
-        .recommendation
-        .excluded
-        .iter()
-        .any(|e| e.model_ref == model_ref("notools", "chat")
-            && e.reason.contains("ferramentas desligadas")));
-
-    // Nothing fits.
-    request.route.min_context = Some(2_000_000);
-    let none = h.router.deliberate(&request).await;
-    assert!(none.decision.is_none());
-    assert!(none.notices[0].contains("Nenhum modelo cadastrado atende aos requisitos"));
-    let outcome = h
-        .router
-        .run(&h.sessions, &request, h.dir.path().to_path_buf())
-        .await
-        .unwrap();
-    assert!(outcome.started.is_none());
+    assert_eq!(h.audits(EventKind::RouteDecided).len(), 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -847,11 +996,8 @@ impl DeliberationStore for TestStore {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn deliberations_and_the_cache_survive_a_restart() {
-    let (cloud, cheap) = catalog();
-    let manager = Arc::new(
-        Scripted::new("manager", vec![model("m", 1.0, 1.0, &[])]).answering(pick("strong", 0.8)),
-    );
-    let h = Harness::new(vec![cloud, cheap, manager.clone()]);
+    let manager = Arc::new(seat("manager", "Manager"));
+    let h = Harness::new(vec![manager.clone()]);
     h.council(CouncilMode::Suggest, &[("manager", None)]);
     let store = Arc::new(TestStore::default());
     let open = || {
@@ -863,36 +1009,89 @@ async fn deliberations_and_the_cache_survive_a_restart() {
         .0
         .with_store(store.clone())
     };
+    let here = || Some(h.dir.path().to_path_buf());
 
     let first = open();
-    let off_topic = first.deliberate(&task("Resuma o README")).await;
+    let off_topic = first
+        .deliberate(&h.sessions, &task("Resuma o README"), here())
+        .await;
     let decided = first
-        .deliberate(&task("Planeje a arquitetura das filas"))
+        .deliberate(
+            &h.sessions,
+            &task("Planeje a arquitetura das filas"),
+            here(),
+        )
         .await;
     assert_eq!(manager.calls(), 2);
     drop(first);
 
-    // After a restart: the history is back and the same question costs
-    // nothing.
+    // After a restart: the history is back, the same demand costs nothing
+    // and a stored deliberation can still be carried out.
     let second = open();
     let ids: Vec<_> = second.history().into_iter().map(|d| d.id).collect();
     assert_eq!(ids, [decided.id.clone(), off_topic.id.clone()]);
     let again = second
-        .deliberate(&task("Planeje a arquitetura das filas"))
+        .deliberate(
+            &h.sessions,
+            &task("Planeje a arquitetura das filas"),
+            here(),
+        )
         .await;
     assert!(again.cached);
     assert_eq!(again.cached_from.as_ref(), Some(&decided.id));
-    assert_eq!(again.decision, decided.decision);
+    assert_eq!(again.plan, decided.plan);
     assert_eq!(manager.calls(), 2);
+    let started = second
+        .execute(&h.sessions, &decided.id, CallOrigin::User)
+        .await
+        .unwrap();
+    assert_eq!(started.session.provider.as_str(), "manager");
 
     // New settings drop the stored cache too.
     second
         .save_settings(second.settings(), CallOrigin::User)
         .unwrap();
     let fresh = second
-        .deliberate(&task("Planeje a arquitetura das filas"))
+        .deliberate(
+            &h.sessions,
+            &task("Planeje a arquitetura das filas"),
+            here(),
+        )
         .await;
     assert!(!fresh.cached);
     assert_eq!(manager.calls(), 3);
     assert_eq!(store.rows.lock().len(), 4);
+}
+
+#[test]
+fn deliberations_from_before_the_joint_analysis_still_read() {
+    // A deliberation stored by 0.1.0, when the Council voted for a model.
+    let old = json!({
+        "id": "d-1",
+        "createdAt": "2026-10-01T12:00:00Z",
+        "task": "Resuma o README",
+        "mode": "suggest",
+        "recommendation": {
+            "activity": "summary", "detected": true, "preference": "cost",
+            "needsTools": false, "minContext": null, "candidates": [], "excluded": []
+        },
+        "shortlist": [{"provider": "cheap", "model": "mini"}],
+        "votes": [{
+            "member": {"provider": "judge", "model": null}, "providerName": "Judge",
+            "model": "j1", "choice": {"provider": "cheap", "model": "mini"},
+            "ranking": [], "confidence": 0.9, "reason": "basta", "error": null,
+            "usage": {"inputTokens": 10, "outputTokens": 2}, "durationMs": 5
+        }],
+        "decision": {
+            "provider": "cheap", "model": "mini", "providerName": "Cheap", "modelName": "mini",
+            "source": "council", "reason": "1 de 1", "agreement": 1.0
+        },
+        "usage": {"inputTokens": 10, "outputTokens": 2},
+        "cached": false, "cachedFrom": null, "savedUsage": null,
+        "notices": [], "autoApply": false, "durationMs": 7
+    });
+    let read: Deliberation = serde_json::from_value(old).unwrap();
+    assert_eq!(read.votes.len(), 1);
+    assert!(read.analyses.is_empty() && read.plan.is_none() && read.seats.is_empty());
+    assert_eq!(read.decision.unwrap().agreement, Some(1.0));
 }

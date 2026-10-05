@@ -1,10 +1,12 @@
-// Pure helpers for the router and Council views (unit tested; ADR-0011).
+// Pure helpers for the router and Council views (unit tested; ADR-0011,
+// ADR-0024).
 
 import type {
   CouncilMember,
   CouncilMode,
   Deliberation,
   ModelRef,
+  PlanSource,
   Preference,
   ProviderInfo,
 } from "./types";
@@ -17,8 +19,15 @@ export const MODE_LABELS: Record<CouncilMode, string> = {
 
 export const MODE_HINTS: Record<CouncilMode, string> = {
   off: "Só o roteador, sem gastar tokens: ele ordena os modelos e você escolhe.",
-  suggest: "O Conselho delibera e recomenda; você aprova ou escolhe outro modelo.",
-  full: "O Conselho decide e abre a sessão sozinho, enviando a tarefa. As ferramentas que a sessão pedir passam pelo modo de autonomia do projeto.",
+  suggest:
+    "Os membros analisam a demanda juntos e um deles junta as análises num plano; você aprova e o 1º membro executa.",
+  full: "Os membros analisam juntos e o 1º membro executa o plano sozinho. As ferramentas que a sessão pedir passam pelo modo de autonomia do projeto.",
+};
+
+export const PLAN_SOURCES: Record<PlanSource, string> = {
+  synthesis: "plano conjunto",
+  single: "análise de um membro",
+  joined: "análises lado a lado",
 };
 
 export const PREFERENCE_LABELS: Record<Preference, string> = {
@@ -34,9 +43,9 @@ export function primaryAction(mode: CouncilMode): string {
     case "off":
       return "Recomendar";
     case "suggest":
-      return "Consultar o Conselho";
+      return "Analisar com o Conselho";
     case "full":
-      return "Decidir e iniciar";
+      return "Analisar e executar";
   }
 }
 
@@ -81,6 +90,33 @@ export function decisionSource(deliberation: Deliberation): string {
   if (!deliberation.decision) return "sem decisão";
   if (deliberation.decision.source === "router") return "Roteador";
   return deliberation.cached ? "Conselho (cache)" : "Conselho";
+}
+
+/** Moves the member at `index` one place up (-1) or down (+1); the order
+ * decides who executes and who backs it up. */
+export function moveMember(members: CouncilMember[], index: number, step: -1 | 1): CouncilMember[] {
+  const to = index + step;
+  if (to < 0 || to >= members.length) return members;
+  const moving = members[index];
+  const other = members[to];
+  if (!moving || !other) return members;
+  const out = [...members];
+  out[index] = other;
+  out[to] = moving;
+  return out;
+}
+
+/** "Executa" for the first member, "1ª reserva", "2ª reserva"… */
+export function seatRole(index: number): string {
+  return index === 0 ? "executa" : `${index}ª reserva`;
+}
+
+/** "2 de 2 análises · plano conjunto" (or the votes of an old deliberation). */
+export function councilSummary(deliberation: Deliberation): string {
+  if (deliberation.analyses.length === 0) return votesSummary(deliberation);
+  const done = deliberation.analyses.filter((a) => a.text !== null).length;
+  const plan = deliberation.plan ? PLAN_SOURCES[deliberation.plan.source] : "sem plano";
+  return `${done} de ${deliberation.analyses.length} ${deliberation.analyses.length === 1 ? "análise" : "análises"} · ${plan}`;
 }
 
 /** "2 de 3 membros válidos" */

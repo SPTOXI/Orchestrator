@@ -1765,7 +1765,7 @@ input.num {
 
 .member-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr) auto auto auto auto;
   gap: 6px;
   align-items: center;
   padding: 3px 0;
@@ -1773,6 +1773,11 @@ input.num {
 
 .member-row select {
   contain: paint;
+}
+
+.member-row .member-role {
+  min-width: 96px;
+  text-align: center;
 }
 
 .member-row.duplicate select {
@@ -1893,6 +1898,55 @@ input.invalid {
   align-items: center;
   gap: 6px;
   margin: 4px 0 0;
+}
+
+/* Council: the plan, who executes and each member's analysis (ADR-0024). */
+.council-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+}
+
+.plan-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.seat-list {
+  margin: 4px 0 8px;
+  padding-left: 22px;
+}
+
+.seat-list .seat {
+  padding: 2px 0;
+}
+
+.analysis-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin: 6px 0;
+}
+
+.analysis-card > summary {
+  cursor: pointer;
+  gap: 8px;
+}
+
+.analysis-card .plan-text {
+  border: none;
+  padding: 4px 0 0;
+}
+
+.failover-item {
+  border-left: 3px solid var(--warn);
 }
 
 .votes-table {

@@ -1,34 +1,40 @@
-//! The Council: AI models deliberate which candidate fits a task
-//! (ADR-0011). This module builds the question, reads the answers and adds
-//! up the votes; `service` runs the members.
+//! The Council (ADR-0011, ADR-0024): its members analyze a demand
+//! together, each one with the project context; one of them writes the
+//! joint plan; the first member available carries it out, with the others
+//! as its reserves. Models outside the Council are never used. This module
+//! holds the records and the texts the members get; `service` runs them.
 
-use crate::score::{format_context, Candidate, ModelRef, Recommendation};
+use crate::score::{ModelRef, Recommendation};
 use crate::settings::{CouncilMember, CouncilMode};
 use chrono::{DateTime, Utc};
 use orchestrator_core::{DeliberationId, TokenUsage};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use std::path::PathBuf;
 
-/// Longest task description sent to the members.
-const TASK_CHARS: usize = 4_000;
-/// Longest reason kept from a member.
-const REASON_CHARS: usize = 400;
-/// Weight of a vote without a confidence.
-const DEFAULT_CONFIDENCE: f64 = 0.7;
+/// Longest demand sent to the members.
+const TASK_CHARS: usize = 8_000;
+/// Longest analysis handed to the synthesis and kept.
+const ANALYSIS_CHARS: usize = 6_000;
+/// Longest plan kept and sent to the one who carries it out.
+const PLAN_CHARS: usize = 8_000;
 
-/// Instructions of every member.
-pub const SYSTEM: &str = "You are a member of the Orchestrator's model Council. \
-Choose which AI model should carry out the user's task, from a fixed list of candidates. \
-Judge by the task, the activity, the requirements and each model's data: price per million \
-tokens, context window, tool support, tags and the router score (a rule-based estimate). \
-Prefer the cheapest model that will do the task well; pay for a stronger model only when \
-the task needs it.\n\
-Answer with ONLY one JSON object and no other text:\n\
-{\"choice\": \"<candidate id>\", \"ranking\": [\"<candidate id>\", ...], \
-\"confidence\": <number from 0 to 1>, \"reason\": \"<one or two sentences in Brazilian Portuguese>\"}\n\
-Use only the candidate ids of the list (c1, c2, ...).";
+/// Instructions of every member analyzing a demand.
+pub const ANALYSIS_SYSTEM: &str = "Você é membro do Conselho de IAs do Orchestrator. Os membros \
+analisam juntos uma demanda de desenvolvimento antes que um deles a execute no projeto. Você não \
+tem ferramentas: conte só com a demanda e o contexto do projeto que vêm abaixo, e diga o que \
+precisaria ser confirmado no código. Responda em português do Brasil, em Markdown, em até 350 \
+palavras, com as seções **Entendimento**, **Abordagem** (passos), **Riscos e dúvidas** e **O que \
+verificar no código**. Não escreva o código completo.";
 
-/// One member's answer.
+/// Instructions of the member who joins the analyses into one plan.
+pub const SYNTHESIS_SYSTEM: &str = "Você é o relator do Conselho de IAs do Orchestrator. Junte as \
+análises dos membros num único plano para quem vai executar a demanda: onde concordam, onde \
+divergem e qual caminho seguir (com o motivo), e os passos. Não invente o que nenhuma análise \
+disse. Responda em português do Brasil, em Markdown, em até 400 palavras, com as seções \
+**Consenso**, **Divergências** (e a decisão), **Plano** (passos numerados) e **Cuidados**.";
+
+/// One member's answer in a deliberation made before ADR-0024, when the
+/// Council voted for a model. Kept so the old history still reads.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Vote {
@@ -47,6 +53,62 @@ pub struct Vote {
     pub duration_ms: u64,
 }
 
+/// One member's analysis of the demand.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Analysis {
+    pub member: CouncilMember,
+    pub provider_name: String,
+    /// Model that answered.
+    pub model: Option<String>,
+    pub text: Option<String>,
+    /// Why there is no analysis (no answer in time, provider down, …).
+    pub error: Option<String>,
+    pub usage: TokenUsage,
+    pub duration_ms: u64,
+}
+
+/// How the plan came to be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PlanSource {
+    /// A member joined two or more analyses.
+    Synthesis,
+    /// Only one member answered: its analysis is the plan.
+    Single,
+    /// Nobody could write the synthesis: the analyses side by side.
+    Joined,
+}
+
+/// The Council's plan for the one who carries out the demand.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Plan {
+    pub text: String,
+    pub source: PlanSource,
+    /// Who wrote it (the synthesis, or the only analysis).
+    pub by: Option<CouncilMember>,
+    pub by_name: Option<String>,
+    /// Spent by the synthesis.
+    pub usage: TokenUsage,
+    /// Members that could not write the synthesis, and why.
+    pub failures: Vec<String>,
+}
+
+/// A member's place in the execution: the first carries out the demand,
+/// the others are its reserves, in this order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Seat {
+    pub member: CouncilMember,
+    pub provider_name: String,
+    /// The member's model, or its provider's default.
+    pub model_name: String,
+    /// Why it moved to the end of the line (failed the analysis, provider
+    /// unavailable).
+    pub demoted: Option<String>,
+}
+
 /// Who made the decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,6 +117,8 @@ pub enum DecisionSource {
     Council,
 }
 
+/// The model a session opens with: the router's best (Council off) or the
+/// Council member that carries out the demand.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Decision {
@@ -64,12 +128,13 @@ pub struct Decision {
     pub model_name: String,
     pub source: DecisionSource,
     pub reason: String,
-    /// Share of the valid votes that chose this model (Council only).
+    /// Share of the valid votes that chose this model (deliberations made
+    /// before ADR-0024).
     pub agreement: Option<f64>,
 }
 
-/// A deliberation: the router's ranking, the members' votes and the
-/// decision.
+/// A deliberation: the router's ranking and, with the Council on, the
+/// members' analyses, the plan and who carries it out.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Deliberation {
@@ -78,9 +143,23 @@ pub struct Deliberation {
     pub task: String,
     pub mode: CouncilMode,
     pub recommendation: Recommendation,
-    /// Candidates handed to the Council (best first).
+    /// Before ADR-0024: the candidates handed to the Council.
+    #[serde(default)]
     pub shortlist: Vec<ModelRef>,
+    /// Before ADR-0024: the members' votes.
+    #[serde(default)]
     pub votes: Vec<Vote>,
+    /// Each member's analysis, in Council order.
+    #[serde(default)]
+    pub analyses: Vec<Analysis>,
+    #[serde(default)]
+    pub plan: Option<Plan>,
+    /// Who carries out the demand, then the reserves.
+    #[serde(default)]
+    pub seats: Vec<Seat>,
+    /// The project the demand is about.
+    #[serde(default)]
+    pub project_path: Option<PathBuf>,
     pub decision: Option<Decision>,
     /// Spent by this deliberation (zero when it came from the cache).
     pub usage: TokenUsage,
@@ -90,12 +169,13 @@ pub struct Deliberation {
     /// What the original deliberation spent (cache hits).
     pub saved_usage: Option<TokenUsage>,
     pub notices: Vec<String>,
-    /// Full mode applies the decision without asking.
+    /// Full mode carries out the plan without asking.
     pub auto_apply: bool,
     pub duration_ms: u64,
 }
 
-fn truncate(text: &str, max: usize) -> String {
+pub(crate) fn truncate(text: &str, max: usize) -> String {
+    let text = text.trim();
     if text.chars().count() <= max {
         return text.to_owned();
     }
@@ -104,283 +184,144 @@ fn truncate(text: &str, max: usize) -> String {
     out
 }
 
-fn yes_no(value: Option<bool>) -> &'static str {
-    match value {
-        Some(true) => "sim",
-        Some(false) => "não",
-        None => "não informado",
+/// What a member receives to analyze the demand.
+pub fn analysis_prompt(task: &str, context: Option<&str>) -> String {
+    let mut text = format!("Demanda:\n{}", truncate(task, TASK_CHARS));
+    match context.map(str::trim).filter(|c| !c.is_empty()) {
+        Some(context) => {
+            text.push_str("\n\nContexto do projeto (montado pelo Orchestrator):\n");
+            text.push_str(context);
+        }
+        None => text.push_str("\n\n(Sem contexto do projeto: analise pela demanda.)"),
     }
+    text
 }
 
-fn price(value: Option<f64>) -> String {
-    value.map_or_else(|| "?".into(), |p| format!("{p}"))
+/// An analysis as the plan and the synthesis keep it.
+pub fn clip_analysis(text: &str) -> String {
+    truncate(text, ANALYSIS_CHARS)
 }
 
-/// The question a member receives.
-pub fn prompt(task: &str, recommendation: &Recommendation, shortlist: &[&Candidate]) -> String {
-    let task = task.trim();
-    let mut text = String::from("Tarefa:\n");
-    text.push_str(if task.is_empty() {
-        "(sem descrição; use a atividade)"
-    } else {
-        task
-    });
-    let task_text = truncate(&text, TASK_CHARS + 8);
-    let mut text = task_text;
-    text.push_str(&format!(
-        "\n\nAtividade: {} ({})\nRequisitos: ferramentas {} · contexto mínimo {} · preferência {}\n\nCandidatos:\n",
-        recommendation.activity.id(),
-        recommendation.activity.label(),
-        if recommendation.needs_tools { "obrigatórias" } else { "opcionais" },
-        recommendation.min_context.map_or_else(|| "—".into(), format_context),
-        recommendation.preference.label(),
-    ));
-    for (i, candidate) in shortlist.iter().enumerate() {
-        let tags = if candidate.tags.is_empty() {
-            "—".to_owned()
-        } else {
-            candidate.tags.join(", ")
-        };
+/// What the member writing the synthesis receives: the demand and every
+/// analysis, with who wrote it.
+pub fn synthesis_prompt(task: &str, analyses: &[(String, String)]) -> String {
+    let mut text = format!("Demanda:\n{}", truncate(task, TASK_CHARS));
+    for (who, analysis) in analyses {
         text.push_str(&format!(
-            "c{} · {} / {} · US$ {} entrada e {} saída por M tokens · contexto {} · ferramentas: {} · etiquetas: {} · nota do roteador {}\n",
-            i + 1,
-            candidate.provider_name,
-            candidate.model_ref.model,
-            price(candidate.input_price),
-            price(candidate.output_price),
-            candidate.context_window.map_or_else(|| "?".into(), format_context),
-            yes_no(candidate.supports_tools),
-            tags,
-            candidate.score,
+            "\n\n### Análise de {who}\n{}",
+            clip_analysis(analysis)
         ));
     }
     text
 }
 
-/// A member's answer, read.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Ballot {
-    /// Index in the shortlist.
-    pub choice: usize,
-    /// Indexes, choice first, no repeats.
-    pub ranking: Vec<usize>,
-    pub confidence: Option<f64>,
-    pub reason: Option<String>,
+/// The analyses side by side, when nobody could join them.
+pub fn joined_plan(analyses: &[(String, String)]) -> String {
+    let parts: Vec<String> = analyses
+        .iter()
+        .map(|(who, analysis)| format!("### Análise de {who}\n{}", clip_analysis(analysis)))
+        .collect();
+    truncate(&parts.join("\n\n"), PLAN_CHARS)
 }
 
-/// `"c2"`, `"C2"`, `"2"` or `2` → index 1.
-fn candidate_index(value: &Value, count: usize) -> Option<usize> {
-    let number = match value {
-        Value::Number(n) => n.as_u64()?,
-        Value::String(s) => {
-            let s = s.trim().to_lowercase();
-            let digits = s.strip_prefix('c').unwrap_or(&s).trim();
-            digits.parse::<u64>().ok()?
-        }
-        _ => return None,
+/// A plan as kept.
+pub fn clip_plan(text: &str) -> String {
+    truncate(text, PLAN_CHARS)
+}
+
+/// The first message of the session that carries out the demand: the
+/// demand, the Council's plan and the role of the one carrying it out.
+pub fn execution_message(task: &str, plan: Option<&Plan>, members: &[String]) -> String {
+    let task = task.trim();
+    let Some(plan) = plan else {
+        return task.to_owned();
     };
-    let index = usize::try_from(number).ok()?.checked_sub(1)?;
-    (index < count).then_some(index)
-}
-
-/// The first JSON object in `text` (answers may come in code fences or
-/// with text around).
-fn first_object(text: &str) -> Result<serde_json::Map<String, Value>, String> {
-    let mut last_error = None;
-    for (start, _) in text.match_indices('{') {
-        let mut stream = serde_json::Deserializer::from_str(&text[start..]).into_iter::<Value>();
-        match stream.next() {
-            Some(Ok(Value::Object(object))) => return Ok(object),
-            Some(Err(err)) => last_error = Some(err.to_string()),
-            _ => {}
-        }
-    }
-    Err(match last_error {
-        Some(err) => format!("JSON inválido na resposta ({err})"),
-        None => "a resposta não trouxe um objeto JSON".into(),
-    })
-}
-
-/// Reads a member's answer against a shortlist of `count` candidates.
-pub fn parse_ballot(text: &str, count: usize) -> Result<Ballot, String> {
-    let object = first_object(text)?;
-    let mut ranking: Vec<usize> = Vec::new();
-    if let Some(Value::Array(items)) = object.get("ranking") {
-        for item in items {
-            if let Some(index) = candidate_index(item, count) {
-                if !ranking.contains(&index) {
-                    ranking.push(index);
-                }
-            }
-        }
-    }
-    let choice = match object.get("choice") {
-        Some(value) => candidate_index(value, count).ok_or_else(|| {
-            format!(
-                "escolheu um candidato fora da lista: {}",
-                truncate(&value.to_string(), 40)
-            )
-        })?,
-        None => *ranking
-            .first()
-            .ok_or_else(|| "a resposta não indicou a escolha (\"choice\")".to_owned())?,
+    let how = match plan.source {
+        PlanSource::Synthesis => format!(
+            "os membros ({}) analisaram juntos; síntese de {}",
+            members.join(", "),
+            plan.by_name.as_deref().unwrap_or("um membro")
+        ),
+        PlanSource::Single => format!(
+            "análise de {}",
+            plan.by_name.as_deref().unwrap_or("um membro")
+        ),
+        PlanSource::Joined => format!("análises de {}", members.join(", ")),
     };
-    ranking.retain(|i| *i != choice);
-    ranking.insert(0, choice);
-    let confidence = object.get("confidence").and_then(Value::as_f64).map(|c| {
-        let c = if c > 1.0 && c <= 100.0 { c / 100.0 } else { c };
-        c.clamp(0.0, 1.0)
-    });
-    let reason = object
-        .get("reason")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|r| !r.is_empty())
-        .map(|r| truncate(r, REASON_CHARS));
-    Ok(Ballot {
-        choice,
-        ranking,
-        confidence,
-        reason,
-    })
-}
-
-/// Result of adding up the ballots.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Tally {
-    pub winner: usize,
-    /// Points per shortlist index.
-    pub points: Vec<f64>,
-    /// Share of the ballots that chose the winner.
-    pub agreement: f64,
-}
-
-/// Borda count weighted by confidence (0.2–1): position `p` of a ranking is
-/// worth `count - p` points. Ties go to the router's order.
-pub fn tally(ballots: &[Ballot], count: usize) -> Option<Tally> {
-    if ballots.is_empty() || count == 0 {
-        return None;
-    }
-    let mut points = vec![0.0; count];
-    for ballot in ballots {
-        let weight = ballot
-            .confidence
-            .unwrap_or(DEFAULT_CONFIDENCE)
-            .clamp(0.2, 1.0);
-        for (position, index) in ballot.ranking.iter().enumerate() {
-            points[*index] += weight * (count - position) as f64;
-        }
-    }
-    let mut winner = 0;
-    for (index, value) in points.iter().enumerate() {
-        if *value > points[winner] + 1e-9 {
-            winner = index;
-        }
-    }
-    let chose = ballots.iter().filter(|b| b.choice == winner).count();
-    Some(Tally {
-        winner,
-        agreement: chose as f64 / ballots.len() as f64,
-        points,
-    })
+    format!(
+        "{task}\n\n---\nPlano do Conselho ({how}):\n\n{}\n\n---\nVocê executa esta demanda pelo \
+         Conselho. Siga o plano, confirme no código o que ele supõe e, se discordar de algo, diga \
+         por quê antes de seguir outro caminho.",
+        plan.text.trim()
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn ballot(choice: usize, ranking: &[usize], confidence: Option<f64>) -> Ballot {
-        Ballot {
-            choice,
-            ranking: ranking.to_vec(),
-            confidence,
-            reason: None,
+    fn plan(source: PlanSource, by: Option<&str>) -> Plan {
+        Plan {
+            text: "1. Ler o worker\n2. Aumentar o prazo".into(),
+            source,
+            by: None,
+            by_name: by.map(str::to_owned),
+            usage: TokenUsage::default(),
+            failures: Vec::new(),
         }
     }
 
     #[test]
-    fn reads_answers_in_any_wrapping() {
-        let plain = r#"{"choice":"c2","ranking":["c2","c1","c3"],"confidence":0.9,"reason":"Barato e bom."}"#;
+    fn members_get_the_demand_and_the_project_context() {
+        let text = analysis_prompt("  Corrigir o timeout ", Some("## PROJECT\nrust"));
         assert_eq!(
-            parse_ballot(plain, 3).unwrap(),
-            Ballot {
-                choice: 1,
-                ranking: vec![1, 0, 2],
-                confidence: Some(0.9),
-                reason: Some("Barato e bom.".into())
-            }
+            text,
+            "Demanda:\nCorrigir o timeout\n\nContexto do projeto (montado pelo Orchestrator):\n## PROJECT\nrust"
         );
-        let fenced = "Claro!\n```json\n{\"choice\": \"C3\", \"confidence\": 80}\n```\nEspero ter ajudado {:)}";
-        let read = parse_ballot(fenced, 3).unwrap();
-        assert_eq!(read.choice, 2);
-        assert_eq!(read.ranking, vec![2]);
-        assert_eq!(read.confidence, Some(0.8));
-
-        // Numbers, repeated and unknown ids in the ranking are tolerated.
-        let loose = r#"{"ranking": [2, "c2", "c9", "1"], "reason": "  "}"#;
-        let read = parse_ballot(loose, 2).unwrap();
-        assert_eq!(
-            (read.choice, read.ranking, read.reason),
-            (1, vec![1, 0], None)
-        );
-
-        // The choice goes first even when the ranking disagrees.
-        let read = parse_ballot(r#"{"choice":"c1","ranking":["c2","c1"]}"#, 2).unwrap();
-        assert_eq!(read.ranking, vec![0, 1]);
+        assert!(analysis_prompt("x", None)
+            .ends_with("(Sem contexto do projeto: analise pela demanda.)"));
+        assert!(analysis_prompt("x", Some("  ")).contains("Sem contexto"));
     }
 
     #[test]
-    fn rejects_unusable_answers_with_a_reason() {
+    fn the_synthesis_sees_every_analysis_with_its_author() {
+        let analyses = vec![
+            ("Claude".to_owned(), "Usar fila".to_owned()),
+            ("Gemini".to_owned(), "Usar cron".to_owned()),
+        ];
+        let text = synthesis_prompt("Agendar e-mails", &analyses);
         assert_eq!(
-            parse_ballot("Eco: qual modelo?", 3).unwrap_err(),
-            "a resposta não trouxe um objeto JSON"
-        );
-        assert!(parse_ballot("{\"choice\": ", 3)
-            .unwrap_err()
-            .starts_with("JSON inválido"));
-        assert_eq!(
-            parse_ballot(r#"{"choice":"gpt-5"}"#, 3).unwrap_err(),
-            "escolheu um candidato fora da lista: \"gpt-5\""
+            text,
+            "Demanda:\nAgendar e-mails\n\n### Análise de Claude\nUsar fila\n\n### Análise de Gemini\nUsar cron"
         );
         assert_eq!(
-            parse_ballot(r#"{"choice":"c4"}"#, 3).unwrap_err(),
-            "escolheu um candidato fora da lista: \"c4\""
+            joined_plan(&analyses),
+            "### Análise de Claude\nUsar fila\n\n### Análise de Gemini\nUsar cron"
         );
-        assert_eq!(
-            parse_ballot(r#"{"reason":"sem escolha"}"#, 3).unwrap_err(),
-            "a resposta não indicou a escolha (\"choice\")"
-        );
+        let long = "a".repeat(ANALYSIS_CHARS + 50);
+        assert_eq!(clip_analysis(&long).chars().count(), ANALYSIS_CHARS + 1);
     }
 
     #[test]
-    fn tally_weighs_rankings_by_confidence() {
-        // One confident vote for c2 beats a hesitant one for c1.
-        let ballots = [
-            ballot(1, &[1, 0, 2], Some(1.0)),
-            ballot(0, &[0, 2, 1], Some(0.3)),
-        ];
-        let result = tally(&ballots, 3).unwrap();
-        assert_eq!(result.winner, 1);
-        assert_eq!(result.agreement, 0.5);
-        assert!((result.points[1] - (3.0 + 0.3)).abs() < 1e-9);
-
-        // Rankings count: two second places beat one first place.
-        let ballots = [
-            ballot(0, &[0, 1], None),
-            ballot(2, &[2, 1], None),
-            ballot(3, &[3, 1], None),
-        ];
-        assert_eq!(tally(&ballots, 4).unwrap().winner, 1);
-
-        // Ties go to the router's order; one member = the manager.
-        assert_eq!(
-            tally(&[ballot(1, &[1], None), ballot(0, &[0], None)], 2)
-                .unwrap()
-                .winner,
-            0
+    fn the_one_carrying_out_gets_the_demand_and_the_plan() {
+        let members = vec!["Claude".to_owned(), "Gemini".to_owned()];
+        let text = execution_message(
+            "Corrigir o timeout",
+            Some(&plan(PlanSource::Synthesis, Some("Claude"))),
+            &members,
         );
-        let manager = tally(&[ballot(2, &[2], Some(0.1))], 3).unwrap();
-        assert_eq!((manager.winner, manager.agreement), (2, 1.0));
-        assert!(tally(&[], 3).is_none());
+        assert!(text.starts_with("Corrigir o timeout\n\n---\nPlano do Conselho (os membros (Claude, Gemini) analisaram juntos; síntese de Claude):\n\n1. Ler o worker"), "{text}");
+        assert!(text.ends_with("antes de seguir outro caminho."), "{text}");
+        let single = execution_message(
+            "x",
+            Some(&plan(PlanSource::Single, Some("Gemini"))),
+            &members,
+        );
+        assert!(
+            single.contains("Plano do Conselho (análise de Gemini)"),
+            "{single}"
+        );
+        // Without a plan, just the demand.
+        assert_eq!(execution_message(" x ", None, &members), "x");
     }
 }

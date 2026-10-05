@@ -15,7 +15,7 @@ adiciona algo fora dela, é registrada aqui **antes** de ser implementada.
 | [0008](./0008-projeto-deteccao-e-diretorio-base.md) | Projeto: detecção no runtime, diretório base e ferramentas auxiliares | Aceita |
 | [0009](./0009-camada-de-providers-e-sessoes.md) | Camada de providers: `AIProvider`, registro e sessões | Aceita (adapters: ver 0010) |
 | [0010](./0010-providers-por-api-com-cadastro-livre.md) | Providers por API com cadastro livre e nova ordem das Fases 4–5 | Aceita |
-| [0011](./0011-roteador-de-modelos-e-conselho.md) | Roteador de modelos e Conselho de IAs | Aceita |
+| [0011](./0011-roteador-de-modelos-e-conselho.md) | Roteador de modelos e Conselho de IAs | Aceita; votação substituída pela [0024](./0024-conselho-que-analisa-junto.md) |
 | [0012](./0012-sqlite-memoria-e-historico.md) | SQLite, memória do projeto e histórico | Aceita |
 | [0013](./0013-context-builder-e-handoff.md) | Context Builder e Handoff entre IAs | Aceita |
 | [0014](./0014-task-manager.md) | Task Manager | Aceita |
@@ -28,5 +28,6 @@ adiciona algo fora dela, é registrada aqui **antes** de ser implementada.
 | [0021](./0021-configuracoes-assinaturas-offline-e-mcp.md) | Configurações, regras e skills, MCP, assinaturas por CLI e modelos offline | Aceita |
 | [0022](./0022-dados-preservados-nas-atualizacoes.md) | Os dados do usuário sobrevivem às atualizações | Aceita |
 | [0023](./0023-varios-projetos-e-projetos-relacionados.md) | Vários projetos abertos e projetos relacionados | Aceita |
+| [0024](./0024-conselho-que-analisa-junto.md) | Conselho que analisa junto, com reserva entre os membros | Aceita |
 
 Formato: Contexto → Decisão → Consequências.

@@ -80,7 +80,7 @@ apenas apresentação.
 | Project Discovery / Profile | `packages/core` (tipos) + `packages/runtime` (detecção) | Rust | 2 | ✅ (ADR-0008) |
 | AIProvider / Registry / Sessions | `packages/providers` | Rust | 3, 5–7 | ✅ trait, registro, sessões, provider `echo` de desenvolvimento (ADR-0009); respostas avulsas `complete` (ADR-0011); `snapshot` e `SessionStore` (ADR-0012); `ContextSource` e contexto no primeiro turno (ADR-0013) |
 | Conexões de API (OpenAI e compatíveis, Anthropic, Gemini, perfil genérico) | `packages/providers/api` | Rust | 4, 6, 7 | ✅ cadastro livre, cofre do SO, ferramentas nativas ou por prompt, custo, teste de conexão (ADR-0010); conversa retomável após reiniciar (ADR-0012); contexto do projeto nas instruções de sistema (ADR-0013) |
-| Roteador de modelos e Conselho | `packages/router` | Rust | 5, 6 | ✅ ranking sem tokens, Conselho de 1 a 5 IAs com votos e cache, modos Desligado/Sugerir/Full (ADR-0011); deliberações e cache guardados (ADR-0012) |
+| Roteador de modelos e Conselho | `packages/router` | Rust | 5, 6 | ✅ ranking sem tokens, modos Desligado/Sugerir/Full (ADR-0011); deliberações e cache guardados (ADR-0012); Conselho de 1 a 5 IAs que analisam juntas e executam com reserva entre os membros (ADR-0024) |
 | SQLite, Memory, History, Decisions | `packages/memory` | Rust | 6, 7 | ✅ banco local, histórico por projeto, projetos, sessões, memória L1/L2/L3, decisões, deliberações (ADR-0012); handoffs, fatos da sessão e busca por relevância (ADR-0013) |
 | Context Builder, Handoff, ferramentas de memória das IAs | `packages/orchestrator` (`orchestrator-engine`) | Rust | 7 | ✅ contexto por seções com orçamento de tokens, `HandoffPacket` com rascunho por fatos e pela IA, `memory.*`/`decision.*` para as IAs (ADR-0013) |
 | SQLite: tasks | `packages/memory` | Rust | 8a | ✅ migração 3: `tasks` e `task_dependencies` (ADR-0014) |
@@ -552,23 +552,29 @@ depende só de `core` e `providers`:
   modelo registrado. A nota combina etiquetas, preço, contexto, ferramentas
   e perfil (qualidade/velocidade), com pesos pela preferência. Não gasta
   tokens e explica cada nota e cada exclusão.
-- **Conselho:** de 1 a 5 membros (provider + modelo; com um, é o
-  "gerenciador").
-  - Os membros recebem a lista curta do roteador por
-    `AIProvider::complete`, sem sessão e sem ferramentas, e respondem com
-    JSON em paralelo.
-  - Uma contagem de Borda ponderada pela confiança decide.
-  - Abstenções (erro, prazo, JSON inválido) não travam a decisão.
+- **Conselho** (ADR-0024): de 1 a 5 membros (provider + modelo), e só
+  eles trabalham.
+  - Cada membro analisa a demanda por `AIProvider::complete`, sem sessão e
+    sem ferramentas, com o contexto do projeto
+    (`SessionManager::project_context`). Os membros rodam em paralelo.
+  - O 1º que respondeu escreve a síntese, o Plano do Conselho. Se falhar,
+    o próximo escreve.
+  - A ordem dos membros é a fila de execução. Quem falhou na análise vai
+    para o fim.
+  - A sessão abre com o 1º da fila e `StartRequest.reserves` = os outros.
+    Um turno que falha passa para a próxima reserva no mesmo turno
+    (`SessionEvent::FailedOver`, `SESSION_FAILOVER`).
 - **Modos:**
   - *Desligado:* só o roteador;
-  - *Sugerir:* o usuário aprova ou escolhe outro modelo;
-  - *Full:* o Conselho abre a sessão e envia a tarefa, com origem
-    `council`. O Full não dispensa o gate de autonomia: as ferramentas que
-    a sessão pedir passam por ele (Fase 9).
-- **Cache:** mesma pergunta, mesmos candidatos e mesmos membros = zero
-  tokens, também entre execuções do app (Fase 6).
-- **Histórico:** `COUNCIL_CONFIGURED`, `COUNCIL_DELIBERATED` e
-  `ROUTE_DECIDED`; as deliberações ficam no banco.
+  - *Sugerir:* o Conselho analisa e o usuário aprova a execução
+    (`council_execute`);
+  - *Full:* o Conselho analisa e executa, com origem `council`. O Full
+    não dispensa o gate de autonomia: as ferramentas que a sessão pedir
+    passam por ele (Fase 9).
+- **Cache:** mesma demanda, mesmo projeto e mesmos membros = zero tokens,
+  também entre execuções do app (Fase 6).
+- **Histórico:** `COUNCIL_CONFIGURED`, `COUNCIL_DELIBERATED`,
+  `ROUTE_DECIDED` e `SESSION_FAILOVER`; as deliberações ficam no banco.
 - **Configuração:** `council.json` (configuração continua em arquivo,
   ADR-0012).
 

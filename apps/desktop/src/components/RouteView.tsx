@@ -1,20 +1,26 @@
-// Main area: pick the model for a task (ADR-0011). The router ranks every
-// registered model; the Council deliberates (Sugerir: the user approves;
-// Full: the session opens on its own). Any candidate can be used instead.
+// Main area: a demand for the Council (ADR-0024). Its members analyze it
+// together and one of them writes the plan; the first member carries it out
+// with the others as reserves (Sugerir: after the user approves; Full: on
+// its own). With the Council off, the router ranks every registered model
+// and the user picks one, as can "Só o roteador" in any mode.
 
 import { type KeyboardEvent, useEffect, useState } from "react";
 import {
+  councilSummary,
   decisionSource,
   formatContext,
   formatPercent,
   formatPricePair,
+  memberLabel,
   MODE_HINTS,
   MODE_LABELS,
   parseContext,
+  PLAN_SOURCES,
   PREFERENCE_LABELS,
   primaryAction,
   refKey,
   sameRef,
+  seatRole,
   votesSummary,
 } from "../lib/council";
 import { formatDuration } from "../lib/format";
@@ -23,10 +29,12 @@ import { formatUsage } from "../lib/transcript";
 import type { Council } from "../lib/useCouncil";
 import type {
   Activity,
+  Analysis,
   Candidate,
   Deliberation,
   ModelRef,
   Preference,
+  ProviderInfo,
   Recommendation,
   RouteStarted,
   SessionInfo,
@@ -37,6 +45,7 @@ interface Props {
   ready: boolean;
   active: boolean;
   council: Council;
+  providers: ProviderInfo[];
   projectPath: string | null;
   /** A deliberation from the history to show. */
   initial: Deliberation | null;
@@ -58,6 +67,31 @@ function ScoreBar({ score }: { score: number }) {
       </span>
       <span className="score-value">{score.toFixed(1)}</span>
     </span>
+  );
+}
+
+/** One member's analysis, folded. */
+function AnalysisCard({ analysis }: { analysis: Analysis }) {
+  return (
+    <details className="analysis-card" open={analysis.text === null}>
+      <summary className="row">
+        <strong>{analysis.providerName}</strong>
+        <span className="meta mono ellipsis">{analysis.model ?? "padrão"}</span>
+        <span className="grow" />
+        {analysis.error ? (
+          <span className="badge err">sem análise</span>
+        ) : (
+          <span className="meta">
+            {formatUsage(analysis.usage)} · {formatDuration(analysis.durationMs)}
+          </span>
+        )}
+      </summary>
+      {analysis.error ? (
+        <div className="err-text">{analysis.error}</div>
+      ) : (
+        <div className="plan-text">{analysis.text}</div>
+      )}
+    </details>
   );
 }
 
@@ -107,7 +141,16 @@ function CandidateRow({
   );
 }
 
-export function RouteView({ ready, active, council, projectPath, initial, onSessionStarted, onOpenCouncil }: Props) {
+export function RouteView({
+  ready,
+  active,
+  council,
+  providers,
+  projectPath,
+  initial,
+  onSessionStarted,
+  onOpenCouncil,
+}: Props) {
   const settings = council.view?.settings ?? null;
   const activities = council.view?.activities ?? [];
   const mode = settings?.mode ?? "off";
@@ -121,6 +164,7 @@ export function RouteView({ ready, active, council, projectPath, initial, onSess
     initial ? { recommendation: initial.recommendation, deliberation: initial } : null,
   );
   const [started, setStarted] = useState<{ outcome: RouteStarted; byCouncil: boolean } | null>(null);
+  const [startError, setStartError] = useState<string | null>(null);
   const [busy, setBusy] = useState<"run" | "preview" | "start" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -130,6 +174,7 @@ export function RouteView({ ready, active, council, projectPath, initial, onSess
     setTask(initial.task);
     setResult({ recommendation: initial.recommendation, deliberation: initial });
     setStarted(null);
+    setStartError(null);
   }, [initial]);
 
   const minContext = parseContext(contextText);
@@ -148,9 +193,11 @@ export function RouteView({ ready, active, council, projectPath, initial, onSess
     setBusy("run");
     setError(null);
     setStarted(null);
+    setStartError(null);
     try {
       const outcome = await councilApi.run({ ...request, force });
       setResult({ recommendation: outcome.deliberation.recommendation, deliberation: outcome.deliberation });
+      setStartError(outcome.startError);
       if (outcome.started) {
         setStarted({ outcome: outcome.started, byCouncil: true });
         onSessionStarted(outcome.started.session);
@@ -171,6 +218,22 @@ export function RouteView({ ready, active, council, projectPath, initial, onSess
       setStarted(null);
     } catch (e) {
       setError(errorMessage(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /** The user approves the plan: the first member carries it out. */
+  const execute = async (deliberationId: string) => {
+    setBusy("start");
+    setError(null);
+    setStartError(null);
+    try {
+      const outcome = await councilApi.execute(deliberationId);
+      setStarted({ outcome, byCouncil: false });
+      onSessionStarted(outcome.session);
+    } catch (e) {
+      setStartError(errorMessage(e));
     } finally {
       setBusy(null);
     }
@@ -206,6 +269,9 @@ export function RouteView({ ready, active, council, projectPath, initial, onSess
   const deliberation = result?.deliberation ?? null;
   const decision = deliberation?.decision ?? null;
   const recommendation = result?.recommendation ?? null;
+  // The Council analyzed it (ADR-0024); older deliberations voted instead.
+  const analyzed = !!deliberation && (deliberation.analyses.length > 0 || deliberation.seats.length > 0);
+  const members = settings?.members ?? [];
   // Candidates the Council actually weighed (none in mode Desligado).
   const shortlist = new Set(deliberation && deliberation.votes.length > 0 ? deliberation.shortlist.map(refKey) : []);
   const canStart = ready && !noProject && busy === null;
@@ -232,64 +298,89 @@ export function RouteView({ ready, active, council, projectPath, initial, onSess
           <textarea
             className="route-task"
             value={task}
-            placeholder="Descreva a tarefa (ex.: Corrigir o erro de timeout no worker de e-mails). Ctrl+Enter decide."
+            placeholder={
+              mode === "off"
+                ? "Descreva a tarefa (ex.: Corrigir o erro de timeout no worker de e-mails). Ctrl+Enter recomenda."
+                : "Descreva a demanda (ex.: Corrigir o erro de timeout no worker de e-mails). Ctrl+Enter envia ao Conselho."
+            }
             onChange={(e) => setTask(e.target.value)}
             onKeyDown={onKeyDown}
           />
-          <div className="route-options">
-            <label>
-              <span>Atividade</span>
-              <select value={activity} onChange={(e) => setActivity(e.target.value as Activity | "")}>
-                <option value="">detectar{detected ? ` (${detected})` : ""}</option>
-                {activities.map((a) => (
-                  <option key={a.activity} value={a.activity}>
-                    {a.label}
+          {mode === "off" ? (
+            <div className="route-options">
+              <label>
+                <span>Atividade</span>
+                <select value={activity} onChange={(e) => setActivity(e.target.value as Activity | "")}>
+                  <option value="">detectar{detected ? ` (${detected})` : ""}</option>
+                  {activities.map((a) => (
+                    <option key={a.activity} value={a.activity}>
+                      {a.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Preferência</span>
+                <select value={preference} onChange={(e) => setPreference(e.target.value as Preference | "")}>
+                  <option value="">
+                    padrão{settings?.preference ? ` (${PREFERENCE_LABELS[settings.preference]})` : " da atividade"}
                   </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>Preferência</span>
-              <select value={preference} onChange={(e) => setPreference(e.target.value as Preference | "")}>
-                <option value="">
-                  padrão{settings?.preference ? ` (${PREFERENCE_LABELS[settings.preference]})` : " da atividade"}
-                </option>
-                {(Object.keys(PREFERENCE_LABELS) as Preference[]).map((p) => (
-                  <option key={p} value={p}>
-                    {PREFERENCE_LABELS[p]}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>Ferramentas</span>
-              <select value={tools} onChange={(e) => setTools(e.target.value as "" | "yes" | "no")}>
-                <option value="">conforme a atividade</option>
-                <option value="yes">obrigatórias</option>
-                <option value="no">opcionais</option>
-              </select>
-            </label>
-            <label>
-              <span>Contexto mínimo</span>
-              <input
-                className={`num ${minContext === undefined ? "invalid" : ""}`}
-                placeholder="ex.: 128k"
-                value={contextText}
-                onChange={(e) => setContextText(e.target.value)}
-              />
-            </label>
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={effectiveSend}
-                onChange={(e) => setSendTask(e.target.checked)}
-              />
-              <span>enviar a tarefa como 1ª mensagem</span>
-            </label>
-          </div>
+                  {(Object.keys(PREFERENCE_LABELS) as Preference[]).map((p) => (
+                    <option key={p} value={p}>
+                      {PREFERENCE_LABELS[p]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Ferramentas</span>
+                <select value={tools} onChange={(e) => setTools(e.target.value as "" | "yes" | "no")}>
+                  <option value="">conforme a atividade</option>
+                  <option value="yes">obrigatórias</option>
+                  <option value="no">opcionais</option>
+                </select>
+              </label>
+              <label>
+                <span>Contexto mínimo</span>
+                <input
+                  className={`num ${minContext === undefined ? "invalid" : ""}`}
+                  placeholder="ex.: 128k"
+                  value={contextText}
+                  onChange={(e) => setContextText(e.target.value)}
+                />
+              </label>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={effectiveSend}
+                  onChange={(e) => setSendTask(e.target.checked)}
+                />
+                <span>enviar a tarefa como 1ª mensagem</span>
+              </label>
+            </div>
+          ) : (
+            <div className="meta council-line">
+              {members.length === 0
+                ? "O Conselho não tem membros."
+                : members.map((m, i) => (
+                    <span key={i} className="tag small">
+                      {i + 1}. {memberLabel(m, providers)} · {seatRole(i)}
+                    </span>
+                  ))}
+              <span>
+                Só os membros trabalham: cada um analisa com o contexto do projeto, um junta as análises e o 1º
+                disponível executa. Se ele falhar, a sessão passa para o próximo.
+              </span>
+            </div>
+          )}
           <div className="row route-actions">
             {mode !== "off" && (
-              <button className="button" disabled={!ready || invalid || busy !== null} onClick={() => void preview()}>
+              <button
+                className="button"
+                disabled={!ready || invalid || busy !== null}
+                onClick={() => void preview()}
+                title="Ver o ranking de todos os modelos cadastrados e escolher um à mão, sem gastar tokens"
+              >
                 {busy === "preview" ? "Calculando…" : "Só o roteador (grátis)"}
               </button>
             )}
@@ -299,12 +390,111 @@ export function RouteView({ ready, active, council, projectPath, initial, onSess
               onClick={() => void run()}
               title={mode === "full" && noProject ? "Abra um projeto" : undefined}
             >
-              {busy === "run" ? (mode === "off" ? "Calculando…" : "Consultando o Conselho…") : primaryAction(mode)}
+              {busy === "run"
+                ? mode === "off"
+                  ? "Calculando…"
+                  : "O Conselho está analisando…"
+                : primaryAction(mode)}
             </button>
           </div>
         </section>
 
-        {deliberation && (
+        {deliberation && analyzed && (
+          <section className="decision-card">
+            <div className="row">
+              <span className="badge ok">{decisionSource(deliberation)}</span>
+              <strong className="decision-model">Plano do Conselho</strong>
+              <span className="meta">
+                {deliberation.plan
+                  ? `${PLAN_SOURCES[deliberation.plan.source]}${deliberation.plan.byName ? ` · por ${deliberation.plan.byName}` : ""}`
+                  : "sem plano"}
+              </span>
+              <span className="grow" />
+              <span className="meta">{councilSummary(deliberation)}</span>
+            </div>
+            {deliberation.plan ? (
+              <div className="plan-text">{deliberation.plan.text}</div>
+            ) : (
+              <div className="meta">Nenhum membro analisou: quem executa recebe só a demanda.</div>
+            )}
+            {deliberation.notices.map((notice) => (
+              <div key={notice} className="meta">
+                {notice}
+              </div>
+            ))}
+            <div className="meta">
+              {deliberation.usage.inputTokens + deliberation.usage.outputTokens > 0 &&
+                `Conselho: ${formatUsage(deliberation.usage)} · `}
+              {deliberation.savedUsage && `cache economizou ${formatUsage(deliberation.savedUsage)} · `}
+              {formatDuration(deliberation.durationMs)}
+            </div>
+
+            {deliberation.seats.length > 0 && (
+              <>
+                <h3>Quem executa</h3>
+                <ol className="seat-list">
+                  {deliberation.seats.map((seat, i) => (
+                    <li key={i} className={i === 0 ? "seat first" : "seat"}>
+                      <strong>{seat.providerName}</strong> <span className="meta mono">{seat.modelName}</span>{" "}
+                      <span className={`badge ${i === 0 ? "ok" : ""}`}>{seatRole(i)}</span>
+                      {seat.demoted && <div className="meta">{seat.demoted}</div>}
+                    </li>
+                  ))}
+                </ol>
+              </>
+            )}
+
+            {startError && <div className="inline-error">Não foi possível abrir a sessão: {startError}</div>}
+            {started ? (
+              <div className="inline-notice ok">
+                Sessão aberta{started.byCouncil ? " pelo Conselho (Full)" : ""}:{" "}
+                <strong>{started.outcome.session.title}</strong> · {started.outcome.session.model}
+                {started.outcome.turnId && " · demanda e plano enviados"}
+                {started.outcome.skipped.map((skip) => (
+                  <div key={skip} className="meta">
+                    Não abriu com {skip}
+                  </div>
+                ))}
+                {started.outcome.sendError && (
+                  <div className="err-text">Não foi possível enviar a demanda: {started.outcome.sendError}</div>
+                )}
+                <button className="button small" onClick={() => onSessionStarted(started.outcome.session)}>
+                  Abrir sessão
+                </button>
+              </div>
+            ) : (
+              <div className="row route-actions">
+                {deliberation.seats.length > 0 && (
+                  <button
+                    className="button primary"
+                    disabled={!ready || busy !== null}
+                    title="O 1º da fila executa com a demanda e o plano; os outros ficam de reserva"
+                    onClick={() => void execute(deliberation.id)}
+                  >
+                    <PlayIcon />{" "}
+                    {busy === "start"
+                      ? "Abrindo…"
+                      : `${startError ? "Tentar de novo" : "Executar"} com ${deliberation.seats[0]?.providerName ?? "o Conselho"}`}
+                  </button>
+                )}
+                <button className="button" disabled={busy !== null} onClick={() => void run(true)}>
+                  Analisar de novo
+                </button>
+              </div>
+            )}
+
+            {deliberation.analyses.length > 0 && (
+              <>
+                <h3>Análises dos membros</h3>
+                {deliberation.analyses.map((analysis, i) => (
+                  <AnalysisCard key={i} analysis={analysis} />
+                ))}
+              </>
+            )}
+          </section>
+        )}
+
+        {deliberation && !analyzed && (
           <section className="decision-card">
             {decision ? (
               <>
@@ -341,8 +531,7 @@ export function RouteView({ ready, active, council, projectPath, initial, onSess
             </div>
             {started ? (
               <div className="inline-notice ok">
-                Sessão aberta{started.byCouncil ? " pelo Conselho (Full)" : ""}:{" "}
-                <strong>{started.outcome.session.title}</strong> · {started.outcome.session.model}
+                Sessão aberta: <strong>{started.outcome.session.title}</strong> · {started.outcome.session.model}
                 {started.outcome.turnId && " · tarefa enviada"}
                 {started.outcome.sendError && (
                   <div className="err-text">Não foi possível enviar a tarefa: {started.outcome.sendError}</div>
@@ -360,22 +549,17 @@ export function RouteView({ ready, active, council, projectPath, initial, onSess
                     title={noProject ? "Abra um projeto" : undefined}
                     onClick={() => void start(decision)}
                   >
-                    <PlayIcon /> {busy === "start" ? "Iniciando…" : mode === "off" ? "Iniciar sessão" : "Aprovar e iniciar sessão"}
+                    <PlayIcon /> {busy === "start" ? "Iniciando…" : "Iniciar sessão"}
                   </button>
-                  {decision.source === "council" && (
-                    <button className="button" disabled={busy !== null} onClick={() => void run(true)}>
-                      Deliberar de novo
-                    </button>
-                  )}
                 </div>
               )
             )}
           </section>
         )}
 
-        {deliberation && deliberation.votes.length > 0 && (
+        {deliberation && !analyzed && deliberation.votes.length > 0 && (
           <section>
-            <h3>Votos</h3>
+            <h3>Votos (antes da análise em conjunto)</h3>
             <table className="votes-table">
               <thead>
                 <tr>
@@ -413,7 +597,7 @@ export function RouteView({ ready, active, council, projectPath, initial, onSess
           </section>
         )}
 
-        {recommendation && (
+        {recommendation && !analyzed && (
           <section>
             <h3>
               Ranking do roteador ({recommendation.candidates.length}{" "}
@@ -421,7 +605,7 @@ export function RouteView({ ready, active, council, projectPath, initial, onSess
             </h3>
             <div className="meta form-hint">
               Nota de 0 a 100 por regras (etiquetas, preço, contexto, ferramentas, perfil do modelo), sem gastar
-              tokens. Ajuste etiquetas e preços na conexão para melhorar a escolha.
+              tokens. Escolher aqui é à mão: o Conselho só trabalha com os seus membros.
             </div>
             {recommendation.candidates.length === 0 && <div className="meta">Nenhum modelo atende aos requisitos.</div>}
             <ul className="candidate-list">

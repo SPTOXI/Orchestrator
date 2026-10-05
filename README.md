@@ -369,25 +369,32 @@ Referência: [`docs/memory.md`](./docs/memory.md).
 
 ### Fase 5 — Roteador de modelos e Conselho de IAs
 
-- **Nova sessão com o Conselho** (AI PROVIDERS): descreva a tarefa e o
-  Orchestrator escolhe o modelo. A atividade (código, depuração, revisão,
-  testes, planejamento, documentação, resumo) é detectada pela descrição.
+- **Nova sessão com o Conselho** (AI PROVIDERS): descreva a demanda e o
+  Conselho trabalha nela (ADR-0024).
+- **Conselho de 1 a 5 IAs que analisam juntas:**
+  - cada membro analisa a demanda com o contexto do projeto (perfil,
+    regras, memória, decisões e tasks), sem ferramentas nem chaves;
+  - o 1º que respondeu junta as análises num **Plano do Conselho**:
+    consenso, divergências, passos e cuidados;
+  - o 1º membro disponível executa o plano. **Só os membros trabalham**:
+    modelos de fora do Conselho nunca são usados por ele.
+- **Reserva entre os membros:** se quem executa falha (sobrecarga, servidor
+  fora do ar, erro), a sessão passa sozinha para o próximo membro, no mesmo
+  pedido. Ele recebe um resumo do que já foi feito. A ordem dos membros,
+  que você define, é a fila.
 - **Roteador:** dá nota de 0 a 100 a todos os modelos cadastrados, pelas
   etiquetas, preço, contexto, ferramentas e perfil, **sem gastar tokens**.
-  Cada nota e cada exclusão vêm com o motivo.
-- **Conselho de 1 a 5 IAs** (com uma, ela é o "gerenciador"). Os membros
-  recebem os melhores candidatos do roteador, votam em paralelo com motivo e
-  confiança, e o Orchestrator soma os votos. Um membro que falha ou demora
-  só se abstém. Os membros não recebem arquivos, chaves nem ferramentas.
+  Cada nota e cada exclusão vêm com o motivo. Serve para escolher um modelo
+  à mão.
 - **Modos:**
   - *Desligado:* só o roteador;
-  - *Sugerir:* você aprova, ou usa outro modelo do ranking;
-  - *Full:* o Conselho abre a sessão com o modelo escolhido e envia a
-    tarefa sozinho.
-- **Custo visível e cache:** o custo de cada deliberação aparece na tela, e
-  a mesma pergunta não gasta tokens de novo.
+  - *Sugerir:* o Conselho analisa e você aprova a execução;
+  - *Full:* o Conselho analisa e executa sozinho.
+- **Custo visível e cache:** o custo das análises aparece na tela, e a
+  mesma demanda no mesmo projeto não gasta tokens de novo.
 - **Histórico:** tudo vai para o HISTORY (`COUNCIL_DELIBERATED`,
-  `ROUTE_DECIDED`), com a origem "Conselho (Full)" quando ele agiu sozinho.
+  `ROUTE_DECIDED`, `SESSION_FAILOVER`), com a origem "Conselho (Full)"
+  quando ele agiu sozinho.
 
 ![Configuração do Conselho](./docs/assets/fase-5-configuracao.png)
 

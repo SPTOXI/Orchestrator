@@ -10,8 +10,8 @@ use orchestrator_core::{
 use orchestrator_providers::{
     AIProvider, AttachedContext, ContextOptions, ContextRequest, ContextSource, EchoProvider,
     ManagerConfig, MemorySessionStore, NativeSession, ProviderCapabilities, ProviderDescriptor,
-    ProviderErrorKind, ProviderRegistry, ProviderStatus, SessionManager, SessionSpec, SessionStore,
-    StartRequest, ToolExecutor, TurnContext, TurnInput, TurnOutput,
+    ProviderErrorKind, ProviderRegistry, ProviderStatus, Reserve, SessionManager, SessionSpec,
+    SessionStore, StartRequest, ToolExecutor, TurnContext, TurnInput, TurnOutput,
 };
 use orchestrator_runtime::{RuntimeConfig, ToolRuntime};
 use parking_lot::Mutex;
@@ -1303,4 +1303,193 @@ async fn context_options_and_the_received_context_survive_a_restart() {
         .audit_events()
         .iter()
         .all(|e| e.kind != EventKind::ContextBuilt));
+}
+
+fn reserve(provider: &str) -> Reserve {
+    Reserve {
+        provider: provider.into(),
+        model: None,
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reserve_takes_over_a_failed_turn_and_keeps_the_session() {
+    let h = harness();
+    let source = Arc::new(ScriptedContext::default());
+    h.manager.set_context_source(source.clone());
+    let info = h
+        .manager
+        .start(
+            StartRequest {
+                provider: Some("echo".into()),
+                // The session's own seat and repeats are dropped.
+                reserves: vec![reserve("echo"), reserve("echo-b"), reserve("echo-b")],
+                ..Default::default()
+            },
+            h._dir.path().to_path_buf(),
+            CallOrigin::User,
+        )
+        .await
+        .unwrap();
+
+    h.send(&info.id, "Oi").await;
+    h.idle(&info.id).await;
+    // The first AI fails: the reserve answers in the same turn.
+    h.send(&info.id, "/fail sobrecarregado (http 529)").await;
+    let after = h.idle(&info.id).await;
+    assert_eq!(after.provider, ProviderId::from("echo-b"));
+    assert_eq!(after.last_error, None);
+    assert_eq!(after.turns, 2);
+    assert_eq!(h.last_turn(&info.id).0, TurnStatus::Completed);
+
+    let events = h.events(&info.id);
+    let switched = events
+        .iter()
+        .find_map(|e| match e {
+            SessionEvent::FailedOver {
+                from_provider,
+                to_provider,
+                reason,
+                ..
+            } => Some((from_provider.clone(), to_provider.clone(), reason.clone())),
+            _ => None,
+        })
+        .expect("the switch is in the transcript");
+    assert_eq!(
+        switched,
+        (
+            ProviderId::from("echo"),
+            ProviderId::from("echo-b"),
+            "sobrecarregado (http 529)".to_owned()
+        )
+    );
+    // The reserve was told who failed, the conversation so far and the
+    // request; it starts empty, so it gets the project context again.
+    let answer = text_of(&events);
+    assert!(
+        answer.contains("Eco: [Orchestrator: esta sessão era atendida por Echo, que falhou"),
+        "{answer}"
+    );
+    assert!(answer.contains("Usuário: Oi\nIA: Eco: Oi"), "{answer}");
+    assert!(answer.contains("Pedido:\n/fail sobrecarregado"), "{answer}");
+    let contexts = source.requests.lock().clone();
+    assert_eq!(contexts.len(), 2);
+    assert_eq!(contexts[1].1, "/fail sobrecarregado (http 529)");
+
+    let audits = h.audits(EventKind::SessionFailover);
+    assert_eq!(audits.len(), 1);
+    assert_eq!(audits[0].summary, "Echo falhou; Echo B assumiu a sessão");
+    assert_eq!(audits[0].data["to"]["provider"], "echo-b");
+
+    // The next turns stay with the reserve; the one that failed is now the
+    // reserve, so a failure of echo-b goes back to echo.
+    h.send(&info.id, "/fail caiu").await;
+    let back = h.idle(&info.id).await;
+    assert_eq!(back.provider, ProviderId::from("echo"));
+    assert_eq!(h.last_turn(&info.id).0, TurnStatus::Completed);
+    assert_eq!(h.audits(EventKind::SessionFailover).len(), 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn when_every_reserve_fails_the_turn_fails_with_every_reason() {
+    let h = harness();
+    let info = h
+        .manager
+        .start(
+            StartRequest {
+                provider: Some("echo".into()),
+                reserves: vec![reserve("removida")],
+                ..Default::default()
+            },
+            h._dir.path().to_path_buf(),
+            CallOrigin::User,
+        )
+        .await
+        .unwrap();
+    h.send(&info.id, "/fail boom").await;
+    let failed = h.idle(&info.id).await;
+    assert_eq!(failed.provider, ProviderId::from("echo"));
+    let error = failed.last_error.unwrap();
+    assert!(
+        error.starts_with("a IA desta sessão e as reservas falharam — Echo: boom · removida: não está mais cadastrado"),
+        "{error}"
+    );
+    assert!(h.audits(EventKind::SessionFailover).is_empty());
+
+    // Without reserves the error stays as it came.
+    let plain = h.start().await;
+    h.send(&plain.id, "/fail boom").await;
+    assert_eq!(h.idle(&plain.id).await.last_error.as_deref(), Some("boom"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cancelled_turn_is_not_handed_to_a_reserve() {
+    let h = harness();
+    let info = h
+        .manager
+        .start(
+            StartRequest {
+                provider: Some("echo".into()),
+                reserves: vec![reserve("echo-b")],
+                ..Default::default()
+            },
+            h._dir.path().to_path_buf(),
+            CallOrigin::User,
+        )
+        .await
+        .unwrap();
+    h.send(&info.id, "/wait 5").await;
+    h.running(&info.id).await;
+    h.manager.cancel(&info.id).await.unwrap();
+    let after = h.idle(&info.id).await;
+    assert_eq!(after.provider, ProviderId::from("echo"));
+    assert_eq!(h.last_turn(&info.id).0, TurnStatus::Cancelled);
+    assert!(h.audits(EventKind::SessionFailover).is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn reserves_survive_a_restart() {
+    let sink = Arc::new(MemorySink::new());
+    let store = Arc::new(MemorySessionStore::new());
+    let dir = tempfile::tempdir().unwrap();
+    let open = || {
+        SessionManager::with_store(
+            registry(&sink, Vec::new()),
+            Arc::new(RuntimeTools(ToolRuntime::new(
+                RuntimeConfig {
+                    base_dir: dir.path().to_path_buf(),
+                },
+                sink.clone(),
+            ))),
+            sink.clone(),
+            config(),
+            store.clone(),
+        )
+    };
+    let manager = open();
+    let info = manager
+        .start(
+            StartRequest {
+                provider: Some("echo".into()),
+                reserves: vec![reserve("echo-b")],
+                ..Default::default()
+            },
+            dir.path().to_path_buf(),
+            CallOrigin::User,
+        )
+        .await
+        .unwrap();
+    drop(manager);
+
+    let manager = open();
+    manager.resume(&info.id, CallOrigin::User).await.unwrap();
+    let result = manager
+        .execute(&info.id, "/fail caiu".into(), CallOrigin::User)
+        .await
+        .unwrap();
+    assert_eq!(result.status, TurnStatus::Completed);
+    assert_eq!(
+        manager.info(&info.id).unwrap().provider,
+        ProviderId::from("echo-b")
+    );
 }

@@ -425,6 +425,7 @@ impl TaskService {
                         budget: request.budget,
                         handoff_id: None,
                     },
+                    reserves: Vec::new(),
                 },
                 PathBuf::from(&project.path),
                 origin.clone(),

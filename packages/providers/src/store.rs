@@ -1,6 +1,7 @@
 //! Where the `SessionManager` keeps sessions between runs (ADR-0012). The
 //! app stores them in its database; tests use [`MemorySessionStore`].
 
+use crate::failover::Reserve;
 use crate::project_context::ContextOptions;
 use crate::provider::NativeSession;
 use orchestrator_core::{SessionId, SessionInfo, SessionLogEntry};
@@ -18,6 +19,8 @@ pub struct PersistedSession {
     pub requested_model: Option<String>,
     /// Project context options (ADR-0013).
     pub context: ContextOptions,
+    /// Who takes over when the session's AI fails a turn (ADR-0024).
+    pub reserves: Vec<Reserve>,
 }
 
 /// Persistence of provider sessions. Implementations report their own

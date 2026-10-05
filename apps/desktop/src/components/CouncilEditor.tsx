@@ -1,16 +1,19 @@
-// Council settings (ADR-0011): mode, members (provider + model), shortlist,
-// cache, time limit and default preference; plus the recent deliberations.
+// Council settings (ADR-0011, ADR-0024): mode, members in order (the first
+// available executes, the others are its reserves), cache, time limit and
+// the router's default preference; plus the recent deliberations.
 
 import { useEffect, useState } from "react";
 import {
   councilProviders,
+  councilSummary,
   decisionSource,
   duplicateMembers,
   memberLabel,
   MODE_HINTS,
   MODE_LABELS,
+  moveMember,
   PREFERENCE_LABELS,
-  votesSummary,
+  seatRole,
 } from "../lib/council";
 import { formatTime } from "../lib/format";
 import { errorMessage } from "../lib/runtime";
@@ -31,21 +34,30 @@ const MODES: CouncilMode[] = ["off", "suggest", "full"];
 
 function MemberRow({
   member,
+  index,
+  count,
   providers,
   duplicate,
   onChange,
+  onMove,
   onRemove,
 }: {
   member: CouncilMember;
+  index: number;
+  count: number;
   providers: ProviderInfo[];
   duplicate: boolean;
   onChange: (member: CouncilMember) => void;
+  onMove: (step: -1 | 1) => void;
   onRemove: () => void;
 }) {
   const provider = providers.find((p) => p.id === member.provider);
   const models = provider?.capabilities.models ?? [];
   return (
     <div className={`member-row ${duplicate ? "duplicate" : ""}`}>
+      <span className={`badge member-role ${index === 0 ? "ok" : ""}`} title="O 1º disponível executa; os outros são reserva, nesta ordem">
+        {index + 1}. {seatRole(index)}
+      </span>
       <select
         value={member.provider}
         onChange={(e) => onChange({ provider: e.target.value, model: null })}
@@ -73,6 +85,24 @@ function MemberRow({
           </option>
         ))}
       </select>
+      <button
+        className="icon-button small"
+        title="Subir na ordem"
+        aria-label="Subir"
+        disabled={index === 0}
+        onClick={() => onMove(-1)}
+      >
+        ↑
+      </button>
+      <button
+        className="icon-button small"
+        title="Descer na ordem"
+        aria-label="Descer"
+        disabled={index === count - 1}
+        onClick={() => onMove(1)}
+      >
+        ↓
+      </button>
       <button className="icon-button small" title="Remover membro" onClick={onRemove}>
         <CloseIcon />
       </button>
@@ -136,7 +166,7 @@ export function CouncilEditor({ ready, active, council, providers, onOpenDeliber
         <span className="profile-title">Conselho de IAs</span>
         <span className="meta grow">
           {MODE_LABELS[saved?.mode ?? "off"]} · {saved?.members.length ?? 0}{" "}
-          {saved?.members.length === 1 ? "membro (gerenciador)" : "membros"}
+          {saved?.members.length === 1 ? "membro" : "membros"}
           {dirty && " · alterações não salvas"}
         </span>
         {dirty && (
@@ -194,16 +224,19 @@ export function CouncilEditor({ ready, active, council, providers, onOpenDeliber
             <div className="meta form-hint">
               {eligible.length === 0
                 ? "Cadastre uma API em AI PROVIDERS para ter membros."
-                : "Nenhum membro. Com um membro, ele é o gerenciador; com vários, eles votam."}
+                : "Nenhum membro. Com um, ele analisa e executa; com vários, analisam juntos e o 1º executa."}
             </div>
           )}
           {draft.members.map((member, index) => (
             <MemberRow
               key={index}
               member={member}
+              index={index}
+              count={draft.members.length}
               providers={eligible}
               duplicate={duplicates.includes(index)}
               onChange={(next) => update({ members: draft.members.map((m, i) => (i === index ? next : m)) })}
+              onMove={(step) => update({ members: moveMember(draft.members, index, step) })}
               onRemove={() => update({ members: draft.members.filter((_, i) => i !== index) })}
             />
           ))}
@@ -213,15 +246,18 @@ export function CouncilEditor({ ready, active, council, providers, onOpenDeliber
             </div>
           )}
           <div className="meta form-hint">
-            Cada membro recebe só a descrição da tarefa e os dados dos modelos candidatos (preço, contexto,
-            etiquetas). Não recebe arquivos, chaves nem ferramentas.
+            Só os membros trabalham: modelos de fora do Conselho nunca são usados por ele. Cada membro analisa a
+            demanda com o contexto do projeto (perfil, regras, memória, decisões e tasks: o mesmo que uma sessão
+            recebe), sem ferramentas nem chaves. O 1º membro que responder junta as análises num plano, e o 1º
+            disponível executa. Se ele falhar (sobrecarga, fora do ar, erro), a sessão passa sozinha para o
+            próximo da lista, com um resumo do que já foi feito.
           </div>
         </section>
 
         <section>
           <h3>Opções</h3>
-          <label className="form-row">
-            <span>Preferência padrão</span>
+          <label className="form-row" title="Usada pelo roteador: modo Desligado e &quot;Só o roteador&quot;">
+            <span>Preferência do roteador</span>
             <select
               value={draft.preference ?? ""}
               onChange={(e) => update({ preference: (e.target.value || null) as Preference | null })}
@@ -233,17 +269,6 @@ export function CouncilEditor({ ready, active, council, providers, onOpenDeliber
                 </option>
               ))}
             </select>
-          </label>
-          <label className="form-row">
-            <span>Candidatos para o Conselho</span>
-            <input
-              type="number"
-              className="num"
-              min={2}
-              max={10}
-              value={draft.shortlist}
-              onChange={(e) => update({ shortlist: Number(e.target.value) })}
-            />
           </label>
           <label className="form-row">
             <span>Cache (minutos)</span>
@@ -267,13 +292,13 @@ export function CouncilEditor({ ready, active, council, providers, onOpenDeliber
               onChange={(e) => update({ timeoutSecs: Number(e.target.value) })}
             />
           </label>
-          <label className="form-row check-row">
-            <span>Enviar a tarefa como 1ª mensagem</span>
+          <label className="form-row check-row" title="Ao iniciar à mão um modelo do roteador; o Conselho sempre envia a demanda com o plano">
+            <span>Enviar a tarefa como 1ª mensagem (escolha à mão)</span>
             <input type="checkbox" checked={draft.sendTask} onChange={(e) => update({ sendTask: e.target.checked })} />
           </label>
           <div className="meta form-hint">
-            O roteador escolhe os melhores candidatos sem gastar tokens; só eles vão ao Conselho. Perguntas iguais
-            usam o cache (0 = desligado).
+            A mesma demanda no mesmo projeto reaproveita a análise do cache (0 = desligado). O prazo vale para
+            cada análise e para a junção.
           </div>
         </section>
 
@@ -287,8 +312,12 @@ export function CouncilEditor({ ready, active, council, providers, onOpenDeliber
                   <div className="title ellipsis">{d.task || "(sem descrição)"}</div>
                   <div className="meta ellipsis">
                     {formatTime(d.createdAt)} · {decisionSource(d)}
-                    {d.decision ? ` → ${d.decision.modelName} (${d.decision.providerName})` : ""}
-                    {d.votes.length > 0 && ` · ${votesSummary(d)}`}
+                    {d.seats.length > 0
+                      ? ` → executa ${d.seats[0]?.providerName ?? ""}`
+                      : d.decision
+                        ? ` → ${d.decision.modelName} (${d.decision.providerName})`
+                        : ""}
+                    {(d.analyses.length > 0 || d.votes.length > 0) && ` · ${councilSummary(d)}`}
                     {d.usage.inputTokens + d.usage.outputTokens > 0 && ` · ${formatUsage(d.usage)}`}
                   </div>
                 </div>

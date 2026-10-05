@@ -51,6 +51,15 @@ export type TranscriptItem =
       fromSession: string;
       toSession: string;
       provider: string;
+    }
+  | {
+      kind: "failover";
+      key: string;
+      turnId: string;
+      fromProvider: string;
+      toProvider: string;
+      toModel: string | null;
+      reason: string;
     };
 
 type ToolItem = Extract<TranscriptItem, { kind: "tool" }>;
@@ -204,6 +213,20 @@ export function applyEvent(transcript: Transcript, seq: number, at: string, even
           fromSession: event.fromSession,
           toSession: event.toSession,
           provider: event.provider,
+        },
+      ];
+      break;
+    case "failedOver":
+      items = [
+        ...items,
+        {
+          kind: "failover",
+          key,
+          turnId: event.turnId,
+          fromProvider: event.fromProvider,
+          toProvider: event.toProvider,
+          toModel: event.toModel,
+          reason: event.reason,
         },
       ];
       break;

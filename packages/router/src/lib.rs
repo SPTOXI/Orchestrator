@@ -3,12 +3,14 @@
 //! - [`rank`]: the router. Scores every registered model for a task by
 //!   rules (activity tags, price, context, tools, quality and speed hints),
 //!   without spending tokens, and explains each score.
-//! - The Council: 1 to 5 AI models (provider + model) deliberate over the
-//!   router's best candidates through [`AIProvider::complete`] (no session,
-//!   no tools) and vote; a weighted Borda count decides.
+//! - The Council (ADR-0024): 1 to 5 AI models (provider + model) analyze
+//!   a demand together through [`AIProvider::complete`] (no session, no
+//!   tools), with the project context; one of them joins the analyses into
+//!   a plan, and the first member available carries it out with the others
+//!   as reserves. Models outside the Council are never used.
 //! - [`RouterService`]: settings (`council.json`), availability, cache,
-//!   history, `COUNCIL_*` / `ROUTE_DECIDED` events and the start of sessions
-//!   with the chosen model — on the user's approval (mode Sugerir) or on its
+//!   history, `COUNCIL_*` / `ROUTE_DECIDED` events and the sessions that
+//!   carry out a demand — on the user's approval (mode Sugerir) or on its
 //!   own (mode Full).
 //!
 //! [`AIProvider::complete`]: orchestrator_providers::AIProvider::complete
@@ -24,7 +26,7 @@ mod store;
 
 pub use activity::{detect, normalize, profiles, Activity, ActivityProfile};
 pub use catalog::{Availability, CatalogModel};
-pub use council::{parse_ballot, tally, Ballot, Decision, DecisionSource, Deliberation, Vote};
+pub use council::{Analysis, Decision, DecisionSource, Deliberation, Plan, PlanSource, Seat, Vote};
 pub use score::{
     rank, Candidate, Criteria, Excluded, ModelRef, Preference, Recommendation, RouteRequest,
 };

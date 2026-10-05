@@ -20,6 +20,7 @@
 mod context;
 mod echo;
 mod error;
+mod failover;
 mod log;
 mod manager;
 mod project_context;
@@ -30,6 +31,7 @@ mod store;
 pub use context::{Compaction, ToolExecutor, TurnContext, TurnObserver};
 pub use echo::EchoProvider;
 pub use error::{ProviderError, ProviderErrorKind};
+pub use failover::Reserve;
 pub use manager::{ManagerConfig, SessionManager, SessionSnapshot, StartRequest, TurnResult};
 pub use project_context::{AttachedContext, ContextOptions, ContextRequest, ContextSource};
 pub use provider::{

@@ -96,9 +96,10 @@ Escolha do modelo de cada tarefa. Mesmo formato de erro. Referência:
 | `router_recommend` | `request: { task, activity?, preference?, needsTools?, minContext? }` | `Recommendation` (ranking + excluídos; sem tokens) | — |
 | `council_get` | — | `{ settings, activities, maxMembers, warning }` | — |
 | `council_save` | `settings: CouncilSettings` | `CouncilSettings` | `COUNCIL_CONFIGURED` |
-| `council_run` | `request: { …router_recommend, force? }` | `{ deliberation, started }` — no modo Full, `started` traz a sessão aberta pelo Conselho | `COUNCIL_DELIBERATED`; no Full também `SESSION_STARTED`, `ROUTE_DECIDED` e `TURN_COMPLETED` com `origin = council` |
+| `council_run` | `request: { …router_recommend, force? }` | `{ deliberation, started, startError }`. Com o Conselho ligado, os membros analisam e um escreve o plano; no Full, `started` traz a sessão aberta pelo 1º da fila (ADR-0024) | `COUNCIL_DELIBERATED`; no Full também `SESSION_STARTED`, `ROUTE_DECIDED` e `TURN_COMPLETED` com `origin = council` |
+| `council_execute` | `deliberationId` | `{ session, turnId, sendError, skipped }`: o 1º da fila que consegue abre a sessão, com os outros membros como reservas, e recebe a demanda e o plano | `SESSION_STARTED`, `ROUTE_DECIDED` (com `reserves`) e o turno; se o turno falhar, `SESSION_FAILOVER` |
 | `council_history` | — | `Deliberation[]` (últimas 50) | — |
-| `route_start_session` | `request: { deliberationId?, provider, model?, title?, task?, sendTask? }` | `{ session, turnId, sendError }` | `SESSION_STARTED`, `ROUTE_DECIDED` (e o turno da tarefa) |
+| `route_start_session` | `request: { deliberationId?, provider, model?, title?, task?, sendTask? }` | `{ session, turnId, sendError, skipped: [] }` — modelo escolhido à mão | `SESSION_STARTED`, `ROUTE_DECIDED` (e o turno da tarefa) |
 
 ### Histórico, projetos e memória (Fase 6, ADR-0012)
 

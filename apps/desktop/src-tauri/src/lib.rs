@@ -542,6 +542,7 @@ pub fn run() {
             router_commands::council_get,
             router_commands::council_save,
             router_commands::council_run,
+            router_commands::council_execute,
             router_commands::council_history,
             router_commands::route_start_session,
             memory_commands::history_query,

@@ -1143,6 +1143,7 @@ export function App() {
                       ready={ready}
                       active={active}
                       council={council}
+                      providers={providers.view?.providers ?? []}
                       projectPath={profile?.path ?? null}
                       initial={tab.deliberation}
                       onSessionStarted={routedSession}
@@ -1309,8 +1310,9 @@ function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenPr
                   streaming, ferramentas pelo Orchestrator, cancelamento, subagentes, tokens e custo.
                 </li>
                 <li>
-                  <strong>Conselho de IAs</strong>: o roteador ordena os modelos para cada tarefa sem gastar tokens, e o
-                  Conselho (1 a 5 IAs) decide o melhor — você aprova (Sugerir) ou ele aplica sozinho (Full).
+                  <strong>Conselho de IAs</strong>: de 1 a 5 IAs analisam cada demanda juntas, com o contexto do
+                  projeto, e uma delas junta as análises num plano. O 1º membro executa e, se falhar, a sessão passa
+                  para o próximo. Em Sugerir você aprova; em Full ele executa sozinho.
                 </li>
                 <li>
                   <strong>MEMORY</strong>: banco local com memória do projeto (trabalho, projeto, decisões e busca), e

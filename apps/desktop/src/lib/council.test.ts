@@ -1,17 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
   councilProviders,
+  councilSummary,
   decisionSource,
   duplicateMembers,
   formatContext,
   formatPricePair,
   memberLabel,
+  moveMember,
   parseContext,
   primaryAction,
   sameRef,
+  seatRole,
   votesSummary,
 } from "./council";
-import type { Deliberation, ProviderInfo, TokenUsage, Vote } from "./types";
+import type { Analysis, Deliberation, ProviderInfo, TokenUsage, Vote } from "./types";
 
 const usage: TokenUsage = {
   inputTokens: 0,
@@ -77,6 +80,10 @@ function deliberation(patch: Partial<Deliberation>): Deliberation {
     },
     shortlist: [],
     votes: [],
+    analyses: [],
+    plan: null,
+    seats: [],
+    projectPath: null,
     decision: null,
     usage,
     cached: false,
@@ -92,8 +99,8 @@ function deliberation(patch: Partial<Deliberation>): Deliberation {
 describe("council helpers", () => {
   it("names the action of each mode", () => {
     expect(primaryAction("off")).toBe("Recomendar");
-    expect(primaryAction("suggest")).toBe("Consultar o Conselho");
-    expect(primaryAction("full")).toBe("Decidir e iniciar");
+    expect(primaryAction("suggest")).toBe("Analisar com o Conselho");
+    expect(primaryAction("full")).toBe("Analisar e executar");
   });
 
   it("lists only providers that answer one-off requests", () => {
@@ -147,5 +154,36 @@ describe("council helpers", () => {
     expect(votesSummary(deliberation({ votes: [vote(null)] }))).toBe("1 de 1 membro válido");
     expect(sameRef({ provider: "a", model: "m" }, { provider: "a", model: "m" })).toBe(true);
     expect(sameRef({ provider: "a", model: "m" }, null)).toBe(false);
+  });
+
+  it("orders the members: the first executes, the others back it up", () => {
+    const members = [
+      { provider: "claude", model: null },
+      { provider: "gemini", model: null },
+      { provider: "codex", model: null },
+    ];
+    expect(moveMember(members, 1, -1).map((m) => m.provider)).toEqual(["gemini", "claude", "codex"]);
+    expect(moveMember(members, 1, 1).map((m) => m.provider)).toEqual(["claude", "codex", "gemini"]);
+    expect(moveMember(members, 0, -1)).toBe(members);
+    expect(moveMember(members, 2, 1)).toBe(members);
+    expect([0, 1, 2].map(seatRole)).toEqual(["executa", "1ª reserva", "2ª reserva"]);
+  });
+
+  it("sums up a joint analysis, or the votes of an older deliberation", () => {
+    const analysis = (text: string | null): Analysis => ({
+      member: { provider: "a", model: null },
+      providerName: "A",
+      model: null,
+      text,
+      error: text === null ? "sobrecarregado" : null,
+      usage,
+      durationMs: 0,
+    });
+    const plan = { text: "1. fila", source: "synthesis" as const, by: null, byName: "A", usage, failures: [] };
+    expect(councilSummary(deliberation({ analyses: [analysis("ok"), analysis(null)], plan }))).toBe(
+      "1 de 2 análises · plano conjunto",
+    );
+    expect(councilSummary(deliberation({ analyses: [analysis(null)] }))).toBe("0 de 1 análise · sem plano");
+    expect(councilSummary(deliberation({ votes: [vote(null)] }))).toBe("1 de 1 membro válido");
   });
 });

@@ -104,7 +104,8 @@ export type EventKind =
   | "CONTEXT_COMPACTED"
   | "APP_UPDATED"
   | "PROJECT_LINKED"
-  | "PROJECT_ASKED";
+  | "PROJECT_ASKED"
+  | "SESSION_FAILOVER";
 
 export interface AuditEvent {
   id: string;
@@ -543,7 +544,17 @@ export type SessionEvent =
       messages: number;
       summary: string;
     }
-  | { type: "handedOff"; handoffId: string; fromSession: string; toSession: string; provider: string };
+  | { type: "handedOff"; handoffId: string; fromSession: string; toSession: string; provider: string }
+  /** The session's AI failed the turn and a reserve took over (ADR-0024). */
+  | {
+      type: "failedOver";
+      turnId: string;
+      fromProvider: string;
+      fromModel: string | null;
+      toProvider: string;
+      toModel: string | null;
+      reason: string;
+    };
 
 export interface SessionLogEntry {
   seq: number;
@@ -845,7 +856,10 @@ export interface CouncilMember {
 
 export interface CouncilSettings {
   mode: CouncilMode;
+  /** In order: the first one available carries out the demand, the others
+   * are its reserves (ADR-0024). */
   members: CouncilMember[];
+  /** No longer used by the Council (ADR-0024); kept in council.json. */
   shortlist: number;
   cacheMinutes: number;
   timeoutSecs: number;
@@ -860,6 +874,7 @@ export interface CouncilView {
   warning: string | null;
 }
 
+/** Deliberations made before ADR-0024, when the Council voted for a model. */
 export interface Vote {
   member: CouncilMember;
   providerName: string;
@@ -883,6 +898,37 @@ export interface Decision extends ModelRef {
   agreement: number | null;
 }
 
+/** One member's analysis of the demand (ADR-0024). */
+export interface Analysis {
+  member: CouncilMember;
+  providerName: string;
+  model: string | null;
+  text: string | null;
+  error: string | null;
+  usage: TokenUsage;
+  durationMs: number;
+}
+
+export type PlanSource = "synthesis" | "single" | "joined";
+
+export interface Plan {
+  text: string;
+  source: PlanSource;
+  by: CouncilMember | null;
+  byName: string | null;
+  usage: TokenUsage;
+  failures: string[];
+}
+
+/** A member in line to carry out the demand: the first executes, the
+ * others are its reserves. */
+export interface Seat {
+  member: CouncilMember;
+  providerName: string;
+  modelName: string;
+  demoted: string | null;
+}
+
 export interface Deliberation {
   id: string;
   createdAt: string;
@@ -891,6 +937,10 @@ export interface Deliberation {
   recommendation: Recommendation;
   shortlist: ModelRef[];
   votes: Vote[];
+  analyses: Analysis[];
+  plan: Plan | null;
+  seats: Seat[];
+  projectPath: string | null;
   decision: Decision | null;
   usage: TokenUsage;
   cached: boolean;
@@ -919,11 +969,15 @@ export interface RouteStarted {
   session: SessionInfo;
   turnId: string | null;
   sendError: string | null;
+  /** Council members that could not open the session, and why. */
+  skipped: string[];
 }
 
 export interface RunOutcome {
   deliberation: Deliberation;
   started: RouteStarted | null;
+  /** Why Full mode could not open the session. */
+  startError: string | null;
 }
 
 // ---------------------------------------------------------------- memory ---

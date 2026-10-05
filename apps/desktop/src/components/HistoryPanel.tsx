@@ -78,6 +78,7 @@ const KIND_FILTERS: Array<{ value: EventKind | ""; label: string }> = [
   { value: "APP_UPDATED", label: "APP_UPDATED" },
   { value: "PROJECT_LINKED", label: "PROJECT_LINKED" },
   { value: "PROJECT_ASKED", label: "PROJECT_ASKED" },
+  { value: "SESSION_FAILOVER", label: "SESSION_FAILOVER" },
 ];
 
 const PAGE = 500;

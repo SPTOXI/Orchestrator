@@ -6,8 +6,9 @@
 
 use crate::context::{ToolExecutor, TurnContext, TurnObserver};
 use crate::error::{ProviderError, ProviderErrorKind};
+use crate::failover::{handover_input, Reserve};
 use crate::log::SessionLog;
-use crate::project_context::{ContextOptions, ContextRequest, ContextSource};
+use crate::project_context::{AttachedContext, ContextOptions, ContextRequest, ContextSource};
 use crate::provider::{
     AIProvider, CompactionPolicy, NativeSession, SessionSpec, TurnInput, TurnOutput,
 };
@@ -58,6 +59,10 @@ pub struct StartRequest {
     /// Project context of the session (ADR-0013).
     #[serde(default)]
     pub context: ContextOptions,
+    /// Who takes over, in order, when the session's AI fails a turn
+    /// (ADR-0024). Empty: a failed turn just fails.
+    #[serde(default)]
+    pub reserves: Vec<Reserve>,
 }
 
 /// A session with its transcript.
@@ -114,6 +119,18 @@ struct SessionState {
     persisted_seq: u64,
     /// Project context options (ADR-0013).
     context: ContextOptions,
+    /// Who takes over when this session's AI fails a turn (ADR-0024).
+    reserves: Vec<Reserve>,
+}
+
+impl SessionState {
+    /// The session's own seat, as a reserve list names it.
+    fn seat(&self) -> Reserve {
+        Reserve {
+            provider: self.info.provider.clone(),
+            model: self.spec.model.clone(),
+        }
+    }
 }
 
 struct RunningTurn {
@@ -256,6 +273,7 @@ impl Inner {
                     instructions: state.spec.instructions.clone(),
                     requested_model: state.spec.model.clone(),
                     context: state.context.clone(),
+                    reserves: state.reserves.clone(),
                 },
                 entries,
             )
@@ -351,6 +369,7 @@ impl SessionManager {
                     running: None,
                     persisted_seq,
                     context: stored.context.clone(),
+                    reserves: stored.reserves.clone(),
                 }),
             }));
         }
@@ -388,6 +407,44 @@ impl SessionManager {
     /// Sessions opened before keep working; their next first turn uses it.
     pub fn set_context_source(&self, source: Arc<dyn ContextSource>) {
         *self.inner.context.write() = Some(source);
+    }
+
+    /// The project context a first turn would get for `task` (ADR-0013),
+    /// built outside any session and without tools: what the Council
+    /// members read before analyzing a demand (ADR-0024). `Ok(None)`: no
+    /// source installed, or the context is turned off.
+    pub async fn project_context(
+        &self,
+        project_path: PathBuf,
+        task: &str,
+    ) -> Result<Option<AttachedContext>, String> {
+        let Some(source) = self.inner.context.read().clone() else {
+            return Ok(None);
+        };
+        let now = Utc::now();
+        let session = SessionInfo {
+            id: SessionId::new(),
+            provider: ProviderId::from("council"),
+            title: "Conselho".into(),
+            model: None,
+            project_path,
+            parent_id: None,
+            status: SessionStatus::Idle,
+            native_ref: None,
+            created_at: now,
+            updated_at: now,
+            turns: 0,
+            usage: TokenUsage::default(),
+            last_error: None,
+        };
+        source
+            .build(ContextRequest {
+                session,
+                task: task.to_owned(),
+                options: ContextOptions::default(),
+                tools: false,
+            })
+            .await
     }
 
     /// Adds an event to a session transcript (e.g. a handoff between
@@ -523,6 +580,18 @@ impl SessionManager {
             instructions: request.instructions,
         };
         let context = request.context;
+        // The session's own seat is no reserve of itself; neither is a seat
+        // named twice.
+        let own = Reserve {
+            provider: descriptor.id.clone(),
+            model: spec.model.clone(),
+        };
+        let mut reserves: Vec<Reserve> = Vec::new();
+        for reserve in request.reserves {
+            if reserve != own && !reserves.contains(&reserve) {
+                reserves.push(reserve);
+            }
+        }
 
         let native = match &parent {
             Some(parent) if parent.state.lock().info.provider == descriptor.id => {
@@ -561,6 +630,7 @@ impl SessionManager {
                 children: 0,
                 persisted_seq: 0,
                 context,
+                reserves,
             }),
         });
         self.inner.sessions.write().push(session.clone());
@@ -921,67 +991,91 @@ async fn run_turn(
     origin: CallOrigin,
 ) -> TurnResult {
     let clock = Instant::now();
-    let provider = turn.provider.clone();
-    let descriptor = provider.descriptor();
-    let ctx = TurnContext::new(
-        session.id.clone(),
-        descriptor.id.clone(),
-        turn.turn_id.clone(),
-        turn.project_path.clone(),
-        inner.tools.clone(),
-        Arc::new(Recorder(session.clone())),
-        turn.cancel.clone(),
-    );
-    let context = match turn.context.clone() {
-        Some(request) => attach_context(&inner, &session, &turn.turn_id, request).await,
-        None => None,
-    };
-    let turn_input = TurnInput {
-        text: input.clone(),
-        context,
-        compaction: *inner.compaction.read(),
-        compact: turn.compact,
-    };
-    // The provider runs in its own task: a panicking adapter fails the turn
-    // instead of leaving the session running forever, and an abandoned turn
-    // is aborted.
-    let task = {
-        let provider = provider.clone();
-        let native = turn.native.clone();
-        let ctx = ctx.clone();
-        tokio::spawn(async move {
-            match mode {
-                Mode::Stream => provider.stream(&native, &turn_input, &ctx).await,
-                Mode::Execute => {
-                    let output = provider.execute(&native, &turn_input, &ctx).await?;
-                    ctx.emit_text(&output.text);
-                    Ok(output)
-                }
+    let mut provider = turn.provider.clone();
+    let mut native = turn.native.clone();
+    let mut context = turn.context.clone();
+    let mut text = input.clone();
+    let mut tool_calls = 0;
+    // Seats that already failed this turn, and why (ADR-0024).
+    let mut tried = vec![session.state.lock().seat()];
+    let mut failures: Vec<String> = Vec::new();
+    let outcome: Result<TurnOutput, ProviderError> = loop {
+        let descriptor = provider.descriptor();
+        let ctx = TurnContext::new(
+            session.id.clone(),
+            descriptor.id.clone(),
+            turn.turn_id.clone(),
+            turn.project_path.clone(),
+            inner.tools.clone(),
+            Arc::new(Recorder(session.clone())),
+            turn.cancel.clone(),
+        );
+        let attached = match context.take() {
+            Some(request) => attach_context(&inner, &session, &turn.turn_id, request).await,
+            None => None,
+        };
+        let turn_input = TurnInput {
+            text: text.clone(),
+            context: attached,
+            compaction: *inner.compaction.read(),
+            compact: turn.compact,
+        };
+        let outcome = attempt(
+            &inner,
+            provider.clone(),
+            native.clone(),
+            turn_input,
+            ctx.clone(),
+            mode,
+            &turn.cancel,
+        )
+        .await;
+        tool_calls += ctx.tool_call_count();
+        let error = match outcome {
+            Err(error)
+                if error.kind != ProviderErrorKind::Cancelled
+                    && !turn.cancel.is_cancelled()
+                    && !turn.compact =>
+            {
+                error
             }
-        })
-    };
-    let abort = task.abort_handle();
-    let grace = inner.config.cancel_grace;
-    let abandon = async {
-        turn.cancel.cancelled().await;
-        tokio::time::sleep(grace).await;
-    };
-    let outcome: Result<TurnOutput, ProviderError> = tokio::select! {
-        joined = task => joined.unwrap_or_else(|err| {
-            Err(ProviderError::internal(if err.is_panic() {
-                format!("{} panicked during the turn", descriptor.name)
-            } else {
-                "provider task was aborted".to_owned()
-            }))
-        }),
-        () = abandon => {
-            abort.abort();
-            Err(ProviderError::cancelled(format!(
-                "provider did not stop within {} ms; turn abandoned",
-                grace.as_millis()
-            )))
+            outcome => break outcome,
+        };
+        failures.push(format!("{}: {}", descriptor.name, error.message));
+        match take_over(
+            &inner,
+            &session,
+            &turn.turn_id,
+            &descriptor.name,
+            &error,
+            &input,
+            &mut tried,
+            &mut failures,
+            &origin,
+        )
+        .await
+        {
+            Some(next) => {
+                provider = next.provider;
+                native = next.native;
+                text = next.input;
+                context = Some(next.context);
+            }
+            // No reserve: the error as it came. Reserves that all failed:
+            // every reason.
+            None if failures.len() == 1 => break Err(error),
+            None => {
+                break Err(ProviderError::new(
+                    error.kind,
+                    format!(
+                        "a IA desta sessão e as reservas falharam — {}",
+                        failures.join(" · ")
+                    ),
+                ))
+            }
         }
     };
+    let descriptor = provider.descriptor();
 
     let (status, error) = match outcome {
         Ok(_) => (TurnStatus::Completed, None),
@@ -991,10 +1085,9 @@ async fn run_turn(
         Err(err) => (TurnStatus::Failed, Some(err.message)),
     };
     let duration_ms = clock.elapsed().as_millis() as u64;
-    let tool_calls = ctx.tool_call_count();
     // What the provider needs to resume later (e.g. the API conversation).
     let snapshot = match inner.store {
-        Some(_) => Some(provider.snapshot(&turn.native).await),
+        Some(_) => Some(provider.snapshot(&native).await),
         None => None,
     };
 
@@ -1054,7 +1147,7 @@ async fn run_turn(
         json!({
             "sessionId": session.id,
             "provider": descriptor.id,
-            "model": turn.native.model,
+            "model": native.model,
             "turnId": result.turn_id,
             "status": status,
             "error": result.error,
@@ -1066,6 +1159,174 @@ async fn run_turn(
         }),
     ));
     result
+}
+
+/// One provider's go at a turn. The provider runs in its own task: a
+/// panicking adapter fails the turn instead of leaving the session running
+/// forever, and an abandoned turn is aborted.
+async fn attempt(
+    inner: &Inner,
+    provider: Arc<dyn AIProvider>,
+    native: NativeSession,
+    input: TurnInput,
+    ctx: TurnContext,
+    mode: Mode,
+    cancel: &CancellationToken,
+) -> Result<TurnOutput, ProviderError> {
+    let name = provider.descriptor().name;
+    let task = tokio::spawn(async move {
+        match mode {
+            Mode::Stream => provider.stream(&native, &input, &ctx).await,
+            Mode::Execute => {
+                let output = provider.execute(&native, &input, &ctx).await?;
+                ctx.emit_text(&output.text);
+                Ok(output)
+            }
+        }
+    });
+    let abort = task.abort_handle();
+    let grace = inner.config.cancel_grace;
+    let abandon = async {
+        cancel.cancelled().await;
+        tokio::time::sleep(grace).await;
+    };
+    tokio::select! {
+        joined = task => joined.unwrap_or_else(|err| {
+            Err(ProviderError::internal(if err.is_panic() {
+                format!("{name} panicked during the turn")
+            } else {
+                "provider task was aborted".to_owned()
+            }))
+        }),
+        () = abandon => {
+            abort.abort();
+            Err(ProviderError::cancelled(format!(
+                "provider did not stop within {} ms; turn abandoned",
+                grace.as_millis()
+            )))
+        }
+    }
+}
+
+/// The reserve that took over a turn.
+struct TakeOver {
+    provider: Arc<dyn AIProvider>,
+    native: NativeSession,
+    /// The input with what the reserve has to know.
+    input: String,
+    /// The project context again: the reserve's session starts empty.
+    context: ContextRequest,
+}
+
+/// Hands the session to its next reserve not yet tried in this turn
+/// (ADR-0024): opens the reserve's own session, makes it the session's AI
+/// from now on and moves the one that failed to the end of the reserves.
+/// `None` when no reserve is left (or none was set).
+#[allow(clippy::too_many_arguments)]
+async fn take_over(
+    inner: &Inner,
+    session: &Arc<Session>,
+    turn_id: &TurnId,
+    failed: &str,
+    error: &ProviderError,
+    input: &str,
+    tried: &mut Vec<Reserve>,
+    failures: &mut Vec<String>,
+    origin: &CallOrigin,
+) -> Option<TakeOver> {
+    loop {
+        let (next, spec) = {
+            let state = session.state.lock();
+            let next = state
+                .reserves
+                .iter()
+                .find(|r| !tried.contains(r))
+                .cloned()?;
+            (next, state.spec.clone())
+        };
+        tried.push(next.clone());
+        let Some(provider) = inner.registry.get(&next.provider) else {
+            failures.push(format!(
+                "{}: não está mais cadastrado (conexão removida ou desativada)",
+                next.provider
+            ));
+            continue;
+        };
+        let name = provider.descriptor().name;
+        let spec = SessionSpec {
+            model: next.model.clone(),
+            ..spec
+        };
+        let native = match provider.start(&spec).await {
+            Ok(native) => native,
+            Err(err) => {
+                failures.push(format!("{name}: {}", err.message));
+                continue;
+            }
+        };
+
+        let (from, to, request, handover) = {
+            let mut state = session.state.lock();
+            let from = state.seat();
+            let from_model = state.info.model.clone();
+            state.reserves.retain(|r| r != &next);
+            if !state.reserves.contains(&from) {
+                state.reserves.push(from.clone());
+            }
+            state.info.provider = next.provider.clone();
+            state.info.model = native.model.clone().or_else(|| next.model.clone());
+            state.info.native_ref = Some(native.reference.clone());
+            state.spec.model = next.model.clone();
+            state.native = native.clone();
+            *session.provider.lock() = Some(provider.clone());
+            let to_model = state.info.model.clone();
+            session.record(
+                &mut state,
+                SessionEvent::FailedOver {
+                    turn_id: turn_id.clone(),
+                    from_provider: from.provider.clone(),
+                    from_model: from_model.clone(),
+                    to_provider: next.provider.clone(),
+                    to_model: to_model.clone(),
+                    reason: error.message.clone(),
+                },
+            );
+            let handover =
+                handover_input(&state.log.entries(), turn_id, failed, &error.message, input);
+            let request = ContextRequest {
+                session: state.info.clone(),
+                task: input.to_owned(),
+                options: state.context.clone(),
+                tools: provider.capabilities().tool_calls,
+            };
+            (
+                (from, from_model),
+                (next.clone(), to_model),
+                request,
+                handover,
+            )
+        };
+        inner.persist(session);
+        inner.sink.audit(AuditEvent::new(
+            EventKind::SessionFailover,
+            origin.clone(),
+            format!("{failed} falhou; {name} assumiu a sessão"),
+            json!({
+                "sessionId": session.id,
+                "turnId": turn_id,
+                "from": {"provider": from.0.provider, "model": from.1},
+                "to": {"provider": to.0.provider, "model": to.1},
+                "reason": error.message,
+                "failures": failures,
+            }),
+        ));
+        return Some(TakeOver {
+            provider,
+            native,
+            input: handover,
+            context: request,
+        });
+    }
 }
 
 /// Builds the project context of a first turn and records it: the summary

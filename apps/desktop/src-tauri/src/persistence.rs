@@ -59,7 +59,10 @@ mod tests {
     use super::*;
     use chrono::{Duration, Utc};
     use orchestrator_core::{DeliberationId, TokenUsage};
-    use orchestrator_router::{Activity, CouncilMode, Preference, Recommendation};
+    use orchestrator_router::{
+        Activity, Analysis, CouncilMember, CouncilMode, Plan, PlanSource, Preference,
+        Recommendation,
+    };
 
     #[test]
     fn deliberations_round_trip_through_the_database() {
@@ -81,6 +84,28 @@ mod tests {
             },
             shortlist: Vec::new(),
             votes: Vec::new(),
+            analyses: vec![Analysis {
+                member: CouncilMember {
+                    provider: "claude".into(),
+                    model: None,
+                },
+                provider_name: "Claude".into(),
+                model: Some("opus".into()),
+                text: Some("Usar uma fila".into()),
+                error: None,
+                usage: TokenUsage::default(),
+                duration_ms: 30,
+            }],
+            plan: Some(Plan {
+                text: "Usar uma fila".into(),
+                source: PlanSource::Single,
+                by: None,
+                by_name: Some("Claude".into()),
+                usage: TokenUsage::default(),
+                failures: Vec::new(),
+            }),
+            seats: Vec::new(),
+            project_path: Some("/p/filas".into()),
             decision: None,
             usage: TokenUsage::default(),
             cached: false,

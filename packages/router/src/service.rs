@@ -1,13 +1,15 @@
-//! `RouterService`: the router, the Council, its settings, cache and
-//! history, and the start of sessions with the chosen model (ADR-0011).
+//! `RouterService`: the router, the Council (ADR-0011, ADR-0024), its
+//! settings, cache and history, and the sessions they open.
 
 use crate::activity::words;
 use crate::cache::DeliberationCache;
 use crate::catalog::{catalog, Availability, CatalogModel};
 use crate::council::{
-    parse_ballot, prompt, tally, Ballot, Decision, DecisionSource, Deliberation, Vote, SYSTEM,
+    analysis_prompt, clip_analysis, clip_plan, execution_message, joined_plan, synthesis_prompt,
+    Analysis, Decision, DecisionSource, Deliberation, Plan, PlanSource, Seat, ANALYSIS_SYSTEM,
+    SYNTHESIS_SYSTEM,
 };
-use crate::score::{rank, Candidate, ModelRef, Recommendation, RouteRequest};
+use crate::score::{rank, ModelRef, Recommendation, RouteRequest};
 use crate::settings::{self, CouncilMember, CouncilMode, CouncilSettings};
 use crate::store::DeliberationStore;
 use chrono::Utc;
@@ -16,7 +18,8 @@ use orchestrator_core::{
     TokenUsage, TurnId,
 };
 use orchestrator_providers::{
-    CompletionRequest, ProviderError, ProviderRegistry, SessionManager, StartRequest,
+    CompletionRequest, ProviderError, ProviderRegistry, ProviderStatus, Reserve, SessionManager,
+    StartRequest,
 };
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
@@ -43,11 +46,11 @@ const TITLE_CHARS: usize = 60;
 pub struct DeliberateRequest {
     #[serde(flatten)]
     pub route: RouteRequest,
-    /// Ignore the cache ("Deliberar de novo").
+    /// Ignore the cache ("Analisar de novo").
     pub force: bool,
 }
 
-/// Opens a session with a chosen model.
+/// Opens a session with a model the user picked.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RouteStart {
@@ -76,6 +79,9 @@ pub struct RouteStarted {
     pub turn_id: Option<TurnId>,
     /// Why the task could not be sent (the session is open anyway).
     pub send_error: Option<String>,
+    /// Council members that could not open the session, and why: the next
+    /// one in line opened it (ADR-0024).
+    pub skipped: Vec<String>,
 }
 
 /// A deliberation and, in Full mode, the session it opened.
@@ -84,6 +90,8 @@ pub struct RouteStarted {
 pub struct RunOutcome {
     pub deliberation: Deliberation,
     pub started: Option<RouteStarted>,
+    /// Why Full mode could not open the session.
+    pub start_error: Option<String>,
 }
 
 pub struct RouterService {
@@ -96,6 +104,71 @@ pub struct RouterService {
     history: Mutex<VecDeque<Deliberation>>,
     /// Deliberations kept between runs (ADR-0012).
     store: Option<Arc<dyn DeliberationStore>>,
+}
+
+/// A member's answer to one request.
+struct Answer {
+    text: String,
+    model: Option<String>,
+    usage: TokenUsage,
+}
+
+/// Asks a member, without a session and without tools.
+async fn ask(
+    registry: &ProviderRegistry,
+    member: &CouncilMember,
+    known: Option<ProviderStatus>,
+    system: &str,
+    prompt: String,
+    timeout: Duration,
+) -> Result<Answer, String> {
+    let provider = registry
+        .get(&member.provider)
+        .ok_or("provider não registrado (conexão removida ou desativada)")?;
+    if !provider.capabilities().completion {
+        return Err("este provider não responde pedidos avulsos".into());
+    }
+    if let Some(status) = known.filter(|s| !s.available) {
+        return Err(format!(
+            "provider indisponível: {}",
+            status.detail.unwrap_or_default()
+        ));
+    }
+    let request = CompletionRequest {
+        model: member.model.clone(),
+        system: Some(system.into()),
+        prompt,
+    };
+    let cancel = CancellationToken::new();
+    match tokio::time::timeout(timeout, provider.complete(&request, &cancel)).await {
+        Ok(Ok(answer)) if answer.text.trim().is_empty() => Err("resposta vazia".into()),
+        Ok(Ok(answer)) => Ok(Answer {
+            text: answer.text,
+            model: answer.model,
+            usage: answer.usage,
+        }),
+        Ok(Err(err)) => Err(err.message),
+        Err(_) => {
+            cancel.cancel();
+            Err(format!("sem resposta em {} s", timeout.as_secs()))
+        }
+    }
+}
+
+/// `Claude` or, for a member with its own model, `Claude (claude-opus)`.
+fn label(provider_name: &str, model: Option<&str>) -> String {
+    match model {
+        Some(model) => format!("{provider_name} ({model})"),
+        None => provider_name.to_owned(),
+    }
+}
+
+fn seat_label(seat: &Seat) -> String {
+    label(&seat.provider_name, seat.member.model.as_deref())
+}
+
+fn analysis_label(analysis: &Analysis) -> String {
+    label(&analysis.provider_name, analysis.member.model.as_deref())
 }
 
 impl RouterService {
@@ -162,7 +235,6 @@ impl RouterService {
                 "mode": settings.mode,
                 "members": settings.members,
                 "memberLabels": members,
-                "shortlist": settings.shortlist,
                 "cacheMinutes": settings.cache_minutes,
                 "timeoutSecs": settings.timeout_secs,
                 "preference": settings.preference,
@@ -198,22 +270,32 @@ impl RouterService {
         self.history.lock().iter().find(|d| &d.id == id).cloned()
     }
 
-    /// Picks a model for a task: the router ranks, and the Council (modes
-    /// Sugerir and Full) deliberates over the best candidates.
-    pub async fn deliberate(&self, request: &DeliberateRequest) -> Deliberation {
+    /// With the Council off, the router's best model. With it on (Sugerir
+    /// and Full), the members analyze the demand together with the context
+    /// of `project_path`, one of them writes the plan and the members are
+    /// lined up to carry it out (ADR-0024).
+    pub async fn deliberate(
+        &self,
+        sessions: &SessionManager,
+        request: &DeliberateRequest,
+        project_path: Option<PathBuf>,
+    ) -> Deliberation {
         let started = Instant::now();
         let settings = self.settings();
         let recommendation = self.recommend(&request.route).await;
-        let k = usize::from(settings.shortlist).min(recommendation.candidates.len());
-        let shortlist: Vec<&Candidate> = recommendation.candidates.iter().take(k).collect();
+        let task = request.route.task.trim().to_owned();
         let mut deliberation = Deliberation {
             id: DeliberationId::new(),
             created_at: Utc::now(),
-            task: request.route.task.trim().to_owned(),
+            task: task.clone(),
             mode: settings.mode,
-            shortlist: shortlist.iter().map(|c| c.model_ref.clone()).collect(),
             recommendation: recommendation.clone(),
+            shortlist: Vec::new(),
             votes: Vec::new(),
+            analyses: Vec::new(),
+            plan: None,
+            seats: Vec::new(),
+            project_path: project_path.clone(),
             decision: None,
             usage: TokenUsage::default(),
             cached: false,
@@ -224,195 +306,172 @@ impl RouterService {
             duration_ms: 0,
         };
 
-        if shortlist.is_empty() {
-            deliberation
-                .notices
-                .push(if recommendation.excluded.is_empty() {
-                    "Nenhum modelo cadastrado: adicione uma API em AI PROVIDERS.".into()
-                } else {
-                    "Nenhum modelo cadastrado atende aos requisitos (veja os excluídos).".into()
-                });
-            return self.finish(deliberation, started, false, None);
-        }
-        let router_decision = |reason: String| Decision {
-            model_ref: shortlist[0].model_ref.clone(),
-            provider_name: shortlist[0].provider_name.clone(),
-            model_name: shortlist[0].model_name.clone(),
-            source: DecisionSource::Router,
-            reason,
-            agreement: None,
-        };
         if settings.mode == CouncilMode::Off {
-            deliberation.decision = Some(router_decision(format!(
-                "Maior nota do roteador ({}).",
-                shortlist[0].score
-            )));
-            return self.finish(deliberation, started, false, None);
-        }
-        if shortlist.len() == 1 {
-            deliberation.decision = Some(router_decision(
-                "Único modelo que atende aos requisitos.".into(),
-            ));
-            deliberation.notices.push(
-                "Só um modelo atende aos requisitos: o Conselho não precisou ser consultado."
-                    .into(),
-            );
-            deliberation.auto_apply = settings.mode == CouncilMode::Full;
+            match recommendation.candidates.first() {
+                Some(best) => {
+                    deliberation.decision = Some(Decision {
+                        model_ref: best.model_ref.clone(),
+                        provider_name: best.provider_name.clone(),
+                        model_name: best.model_name.clone(),
+                        source: DecisionSource::Router,
+                        reason: format!("Maior nota do roteador ({}).", best.score),
+                        agreement: None,
+                    })
+                }
+                None => deliberation
+                    .notices
+                    .push(if recommendation.excluded.is_empty() {
+                        "Nenhum modelo cadastrado: adicione uma API em AI PROVIDERS.".into()
+                    } else {
+                        "Nenhum modelo cadastrado atende aos requisitos (veja os excluídos).".into()
+                    }),
+            }
             return self.finish(deliberation, started, false, None);
         }
 
         let ttl = Duration::from_secs(u64::from(settings.cache_minutes) * 60);
-        let key = cache_key(&request.route.task, &recommendation, &shortlist, &settings);
-        if settings.cache_minutes > 0 && !request.force {
-            let hit = self.cache.get(key, ttl).or_else(|| {
+        let key = cache_key(&task, project_path.as_deref(), &settings);
+        let hit = if settings.cache_minutes > 0 && !request.force {
+            self.cache.get(key, ttl).or_else(|| {
                 let store = self.store.as_ref()?;
                 store.cached(&format!("{key:016x}"), Utc::now())
-            });
-            if let Some(hit) = hit {
-                deliberation.votes = hit.votes;
-                deliberation.decision = hit.decision;
+            })
+        } else {
+            None
+        };
+        let mut cache_for = None;
+        match hit {
+            Some(hit) => {
+                deliberation.analyses = hit.analyses;
+                deliberation.plan = hit.plan;
                 deliberation.cached = true;
                 deliberation.cached_from = Some(hit.id);
                 deliberation.saved_usage = Some(hit.usage);
                 deliberation.notices = hit.notices;
                 deliberation.notices.push(format!(
-                    "Resposta do cache do Conselho (validade de {} min): nenhum token gasto.",
+                    "Análise do cache do Conselho (validade de {} min): nenhum token gasto. \
+                     \"Analisar de novo\" consulta os membros outra vez.",
                     settings.cache_minutes
                 ));
-                deliberation.auto_apply = settings.mode == CouncilMode::Full;
-                return self.finish(deliberation, started, true, None);
-            }
-        }
-        let mut cache_for = None;
-
-        let question = prompt(&request.route.task, &recommendation, &shortlist);
-        let (votes, ballots) = self.ask_members(&settings, &question, &shortlist).await;
-        deliberation.votes = votes;
-        for vote in &deliberation.votes {
-            deliberation.usage += vote.usage;
-        }
-        match tally(&ballots, shortlist.len()) {
-            Some(result) => {
-                let winner = shortlist[result.winner];
-                let valid = ballots.len();
-                let supporters: Vec<&Vote> = deliberation
-                    .votes
-                    .iter()
-                    .filter(|v| v.choice.as_ref() == Some(&winner.model_ref))
-                    .collect();
-                let first_reason = supporters
-                    .iter()
-                    .find_map(|v| v.reason.clone())
-                    .or_else(|| deliberation.votes.iter().find_map(|v| v.reason.clone()));
-                let reason = if valid == 1 {
-                    first_reason.unwrap_or_else(|| "Escolha do gerenciador.".into())
-                } else {
-                    let head = format!(
-                        "{} de {} membros escolheram este modelo.",
-                        supporters.len(),
-                        valid
-                    );
-                    match first_reason {
-                        Some(reason) => format!("{head} {reason}"),
-                        None => head,
-                    }
-                };
-                deliberation.decision = Some(Decision {
-                    model_ref: winner.model_ref.clone(),
-                    provider_name: winner.provider_name.clone(),
-                    model_name: winner.model_name.clone(),
-                    source: DecisionSource::Council,
-                    reason,
-                    agreement: Some(result.agreement),
-                });
-                deliberation.auto_apply = settings.mode == CouncilMode::Full;
-                if settings.cache_minutes > 0 {
-                    self.cache.put(key, deliberation.clone());
-                    cache_for = Some((key, ttl));
-                }
             }
             None => {
-                deliberation.decision = Some(router_decision(format!(
-                    "Maior nota do roteador ({}).",
-                    shortlist[0].score
-                )));
-                deliberation.notices.push(
-                    "Nenhum membro do Conselho respondeu de forma válida: valendo a recomendação do roteador. O modo Full não aplica sozinho neste caso."
-                        .into(),
-                );
+                let context = match &project_path {
+                    Some(path) => match sessions.project_context(path.clone(), &task).await {
+                        Ok(built) => built.map(|c| c.text),
+                        Err(err) => {
+                            deliberation.notices.push(format!(
+                                "Contexto do projeto indisponível ({err}): os membros analisaram só pela demanda."
+                            ));
+                            None
+                        }
+                    },
+                    None => {
+                        deliberation.notices.push(
+                            "Nenhum projeto aberto: os membros analisaram só pela demanda.".into(),
+                        );
+                        None
+                    }
+                };
+                let question = analysis_prompt(&task, context.as_deref());
+                deliberation.analyses = self.analyze(&settings, &question).await;
+                deliberation.plan = self
+                    .synthesize(&settings, &task, &deliberation.analyses)
+                    .await;
+                for analysis in &deliberation.analyses {
+                    deliberation.usage += analysis.usage;
+                }
+                if let Some(plan) = &deliberation.plan {
+                    deliberation.usage += plan.usage;
+                    if plan.source == PlanSource::Joined {
+                        deliberation.notices.push(format!(
+                            "Nenhum membro conseguiu juntar as análises ({}): o plano são as análises lado a lado.",
+                            plan.failures.join(" · ")
+                        ));
+                    }
+                } else {
+                    deliberation.notices.push(
+                        "Nenhum membro conseguiu analisar a demanda: ela segue sem plano para quem executa."
+                            .into(),
+                    );
+                }
             }
+        }
+
+        deliberation.seats = self.seats(&settings, &deliberation.analyses);
+        match deliberation.seats.first() {
+            Some(first) => {
+                deliberation.decision = Some(Decision {
+                    model_ref: ModelRef {
+                        provider: first.member.provider.clone(),
+                        model: first.member.model.clone().unwrap_or_else(|| {
+                            self.registry
+                                .get(&first.member.provider)
+                                .and_then(|p| p.capabilities().default_model)
+                                .unwrap_or_default()
+                        }),
+                    },
+                    provider_name: first.provider_name.clone(),
+                    model_name: first.model_name.clone(),
+                    source: DecisionSource::Council,
+                    reason: seats_reason(&deliberation.seats),
+                    agreement: None,
+                });
+                deliberation.auto_apply = settings.mode == CouncilMode::Full;
+            }
+            None => deliberation.notices.push(
+                "Nenhum membro do Conselho está cadastrado: revise os membros em Conselho.".into(),
+            ),
+        }
+        if !deliberation.cached && deliberation.plan.is_some() && settings.cache_minutes > 0 {
+            self.cache.put(key, deliberation.clone());
+            cache_for = Some((key, ttl));
         }
         self.finish(deliberation, started, true, cache_for)
     }
 
-    /// Asks every member in parallel. Returns the votes (member order) and
-    /// the ballots that count.
-    async fn ask_members(
-        &self,
-        settings: &CouncilSettings,
-        question: &str,
-        shortlist: &[&Candidate],
-    ) -> (Vec<Vote>, Vec<Ballot>) {
+    /// Every member analyzes the demand, in parallel. Analyses come back in
+    /// Council order.
+    async fn analyze(&self, settings: &CouncilSettings, question: &str) -> Vec<Analysis> {
         let timeout = Duration::from_secs(u64::from(settings.timeout_secs));
-        let refs: Vec<ModelRef> = shortlist.iter().map(|c| c.model_ref.clone()).collect();
         let mut jobs = JoinSet::new();
         for (index, member) in settings.members.iter().cloned().enumerate() {
             let registry = self.registry.clone();
             let known = self.availability.get(&member.provider);
             let question = question.to_owned();
-            let count = refs.len();
             jobs.spawn(async move {
                 let started = Instant::now();
-                let mut vote = Vote {
+                let mut analysis = Analysis {
                     provider_name: registry
                         .get(&member.provider)
                         .map_or_else(|| member.provider.to_string(), |p| p.descriptor().name),
-                    member: member.clone(),
                     model: member.model.clone(),
-                    choice: None,
-                    ranking: Vec::new(),
-                    confidence: None,
-                    reason: None,
+                    member: member.clone(),
+                    text: None,
                     error: None,
                     usage: TokenUsage::default(),
                     duration_ms: 0,
                 };
-                let ballot = match registry.get(&member.provider) {
-                    None => Err("provider não registrado (conexão removida ou desativada)".into()),
-                    Some(provider) if !provider.capabilities().completion => {
-                        Err("este provider não responde pedidos avulsos".into())
-                    }
-                    Some(_) if known.as_ref().is_some_and(|s| !s.available) => Err(format!(
-                        "provider indisponível: {}",
-                        known.and_then(|s| s.detail).unwrap_or_default()
-                    )),
-                    Some(provider) => {
-                        let request = CompletionRequest {
-                            model: member.model.clone(),
-                            system: Some(SYSTEM.into()),
-                            prompt: question,
-                        };
-                        let cancel = CancellationToken::new();
-                        match tokio::time::timeout(timeout, provider.complete(&request, &cancel))
-                            .await
-                        {
-                            Ok(Ok(answer)) => {
-                                vote.usage = answer.usage;
-                                if answer.model.is_some() {
-                                    vote.model = answer.model;
-                                }
-                                parse_ballot(&answer.text, count)
-                            }
-                            Ok(Err(err)) => Err(err.message),
-                            Err(_) => {
-                                cancel.cancel();
-                                Err(format!("sem resposta em {} s", timeout.as_secs()))
-                            }
+                match ask(
+                    &registry,
+                    &member,
+                    known,
+                    ANALYSIS_SYSTEM,
+                    question,
+                    timeout,
+                )
+                .await
+                {
+                    Ok(answer) => {
+                        analysis.text = Some(clip_analysis(&answer.text));
+                        analysis.usage = answer.usage;
+                        if answer.model.is_some() {
+                            analysis.model = answer.model;
                         }
                     }
-                };
-                vote.duration_ms = started.elapsed().as_millis() as u64;
-                (index, vote, ballot)
+                    Err(error) => analysis.error = Some(error),
+                }
+                analysis.duration_ms = started.elapsed().as_millis() as u64;
+                (index, analysis)
             });
         }
         let mut answers = Vec::new();
@@ -422,23 +481,124 @@ impl RouterService {
                 Err(err) => eprintln!("[orchestrator] council member task failed: {err}"),
             }
         }
-        answers.sort_by_key(|(index, _, _)| *index);
-        let mut votes = Vec::new();
-        let mut ballots = Vec::new();
-        for (_, mut vote, ballot) in answers {
-            match ballot {
-                Ok(ballot) => {
-                    vote.choice = Some(refs[ballot.choice].clone());
-                    vote.ranking = ballot.ranking.iter().map(|i| refs[*i].clone()).collect();
-                    vote.confidence = ballot.confidence;
-                    vote.reason = ballot.reason.clone();
-                    ballots.push(ballot);
+        answers.sort_by_key(|(index, _)| *index);
+        answers.into_iter().map(|(_, analysis)| analysis).collect()
+    }
+
+    /// The plan: with two or more analyses, the first member that answered
+    /// joins them (the next one if it fails); with one, that analysis.
+    async fn synthesize(
+        &self,
+        settings: &CouncilSettings,
+        task: &str,
+        analyses: &[Analysis],
+    ) -> Option<Plan> {
+        let done: Vec<(&Analysis, String)> = analyses
+            .iter()
+            .filter_map(|a| a.text.clone().map(|text| (a, text)))
+            .collect();
+        let labeled: Vec<(String, String)> = done
+            .iter()
+            .map(|(a, text)| (analysis_label(a), text.clone()))
+            .collect();
+        match done.as_slice() {
+            [] => None,
+            [(only, text)] => Some(Plan {
+                text: clip_plan(text),
+                source: PlanSource::Single,
+                by: Some(only.member.clone()),
+                by_name: Some(analysis_label(only)),
+                usage: TokenUsage::default(),
+                failures: Vec::new(),
+            }),
+            _ => {
+                let timeout = Duration::from_secs(u64::from(settings.timeout_secs));
+                let prompt = synthesis_prompt(task, &labeled);
+                let mut failures = Vec::new();
+                for (analysis, _) in &done {
+                    let known = self.availability.get(&analysis.member.provider);
+                    match ask(
+                        &self.registry,
+                        &analysis.member,
+                        known,
+                        SYNTHESIS_SYSTEM,
+                        prompt.clone(),
+                        timeout,
+                    )
+                    .await
+                    {
+                        Ok(answer) => {
+                            return Some(Plan {
+                                text: clip_plan(&answer.text),
+                                source: PlanSource::Synthesis,
+                                by: Some(analysis.member.clone()),
+                                by_name: Some(analysis_label(analysis)),
+                                usage: answer.usage,
+                                failures,
+                            })
+                        }
+                        Err(error) => {
+                            failures.push(format!("{}: {error}", analysis_label(analysis)))
+                        }
+                    }
                 }
-                Err(error) => vote.error = Some(error),
+                Some(Plan {
+                    text: joined_plan(&labeled),
+                    source: PlanSource::Joined,
+                    by: None,
+                    by_name: None,
+                    usage: TokenUsage::default(),
+                    failures,
+                })
             }
-            votes.push(vote);
         }
-        (votes, ballots)
+    }
+
+    /// The members in line to carry out the demand: Council order, with
+    /// the ones whose provider is down or that failed the analysis moved to
+    /// the end (they stay as reserves). Members no longer registered are
+    /// left out.
+    fn seats(&self, settings: &CouncilSettings, analyses: &[Analysis]) -> Vec<Seat> {
+        let mut ready = Vec::new();
+        let mut later = Vec::new();
+        for member in &settings.members {
+            let Some(provider) = self.registry.get(&member.provider) else {
+                continue;
+            };
+            let model_name = member
+                .model
+                .clone()
+                .or_else(|| provider.capabilities().default_model)
+                .unwrap_or_else(|| "modelo padrão".into());
+            let down = self
+                .availability
+                .get(&member.provider)
+                .filter(|s| !s.available)
+                .map(|s| {
+                    format!(
+                        "provider indisponível{}",
+                        s.detail.map(|d| format!(": {d}")).unwrap_or_default()
+                    )
+                });
+            let failed = analyses
+                .iter()
+                .find(|a| &a.member == member)
+                .and_then(|a| a.error.clone())
+                .map(|e| format!("falhou na análise: {e}"));
+            let seat = Seat {
+                member: member.clone(),
+                provider_name: provider.descriptor().name,
+                model_name,
+                demoted: down.or(failed),
+            };
+            if seat.demoted.is_some() {
+                later.push(seat);
+            } else {
+                ready.push(seat);
+            }
+        }
+        ready.extend(later);
+        ready
     }
 
     /// Stamps the duration, keeps the deliberation for the UI and, when the
@@ -473,41 +633,48 @@ impl RouterService {
     }
 
     fn audit_deliberation(&self, d: &Deliberation) {
-        let valid = d.votes.iter().filter(|v| v.error.is_none()).count();
-        let summary = match &d.decision {
-            Some(decision) => format!(
-                "Conselho{}: {} ({}) · {}/{} membros válidos{}",
-                if d.cached { " (cache)" } else { "" },
-                decision.model_name,
-                decision.provider_name,
-                valid,
-                d.votes.len(),
-                d.usage
-                    .cost_usd
-                    .map(|c| format!(" · US$ {c:.4}"))
-                    .unwrap_or_default()
-            ),
-            None => "Conselho sem decisão".into(),
-        };
-        let candidates: Vec<_> = d
-            .shortlist
+        let answered = d.analyses.iter().filter(|a| a.text.is_some()).count();
+        let summary = format!(
+            "Conselho{}: {answered}/{} análises · {}{}{}",
+            if d.cached { " (cache)" } else { "" },
+            d.analyses.len(),
+            match d.plan.as_ref().map(|p| p.source) {
+                Some(PlanSource::Synthesis) => "plano conjunto",
+                Some(PlanSource::Single) => "plano de um membro",
+                Some(PlanSource::Joined) => "análises lado a lado",
+                None => "sem plano",
+            },
+            d.seats
+                .first()
+                .map(|s| format!(" · executa {}", seat_label(s)))
+                .unwrap_or_default(),
+            d.usage
+                .cost_usd
+                .map(|c| format!(" · US$ {c:.4}"))
+                .unwrap_or_default()
+        );
+        let analyses: Vec<_> = d
+            .analyses
             .iter()
-            .filter_map(|r| d.recommendation.find(r))
-            .map(|c| json!({"provider": c.model_ref.provider, "model": c.model_ref.model, "score": c.score}))
-            .collect();
-        let votes: Vec<_> = d
-            .votes
-            .iter()
-            .map(|v| {
+            .map(|a| {
                 json!({
-                    "provider": v.member.provider,
-                    "model": v.model,
-                    "choice": v.choice,
-                    "confidence": v.confidence,
-                    "reason": v.reason,
-                    "error": v.error,
-                    "usage": v.usage,
-                    "durationMs": v.duration_ms,
+                    "provider": a.member.provider,
+                    "model": a.model,
+                    "error": a.error,
+                    "chars": a.text.as_ref().map(|t| t.chars().count()),
+                    "usage": a.usage,
+                    "durationMs": a.duration_ms,
+                })
+            })
+            .collect();
+        let seats: Vec<_> = d
+            .seats
+            .iter()
+            .map(|s| {
+                json!({
+                    "provider": s.member.provider,
+                    "model": s.member.model,
+                    "demoted": s.demoted,
                 })
             })
             .collect();
@@ -518,17 +685,20 @@ impl RouterService {
             json!({
                 "deliberationId": d.id,
                 "task": truncate_chars(&d.task, AUDIT_TASK_CHARS),
-                "activity": d.recommendation.activity,
-                "preference": d.recommendation.preference,
-                "needsTools": d.recommendation.needs_tools,
+                "projectPath": d.project_path,
                 "mode": d.mode,
-                "candidates": candidates,
-                "votes": votes,
+                "analyses": analyses,
+                "plan": d.plan.as_ref().map(|p| json!({
+                    "source": p.source,
+                    "by": p.by,
+                    "usage": p.usage,
+                    "failures": p.failures,
+                })),
+                "seats": seats,
                 "decision": d.decision.as_ref().map(|x| json!({
                     "provider": x.model_ref.provider,
                     "model": x.model_ref.model,
                     "source": x.source,
-                    "agreement": x.agreement,
                 })),
                 "usage": d.usage,
                 "cached": d.cached,
@@ -539,8 +709,60 @@ impl RouterService {
         ));
     }
 
-    /// Opens a session with the chosen model (`ROUTE_DECIDED`) and, if asked,
-    /// sends the task as its first message.
+    /// Records `ROUTE_DECIDED` for a session opened with a chosen model.
+    fn record_route(
+        &self,
+        session: &SessionInfo,
+        deliberation: Option<&Deliberation>,
+        origin: &CallOrigin,
+    ) {
+        let chosen = ModelRef {
+            provider: session.provider.clone(),
+            model: session.model.clone().unwrap_or_default(),
+        };
+        let recommended = deliberation
+            .and_then(|d| d.decision.as_ref())
+            .map(|d| d.model_ref.clone());
+        let followed = recommended.as_ref().map(|r| *r == chosen);
+        let by = match origin {
+            CallOrigin::Council { .. } => "council",
+            _ => "user",
+        };
+        let provider_name = self
+            .registry
+            .get(&session.provider)
+            .map_or_else(|| session.provider.to_string(), |p| p.descriptor().name);
+        let council = deliberation.is_some_and(|d| !d.seats.is_empty());
+        self.sink.audit(AuditEvent::new(
+            EventKind::RouteDecided,
+            origin.clone(),
+            format!(
+                "modelo aplicado · {provider_name} / {} · {}",
+                chosen.model,
+                match (by, council, followed) {
+                    ("council", _, _) => "pelo Conselho (Full)",
+                    (_, true, _) => "pelo Conselho, com a aprovação do usuário",
+                    (_, _, Some(true)) => "pelo usuário, seguindo a recomendação",
+                    (_, _, Some(false)) => "pelo usuário, diferente da recomendação",
+                    _ => "pelo usuário",
+                }
+            ),
+            json!({
+                "deliberationId": deliberation.map(|d| &d.id),
+                "sessionId": session.id,
+                "provider": chosen.provider,
+                "model": chosen.model,
+                "by": by,
+                "followedRecommendation": followed,
+                "recommended": recommended,
+                "activity": deliberation.map(|d| d.recommendation.activity),
+                "reserves": deliberation.map(|d| d.seats.iter().skip(1).map(|s| &s.member).collect::<Vec<_>>()),
+            }),
+        ));
+    }
+
+    /// Opens a session with the model the user picked (`ROUTE_DECIDED`)
+    /// and, if asked, sends the task as its first message.
     pub async fn start_session(
         &self,
         sessions: &SessionManager,
@@ -572,53 +794,13 @@ impl RouterService {
                     // The task is the first message: it gets the project
                     // context like any session (ADR-0013).
                     context: Default::default(),
+                    reserves: Vec::new(),
                 },
                 project_path,
                 origin.clone(),
             )
             .await?;
-
-        let chosen = ModelRef {
-            provider: session.provider.clone(),
-            model: session.model.clone().unwrap_or_default(),
-        };
-        let recommended = deliberation
-            .as_ref()
-            .and_then(|d| d.decision.as_ref())
-            .map(|d| d.model_ref.clone());
-        let followed = recommended.as_ref().map(|r| *r == chosen);
-        let by = match origin {
-            CallOrigin::Council { .. } => "council",
-            _ => "user",
-        };
-        let provider_name = self
-            .registry
-            .get(&session.provider)
-            .map_or_else(|| session.provider.to_string(), |p| p.descriptor().name);
-        self.sink.audit(AuditEvent::new(
-            EventKind::RouteDecided,
-            origin.clone(),
-            format!(
-                "modelo aplicado · {provider_name} / {} · {}",
-                chosen.model,
-                match (by, followed) {
-                    ("council", _) => "pelo Conselho (Full)",
-                    (_, Some(true)) => "pelo usuário, seguindo a recomendação",
-                    (_, Some(false)) => "pelo usuário, diferente da recomendação",
-                    _ => "pelo usuário",
-                }
-            ),
-            json!({
-                "deliberationId": request.deliberation_id,
-                "sessionId": session.id,
-                "provider": chosen.provider,
-                "model": chosen.model,
-                "by": by,
-                "followedRecommendation": followed,
-                "recommended": recommended,
-                "activity": deliberation.as_ref().map(|d| d.recommendation.activity),
-            }),
-        ));
+        self.record_route(&session, deliberation.as_ref(), &origin);
 
         let send = request.send_task.unwrap_or(self.settings.read().send_task);
         let (turn_id, send_error) = match task.filter(|_| send) {
@@ -632,44 +814,144 @@ impl RouterService {
             session,
             turn_id,
             send_error,
+            skipped: Vec::new(),
         })
     }
 
-    /// Deliberates and, in Full mode with a Council decision, opens the
-    /// session on its own (origin `council`).
+    /// Carries out a deliberation's demand (ADR-0024): opens the session
+    /// with the first member in line able to open one, the others as its
+    /// reserves, and sends the demand with the Council's plan.
+    pub async fn execute(
+        &self,
+        sessions: &SessionManager,
+        id: &DeliberationId,
+        origin: CallOrigin,
+    ) -> Result<RouteStarted, ProviderError> {
+        let deliberation = self.deliberation(id).ok_or_else(|| {
+            ProviderError::not_found(
+                "deliberação não encontrada (o histórico guarda as 50 últimas)",
+            )
+        })?;
+        if deliberation.seats.is_empty() {
+            return Err(ProviderError::invalid(
+                "esta deliberação não tem membros do Conselho para executar",
+            ));
+        }
+        let project_path = deliberation.project_path.clone().ok_or_else(|| {
+            ProviderError::invalid("esta deliberação não diz o projeto: analise de novo")
+        })?;
+        let names: Vec<String> = deliberation.seats.iter().map(seat_label).collect();
+        let message = execution_message(&deliberation.task, deliberation.plan.as_ref(), &names);
+        let title = title_from_task(&deliberation.task);
+        let seats = &deliberation.seats;
+        let mut skipped = Vec::new();
+        for (index, seat) in seats.iter().enumerate() {
+            // The ones after it, then the ones that could not open it.
+            let reserves: Vec<Reserve> = seats[index + 1..]
+                .iter()
+                .chain(&seats[..index])
+                .map(|s| Reserve {
+                    provider: s.member.provider.clone(),
+                    model: s.member.model.clone(),
+                })
+                .collect();
+            let opened = sessions
+                .start(
+                    StartRequest {
+                        provider: Some(seat.member.provider.clone()),
+                        title: Some(title.clone()),
+                        model: seat.member.model.clone(),
+                        instructions: None,
+                        context: Default::default(),
+                        reserves,
+                    },
+                    project_path.clone(),
+                    origin.clone(),
+                )
+                .await;
+            let session = match opened {
+                Ok(session) => session,
+                Err(err) => {
+                    skipped.push(format!("{}: {}", seat_label(seat), err.message));
+                    continue;
+                }
+            };
+            self.record_route(&session, Some(&deliberation), &origin);
+            let (turn_id, send_error) = match sessions.send(&session.id, message, origin).await {
+                Ok(turn) => (Some(turn), None),
+                Err(err) => (None, Some(err.message)),
+            };
+            return Ok(RouteStarted {
+                session,
+                turn_id,
+                send_error,
+                skipped,
+            });
+        }
+        Err(ProviderError::unavailable(format!(
+            "nenhum membro do Conselho conseguiu abrir a sessão — {}",
+            skipped.join(" · ")
+        )))
+    }
+
+    /// Deliberates and, in Full mode, carries out the demand on its own
+    /// (origin `council`).
     pub async fn run(
         &self,
         sessions: &SessionManager,
         request: &DeliberateRequest,
         project_path: PathBuf,
-    ) -> Result<RunOutcome, ProviderError> {
-        let deliberation = self.deliberate(request).await;
-        let started = match (&deliberation.decision, deliberation.auto_apply) {
-            (Some(decision), true) => Some(
-                self.start_session(
-                    sessions,
-                    RouteStart {
-                        deliberation_id: Some(deliberation.id.clone()),
-                        provider: decision.model_ref.provider.clone(),
-                        model: Some(decision.model_ref.model.clone()),
-                        title: None,
-                        task: Some(deliberation.task.clone()),
-                        send_task: None,
-                    },
-                    project_path,
-                    CallOrigin::Council {
-                        deliberation_id: Some(deliberation.id.clone()),
-                    },
-                )
-                .await?,
-            ),
-            _ => None,
+    ) -> RunOutcome {
+        let deliberation = self.deliberate(sessions, request, Some(project_path)).await;
+        let (started, start_error) = if deliberation.auto_apply {
+            let origin = CallOrigin::Council {
+                deliberation_id: Some(deliberation.id.clone()),
+            };
+            match self.execute(sessions, &deliberation.id, origin).await {
+                Ok(started) => (Some(started), None),
+                Err(err) => (None, Some(err.message)),
+            }
+        } else {
+            (None, None)
         };
-        Ok(RunOutcome {
+        RunOutcome {
             deliberation,
             started,
-        })
+            start_error,
+        }
     }
+}
+
+/// Why the first seat carries out the demand, and who backs it up.
+fn seats_reason(seats: &[Seat]) -> String {
+    let Some(first) = seats.first() else {
+        return String::new();
+    };
+    let mut reason = match &first.demoted {
+        None => format!(
+            "Executa: {}, o 1º membro disponível na ordem do Conselho.",
+            seat_label(first)
+        ),
+        Some(why) => format!(
+            "Executa: {} ({why}), porque nenhum membro está melhor.",
+            seat_label(first)
+        ),
+    };
+    for seat in seats.iter().skip(1) {
+        if let Some(why) = &seat.demoted {
+            reason.push_str(&format!(" {} {why} e fica de reserva.", seat_label(seat)));
+        }
+    }
+    let reserves: Vec<String> = seats.iter().skip(1).map(seat_label).collect();
+    if reserves.is_empty() {
+        reason.push_str(" Sem reserva: o Conselho tem um membro disponível.");
+    } else {
+        reason.push_str(&format!(
+            " Se falhar, a sessão passa para: {}.",
+            reserves.join(", ")
+        ));
+    }
+    reason
 }
 
 fn member_label(member: &CouncilMember) -> String {
@@ -696,28 +978,12 @@ fn title_from_task(task: &str) -> String {
     truncate_chars(line.trim(), TITLE_CHARS)
 }
 
-/// Same question, same candidates (data included) and same members → same
+/// Same demand, same project and same members (in the same order) → same
 /// key.
-fn cache_key(
-    task: &str,
-    recommendation: &Recommendation,
-    shortlist: &[&Candidate],
-    settings: &CouncilSettings,
-) -> u64 {
+fn cache_key(task: &str, project: Option<&Path>, settings: &CouncilSettings) -> u64 {
     let mut hasher = DefaultHasher::new();
     words(task).hash(&mut hasher);
-    recommendation.activity.hash(&mut hasher);
-    recommendation.preference.hash(&mut hasher);
-    recommendation.needs_tools.hash(&mut hasher);
-    recommendation.min_context.hash(&mut hasher);
-    for candidate in shortlist {
-        candidate.model_ref.hash(&mut hasher);
-        candidate.input_price.map(f64::to_bits).hash(&mut hasher);
-        candidate.output_price.map(f64::to_bits).hash(&mut hasher);
-        candidate.context_window.hash(&mut hasher);
-        candidate.supports_tools.hash(&mut hasher);
-        candidate.tags.hash(&mut hasher);
-    }
+    project.hash(&mut hasher);
     settings.members.hash(&mut hasher);
     hasher.finish()
 }
@@ -734,5 +1000,36 @@ mod tests {
         );
         let long = "a".repeat(80);
         assert_eq!(title_from_task(&long).chars().count(), TITLE_CHARS + 1);
+    }
+
+    fn seat(name: &str, demoted: Option<&str>) -> Seat {
+        Seat {
+            member: CouncilMember {
+                provider: name.to_lowercase().into(),
+                model: None,
+            },
+            provider_name: name.into(),
+            model_name: "padrão".into(),
+            demoted: demoted.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn the_reason_says_who_executes_and_who_backs_it_up() {
+        assert_eq!(
+            seats_reason(&[seat("Claude", None), seat("Gemini", None)]),
+            "Executa: Claude, o 1º membro disponível na ordem do Conselho. Se falhar, a sessão passa para: Gemini."
+        );
+        assert_eq!(
+            seats_reason(&[
+                seat("Gemini", None),
+                seat("Claude", Some("falhou na análise: sobrecarregado"))
+            ]),
+            "Executa: Gemini, o 1º membro disponível na ordem do Conselho. Claude falhou na análise: sobrecarregado e fica de reserva. Se falhar, a sessão passa para: Claude."
+        );
+        assert_eq!(
+            seats_reason(&[seat("Claude", None)]),
+            "Executa: Claude, o 1º membro disponível na ordem do Conselho. Sem reserva: o Conselho tem um membro disponível."
+        );
     }
 }

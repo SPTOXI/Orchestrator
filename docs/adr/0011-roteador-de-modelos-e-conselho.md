@@ -1,6 +1,9 @@
 # ADR-0011 — Roteador de modelos e Conselho de IAs
 
-- **Estado:** Aceita
+- **Estado:** Aceita; o Conselho que vota no modelo (itens 5, 7 e 11) foi
+  substituído pela [ADR-0024](./0024-conselho-que-analisa-junto.md): os
+  membros analisam a demanda juntos e um deles a executa, com os outros de
+  reserva. O roteador por regras continua.
 - **Fase:** 5
 
 ## Contexto

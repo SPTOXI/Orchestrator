@@ -353,6 +353,7 @@ impl HandoffService {
                         budget: request.budget,
                         handoff_id: Some(handoff.id.clone()),
                     },
+                    reserves: Vec::new(),
                 },
                 PathBuf::from(&handoff.project_path),
                 origin.clone(),

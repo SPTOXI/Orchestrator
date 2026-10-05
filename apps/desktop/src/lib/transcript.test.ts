@@ -116,6 +116,23 @@ describe("transcript", () => {
     expect(t.items[2]).toMatchObject({ kind: "context", summary: { tokens: 420 } });
   });
 
+  it("shows a reserve taking over the session", () => {
+    const t = apply([
+      { type: "turnStarted", turnId: "t1", input: "faça" },
+      {
+        type: "failedOver",
+        turnId: "t1",
+        fromProvider: "claude",
+        fromModel: "opus",
+        toProvider: "gemini",
+        toModel: "pro",
+        reason: "sobrecarregado (http 529)",
+      },
+    ]);
+    expect(t.items.map((i) => i.kind)).toEqual(["user", "failover"]);
+    expect(t.items[1]).toMatchObject({ fromProvider: "claude", toProvider: "gemini", toModel: "pro" });
+  });
+
   it("formats usage", () => {
     expect(formatUsage(usage)).toBe("7 tokens (3 in / 4 out) · estimado");
     expect(formatUsage({ ...usage, inputTokens: 1, outputTokens: 0, estimated: false, costUsd: 0.0123 })).toBe(

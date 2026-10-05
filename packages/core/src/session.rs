@@ -216,6 +216,18 @@ pub enum SessionEvent {
         /// Provider of the session that took over.
         provider: ProviderId,
     },
+    /// The session's AI failed this turn and a reserve took over
+    /// (ADR-0024): the turn goes on, and so does the session, with
+    /// `to_provider`.
+    FailedOver {
+        turn_id: TurnId,
+        from_provider: ProviderId,
+        from_model: Option<String>,
+        to_provider: ProviderId,
+        to_model: Option<String>,
+        /// Why the one before failed.
+        reason: String,
+    },
 }
 
 impl SessionEvent {
@@ -230,7 +242,8 @@ impl SessionEvent {
             | Self::Usage { turn_id, .. }
             | Self::TurnCompleted { turn_id, .. }
             | Self::ContextAttached { turn_id, .. }
-            | Self::Compacted { turn_id, .. } => Some(turn_id),
+            | Self::Compacted { turn_id, .. }
+            | Self::FailedOver { turn_id, .. } => Some(turn_id),
             Self::Notice { turn_id, .. } => turn_id.as_ref(),
             Self::StatusChanged { .. } | Self::SubagentSpawned { .. } | Self::HandedOff { .. } => {
                 None

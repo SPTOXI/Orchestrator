@@ -430,7 +430,7 @@ export function ProvidersPanel({
               <button
                 className="button small primary"
                 disabled={!ready}
-                title="Descreva a tarefa: o roteador e o Conselho escolhem o modelo"
+                title="Descreva a demanda: os membros do Conselho analisam juntos e o 1º executa"
                 onClick={onOpenRoute}
               >
                 Nova sessão com o Conselho

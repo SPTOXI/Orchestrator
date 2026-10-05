@@ -190,6 +190,36 @@ local; os testes usam `MemorySessionStore`.
   um turno falhar.
 - **Um turno interrompido** pela queda do app perde só o próprio andamento.
 
+### Reservas (ADR-0024)
+
+`StartRequest.reserves` lista, em ordem, quem assume a sessão quando a IA
+dela falha um turno (`{ provider, model? }`). O próprio lugar da sessão e
+as repetições são ignorados. As sessões que o Conselho abre levam os outros
+membros; as demais não têm reservas.
+
+Quando um turno falha por qualquer motivo que não seja o cancelamento, o
+manager faz a troca no mesmo turno:
+
+1. abre a sessão da próxima reserva ainda não tentada neste turno
+   (`provider.start` com o modelo da reserva);
+2. passa a sessão para ela: `info.provider`, `info.model` e a sessão nativa
+   mudam, e quem falhou vai para o fim das reservas;
+3. reenvia o pedido com o contexto do projeto de novo e um texto
+   (`failover::handover_input`) com quem falhou e por quê, a conversa até
+   ali (as trocas mais recentes, até 12 mil caracteres), as ferramentas que
+   a tentativa que falhou chamou neste pedido, com o resultado, e o texto
+   que ela escreveu;
+4. grava `failedOver` no transcript e `SESSION_FAILOVER` no histórico.
+
+Se nenhuma reserva conseguir, o turno falha com
+`a IA desta sessão e as reservas falharam — <cada motivo>`. Sem reservas, o
+erro continua o de antes. As reservas ficam na coluna `spec` do banco, junto
+com o modelo pedido, e voltam ao reiniciar.
+
+`SessionManager::project_context(pasta, tarefa)` monta o contexto do projeto
+fora de uma sessão, sem apontar ferramentas. É o que os membros do Conselho
+leem antes de analisar.
+
 ### A IA trabalhando (interface)
 
 Os eventos ao vivo abaixo também alimentam um indicador único
@@ -227,6 +257,7 @@ enquanto a IA trabalha:
 | `contextAttached` | `turnId`, `summary: { tokens, budget, sections[], omitted[], handoffId }` (Fase 7) |
 | `handedOff` | `handoffId`, `fromSession`, `toSession`, `provider` — gravado nas duas sessões (Fase 7) |
 | `compacted` | `turnId`, `automatic`, `beforeTokens`, `afterTokens`, `messages`, `summary` (Fase 11) |
+| `failedOver` | `turnId`, `fromProvider`, `fromModel`, `toProvider`, `toModel`, `reason` — a reserva assumiu a sessão (ADR-0024) |
 
 ### Histórico (`AuditEvent`)
 
@@ -238,6 +269,7 @@ enquanto a IA trabalha:
 | `SESSION_CLOSED` | `sessionId`, `provider`, `turns`, `usage` |
 | `SESSION_RESUMED` | `sessionId`, `provider`, `nativeRef` |
 | `PROVIDER_SWITCHED` | `from`, `to`; `reason: "removed"` quando o ativo saiu do registro |
+| `SESSION_FAILOVER` (ADR-0024) | `sessionId`, `turnId`, `from` e `to` (`provider`, `model`), `reason`, `failures` |
 | `CONTEXT_BUILT` (Fase 7, origem `system`) | `sessionId`, `provider`, `turnId`, `projectPath`, `tokens`, `budget`, `sections`, `omitted`, `handoffId` |
 | `TOOL_CALLED` (do runtime) | como na Fase 1, com `origin = agent { agentId, sessionId, provider }` |
 

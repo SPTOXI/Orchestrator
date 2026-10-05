@@ -342,10 +342,14 @@ export const councilApi = {
   save: (settings: CouncilSettings) => callProvider<CouncilSettings>("council_save", { settings }),
   /** Router ranking only (no tokens). */
   recommend: (request: RouteRequest) => callProvider<Recommendation>("router_recommend", { request }),
-  /** Deliberates; in Full mode the Council also opens the session. */
+  /** The members analyze the demand and write the plan; in Full mode the
+   * first one also carries it out (ADR-0024). Council off: the router. */
   run: (request: DeliberateRequest) => callProvider<RunOutcome>("council_run", { request }),
+  /** Carries out an approved plan: the first member able opens the session,
+   * the others are its reserves. */
+  execute: (deliberationId: string) => callProvider<RouteStarted>("council_execute", { deliberationId }),
   history: () => callProvider<Deliberation[]>("council_history"),
-  /** Opens a session with the approved or picked model (ROUTE_DECIDED). */
+  /** Opens a session with a model the user picked (ROUTE_DECIDED). */
   startSession: (request: RouteStart) => callProvider<RouteStarted>("route_start_session", { request }),
 };
 

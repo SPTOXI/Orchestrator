@@ -18,7 +18,8 @@ fn status_id(status: SessionStatus) -> &'static str {
 }
 
 impl MemoryStore {
-    /// Inserts or updates a session.
+    /// Inserts or updates a session. Its provider can change: a reserve
+    /// takes over when the session's AI fails (ADR-0024).
     pub fn session_save(&self, session: &StoredSession) -> Result<(), String> {
         let info = &session.info;
         let conn = self.db.conn.lock();
@@ -37,7 +38,8 @@ impl MemoryStore {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
              ON CONFLICT(id) DO UPDATE SET
                 project_id = COALESCE(excluded.project_id, sessions.project_id),
-                model = excluded.model, title = excluded.title, status = excluded.status,
+                provider = excluded.provider, model = excluded.model,
+                title = excluded.title, status = excluded.status,
                 updated_at = excluded.updated_at, info = excluded.info,
                 native = excluded.native, spec = excluded.spec",
             params![
@@ -163,5 +165,58 @@ impl MemoryStore {
             ));
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use orchestrator_core::TokenUsage;
+    use serde_json::json;
+
+    #[test]
+    fn a_session_taken_over_by_a_reserve_is_saved_with_its_new_provider() {
+        let store = MemoryStore::in_memory();
+        let now = Utc::now();
+        let mut info = SessionInfo {
+            id: SessionId::new(),
+            provider: "claude".into(),
+            title: "Timeout".into(),
+            model: Some("claude-1".into()),
+            project_path: "/p/fila".into(),
+            parent_id: None,
+            status: SessionStatus::Idle,
+            native_ref: None,
+            created_at: now,
+            updated_at: now,
+            turns: 0,
+            usage: TokenUsage::default(),
+            last_error: None,
+        };
+        let save = |info: &SessionInfo| {
+            store
+                .session_save(&StoredSession {
+                    info: info.clone(),
+                    native: json!({}),
+                    spec: json!({}),
+                })
+                .unwrap()
+        };
+        save(&info);
+        info.provider = "gemini".into();
+        info.model = Some("gemini-1".into());
+        save(&info);
+        let row: (String, String) = store
+            .db
+            .conn
+            .lock()
+            .query_row(
+                "SELECT provider, model FROM sessions WHERE id = ?1",
+                [info.id.as_str()],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(row, ("gemini".to_owned(), "gemini-1".to_owned()));
     }
 }

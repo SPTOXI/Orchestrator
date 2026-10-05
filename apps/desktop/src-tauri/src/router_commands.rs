@@ -1,9 +1,10 @@
-//! Tauri commands of the model router and the Council (ADR-0011). They only
-//! forward to the `RouterService`, which records the history. The UI acts
-//! as the user; in Full mode the Council opens sessions as itself.
+//! Tauri commands of the model router and the Council (ADR-0011,
+//! ADR-0024). They only forward to the `RouterService`, which records the
+//! history. The UI acts as the user; in Full mode the Council opens
+//! sessions as itself.
 
 use crate::AppState;
-use orchestrator_core::CallOrigin;
+use orchestrator_core::{CallOrigin, DeliberationId};
 use orchestrator_providers::ProviderError;
 use orchestrator_router::{
     profiles, ActivityProfile, CouncilSettings, DeliberateRequest, Deliberation, Recommendation,
@@ -50,16 +51,30 @@ pub fn council_save(
     state.router.save_settings(settings, CallOrigin::User)
 }
 
-/// Deliberates; in Full mode the Council also opens the session on the open
-/// project and sends the task.
+/// With the Council on, its members analyze the demand on the open project
+/// and one of them writes the plan; in Full mode the first member also
+/// carries it out. With it off, the router's best model.
 #[tauri::command]
 pub async fn council_run(
     state: State<'_, AppState>,
     request: DeliberateRequest,
 ) -> Result<RunOutcome, ProviderError> {
-    state
+    Ok(state
         .router
         .run(&state.sessions, &request, state.runtime.base_dir())
+        .await)
+}
+
+/// The user approves a plan (mode Sugerir): the first Council member able
+/// to open the session carries it out, the others are its reserves.
+#[tauri::command]
+pub async fn council_execute(
+    state: State<'_, AppState>,
+    deliberation_id: DeliberationId,
+) -> Result<RouteStarted, ProviderError> {
+    state
+        .router
+        .execute(&state.sessions, &deliberation_id, CallOrigin::User)
         .await
 }
 
