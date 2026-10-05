@@ -103,6 +103,11 @@ por uma atualização.
 
 ### Uma vez: as chaves de atualização
 
+> **Pendente:** as chaves ainda não foram cadastradas
+> ([issue #4](https://github.com/SPTOXI/Orchestrator/issues/4)). Até lá,
+> os instaladores saem sem atualização automática, e quem instalar uma
+> dessas versões (como a 0.1.0) atualiza para a seguinte à mão, uma vez.
+
 1. Gere o par de chaves (guarde a senha):
 
    ```bash
