@@ -337,7 +337,7 @@ impl ProjectTools {
                             && s.status != SessionStatus::Closed
                     })
                     .collect();
-                working.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+                working.sort_by_key(|s| std::cmp::Reverse(s.updated_at));
                 let working: Vec<Value> = working
                     .into_iter()
                     .take(SESSIONS)
@@ -384,7 +384,7 @@ impl ProjectTools {
             .iter()
             .filter(|s| same_path(&s.project_path, &target.path) && s.parent_id.is_none())
             .collect();
-        of_target.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        of_target.sort_by_key(|s| std::cmp::Reverse(s.updated_at));
         if !fresh {
             if let Some(open) = of_target
                 .iter()
