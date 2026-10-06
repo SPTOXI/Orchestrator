@@ -169,6 +169,8 @@ pub struct LocalView {
     pub status: LocalStatus,
     /// The connection the sessions use, when it exists.
     pub connection: Option<String>,
+    /// It is on: its models show in AI Providers and the sessions.
+    pub connection_enabled: bool,
     /// The connection the app made for Ollama before ADR-0025 is still
     /// there.
     pub legacy_ollama: bool,
@@ -178,11 +180,11 @@ pub struct LocalView {
 #[tauri::command]
 pub fn local_status(state: State<'_, AppState>) -> LocalView {
     let connections = state.connections.as_ref();
+    let connection = connections.and_then(|m| m.get(LOCAL_CONNECTION));
     LocalView {
         status: state.local.status(),
-        connection: connections
-            .and_then(|m| m.get(LOCAL_CONNECTION))
-            .map(|c| c.id),
+        connection_enabled: connection.as_ref().is_some_and(|c| c.enabled),
+        connection: connection.map(|c| c.id),
         legacy_ollama: connections.is_some_and(|m| m.get(LEGACY_OLLAMA).is_some()),
         ollama: state.local.ollama_models(),
     }
@@ -300,6 +302,34 @@ pub async fn local_remove_legacy(state: State<'_, AppState>) -> Result<(), Strin
     manager(&state)?
         .remove(LEGACY_OLLAMA, CallOrigin::User)
         .await
+        .map_err(|e| e.message)
+}
+
+/// Makes sure the local connection exists and is on, so the models show
+/// in AI Providers and the sessions.
+#[tauri::command]
+pub async fn local_connection_activate(state: State<'_, AppState>) -> Result<(), String> {
+    sync_connection(&state).await?;
+    let manager = manager(&state)?;
+    let Some(mut connection) = manager.get(LOCAL_CONNECTION) else {
+        return Err("adicione um modelo local primeiro".into());
+    };
+    if connection.enabled {
+        return Ok(());
+    }
+    connection.enabled = true;
+    manager
+        .save(
+            SaveRequest {
+                connection,
+                api_key: None,
+                clear_key: false,
+                previous_id: None,
+            },
+            CallOrigin::User,
+        )
+        .await
+        .map(|_| ())
         .map_err(|e| e.message)
 }
 

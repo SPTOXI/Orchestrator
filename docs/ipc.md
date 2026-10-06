@@ -297,6 +297,7 @@ Referência: [`docs/settings.md`](./settings.md).
 | `local_stop` | — | desliga o motor |
 | `local_log` | — | últimas 200 linhas do motor |
 | `local_remove_legacy` | — | remove a conexão `ollama` criada antes da ADR-0025 |
+| `local_connection_activate` | — | cria a conexão **Modelos locais**, se faltar, e a ativa: os modelos aparecem em AI Providers e nas sessões |
 
 ### Atualizações (Fase 12, ADR-0019)
 

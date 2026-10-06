@@ -1064,6 +1064,10 @@ export function App() {
                                     void connections.refresh();
                                     editConnection(id);
                                   }}
+                                  onChanged={() => {
+                                    void providers.refresh();
+                                    void connections.refresh();
+                                  }}
                                 />
                               </SettingsPage>
                             );

@@ -15,6 +15,7 @@ import {
   toJsonText,
 } from "../lib/connections";
 import { formatDuration } from "../lib/format";
+import { localEvents } from "../lib/events";
 import { DraftInput } from "./DraftInput";
 import { connectionApi, errorMessage } from "../lib/runtime";
 import { formatUsage } from "../lib/transcript";
@@ -50,6 +51,42 @@ function tagList(text: string): string[] {
     .split(",")
     .map((t) => t.trim())
     .filter(Boolean);
+}
+
+/** While a test runs: what it waits for, and for how long. A local model
+ * can take a minute or more to load, and the test would look stuck. */
+function TestProgress({ local, name }: { local: boolean; name: string }) {
+  const [seconds, setSeconds] = useState(0);
+  const [stage, setStage] = useState<string | null>(null);
+  useEffect(() => {
+    const started = Date.now();
+    const timer = setInterval(() => setSeconds(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    if (!local) return;
+    return localEvents.subscribe((event) => {
+      if (event.type !== "server") return;
+      if (event.kind === "starting") setStage(`Ligando o motor e carregando ${event.model} na memória…`);
+      else if (event.kind === "ready")
+        setStage(`${event.model} carregado em ${Math.round(event.ms / 1000)} s. Esperando a resposta do teste…`);
+      else if (event.kind === "failed") setStage(`O motor não carregou ${event.model}: ${event.error}`);
+    });
+  }, [local]);
+  const waiting = local
+    ? (stage ?? "Preparando o motor local…")
+    : `Esperando a resposta de ${name}…`;
+  return (
+    <div className="inline-notice">
+      {waiting} · {seconds} s
+      {local && seconds >= 20 && (
+        <div className="meta">
+          Nada travou: na primeira vez o modelo é carregado na memória, e no processador (sem placa de vídeo) um
+          modelo de 8B pode levar alguns minutos para responder.
+        </div>
+      )}
+    </div>
+  );
 }
 
 function TestResult({ report }: { report: TestReport }) {
@@ -313,6 +350,7 @@ export function ConnectionEditor({ ready, active, connectionId, view, onSaved, o
       )}
       {error && <div className="inline-error">{error}</div>}
       {notice && <div className="inline-notice ok">{notice}</div>}
+      {busy === "test" && <TestProgress local={draft.local === true} name={draft.name} />}
       {report && <TestResult report={report} />}
 
       <div className="profile connection-form">

@@ -153,7 +153,8 @@ llama.cpp: nada para instalar à parte. Decisão:
    pedir e avisa abaixo de 16.384, porque as instruções e ferramentas do
    Orchestrator ocupam cerca de 10 mil tokens.
 4. **Nas sessões:** a conexão **Modelos locais** é criada e mantida
-   sozinha. Quando uma sessão usa um modelo local, o motor liga com ele,
+   sozinha e aparece em AI Providers assim que há um modelo, sem
+   reiniciar. Se ela estiver desativada, a tela mostra **Ativar**. Quando uma sessão usa um modelo local, o motor liga com ele,
    espera carregar (até 10 minutos) e desliga depois de um tempo parado
    (padrão 10 minutos). Um modelo por vez: trocar de modelo espera as
    chamadas em andamento.

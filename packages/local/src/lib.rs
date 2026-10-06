@@ -785,13 +785,23 @@ fn upgrade_models(root: &Path, models: &mut ModelsFile, warnings: &mut Vec<Strin
     }
 }
 
+pub const LOCAL_CONNECTION_NAME: &str = "Modelos locais";
+
 /// The local connection for `models`.
+///
+/// `existing` keeps the user's choices: the default model, the models
+/// turned off, the fallback, the connection turned off. A connection that
+/// held the id before but is not this one (made by hand before ADR-0025,
+/// for Ollama, say) is replaced. One that 0.1.2 to 0.1.4 took over that
+/// way kept its old name, settings and on/off state: it starts again from
+/// the defaults, on, and keeps only its choice of models.
 pub fn local_connection(models: &[LocalModel], existing: Option<&Connection>) -> Connection {
-    let mut conn = existing.cloned().unwrap_or_else(|| Connection {
+    let fresh = Connection {
         id: LOCAL_CONNECTION.into(),
-        name: "Modelos locais".into(),
+        name: LOCAL_CONNECTION_NAME.into(),
         kind: ApiKind::Openai,
-        base_url: String::new(),
+        // Never used: the engine gives the address on each call.
+        base_url: "http://127.0.0.1/v1".into(),
         credential: Credential {
             source: CredentialSource::None,
             env_var: None,
@@ -811,10 +821,19 @@ pub fn local_connection(models: &[LocalModel], existing: Option<&Connection>) ->
         first_response_secs: Some(600),
         fallback: None,
         local: true,
-    });
-    // Never used: the engine gives the address on each call.
-    conn.base_url = "http://127.0.0.1/v1".into();
-    conn.local = true;
+    };
+    let mut conn = match existing.filter(|c| c.local) {
+        Some(ours) if ours.name == LOCAL_CONNECTION_NAME => Connection {
+            base_url: fresh.base_url.clone(),
+            ..ours.clone()
+        },
+        Some(taken_over) => Connection {
+            models: taken_over.models.clone(),
+            default_model: taken_over.default_model.clone(),
+            ..fresh
+        },
+        None => fresh,
+    };
     let previous = std::mem::take(&mut conn.models);
     conn.models = models
         .iter()

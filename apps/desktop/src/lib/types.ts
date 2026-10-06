@@ -1919,6 +1919,8 @@ export interface LocalView {
   warnings: string[];
   /** The connection the sessions use, when it exists. */
   connection: string | null;
+  /** It is on: the models show in AI Providers and the sessions. */
+  connectionEnabled: boolean;
   /** The connection the app made for Ollama before ADR-0025 is still there. */
   legacyOllama: boolean;
   ollama: OllamaEntry[];

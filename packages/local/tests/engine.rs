@@ -573,6 +573,55 @@ async fn models_from_an_older_version_get_their_tools_checked_again() {
     assert_eq!(tools(&open()), expected);
 }
 
+#[test]
+fn the_local_connection_takes_its_id_back() {
+    use orchestrator_local::{local_connection, LOCAL_CONNECTION_NAME};
+    use orchestrator_provider_api::ApiKind;
+    let model: orchestrator_local::store::LocalModel = serde_json::from_value(json!({
+        "id": "qwen3-8b", "name": "Qwen3 8B", "files": [], "size": 1, "sha256": null,
+        "source": {"kind": "file"}, "context": 16384, "tools": true,
+        "addedAt": "2026-10-06T00:00:00Z"
+    }))
+    .unwrap();
+    let models = [model];
+    let ours = local_connection(&models, None);
+    assert!(ours.enabled && ours.local);
+    assert_eq!(ours.name, LOCAL_CONNECTION_NAME);
+
+    // Made by hand before ADR-0025 with the same id, for Ollama: replaced.
+    let mut by_hand = ours.clone();
+    by_hand.local = false;
+    by_hand.name = "api local".into();
+    by_hand.kind = ApiKind::Generic;
+    by_hand.base_url = "http://127.0.0.1:11434".into();
+    by_hand.enabled = false;
+    by_hand.first_response_secs = Some(30);
+    by_hand.tool_mode = Some(ToolMode::Prompt);
+    let conn = local_connection(&models, Some(&by_hand));
+    assert_eq!(conn, ours);
+
+    // Taken over by 0.1.2 to 0.1.4: the old name, settings and off state
+    // go; the choice of models stays.
+    let mut taken_over = by_hand.clone();
+    taken_over.local = true;
+    taken_over.kind = ApiKind::Openai;
+    taken_over.default_model = Some("qwen3-8b".into());
+    taken_over.models = ours.models.clone();
+    taken_over.models[0].enabled = false;
+    let conn = local_connection(&models, Some(&taken_over));
+    assert_eq!(conn.name, LOCAL_CONNECTION_NAME);
+    assert!(conn.enabled);
+    assert_eq!(conn.first_response_secs, Some(600));
+    assert_eq!(conn.tool_mode, Some(ToolMode::Native));
+    assert_eq!(conn.default_model.as_deref(), Some("qwen3-8b"));
+    assert!(!conn.models[0].enabled);
+
+    // Ours, turned off by the user: stays off.
+    let mut off = ours.clone();
+    off.enabled = false;
+    assert!(!local_connection(&models, Some(&off)).enabled);
+}
+
 #[tokio::test]
 async fn downloads_continue_and_are_checked() {
     let dir = tempfile::tempdir().unwrap();

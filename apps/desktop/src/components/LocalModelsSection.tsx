@@ -27,6 +27,8 @@ interface Props {
   active: boolean;
   /** Opens the connection with the local models. */
   onOpenConnection: (id: string) => void;
+  /** Models or the connection changed: AI Providers lists them again. */
+  onChanged?: () => void;
 }
 
 type Progress = Record<string, { done: number; total: number | null }>;
@@ -128,7 +130,7 @@ function ModelRow({
   );
 }
 
-export function LocalModelsSection({ ready, active, onOpenConnection }: Props) {
+export function LocalModelsSection({ ready, active, onOpenConnection, onChanged }: Props) {
   const [view, setView] = useState<LocalView | null>(null);
   /** Reading the state failed. */
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -190,6 +192,7 @@ export function LocalModelsSection({ ready, active, onOpenConnection }: Props) {
       await action();
       if (done) setNotice(done);
       await load();
+      onChanged?.();
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -209,7 +212,10 @@ export function LocalModelsSection({ ready, active, onOpenConnection }: Props) {
         const message = errorMessage(e);
         if (message !== "download cancelado") setError(message);
       })
-      .finally(() => void load());
+      .finally(() => {
+        void load();
+        onChanged?.();
+      });
   };
 
   const saveSettings = (patch: Partial<LocalSettings>) => {
@@ -415,11 +421,26 @@ export function LocalModelsSection({ ready, active, onOpenConnection }: Props) {
         </div>
         {view.models.length === 0 ? (
           <div className="meta">Nenhum modelo ainda. Baixe um abaixo, importe do Ollama ou use um arquivo.</div>
-        ) : (
+        ) : view.connection && view.connectionEnabled ? (
           <p className="meta">
             Aparecem em AI Providers como <strong>Modelos locais</strong> e no Conselho. O motor liga o modelo quando
             uma sessão pede, com o contexto escolhido aqui, e desliga quando fica parado.
           </p>
+        ) : (
+          <div className="inline-notice">
+            {view.connection
+              ? "A conexão Modelos locais está desativada: os modelos não aparecem em AI Providers nem nas sessões."
+              : "Os modelos ainda não aparecem em AI Providers."}{" "}
+            <button
+              className="button small primary"
+              disabled={busy}
+              onClick={() =>
+                void run(() => localApi.activateConnection(), "Pronto: os modelos aparecem em AI Providers como Modelos locais.")
+              }
+            >
+              Ativar
+            </button>
+          </div>
         )}
         <ul className="list plain">
           {view.models.map((model) => (
