@@ -16,7 +16,11 @@ import type {
   CliStatus,
   McpServerConfig,
   McpServerView,
-  OfflineView,
+  HfFile,
+  LocalEngineInfo,
+  LocalModel,
+  LocalSettings,
+  LocalView,
   GuidanceView,
   SkillDoc,
   SkillInfo,
@@ -438,13 +442,27 @@ export const secretsApi = {
   remove: (name: string) => invoke<SecretsView>("secret_delete", { name }),
 };
 
-export const offlineApi = {
-  status: () => invoke<OfflineView>("offline_status"),
-  start: () => invoke<void>("offline_start"),
-  pull: (model: string) => invoke<void>("offline_pull", { model }),
-  cancel: (model: string) => invoke<void>("offline_cancel", { model }),
-  remove: (model: string) => invoke<void>("offline_delete", { model }),
-  use: () => invoke<string>("offline_use"),
+/** Local models with the Orchestrator's own engine (ADR-0025). */
+export const localApi = {
+  status: () => invoke<LocalView>("local_status"),
+  installEngine: () => invoke<LocalEngineInfo>("local_engine_install"),
+  latestEngine: () => invoke<string>("local_engine_latest"),
+  removeEngine: () => invoke<void>("local_engine_remove"),
+  /** Cancels a download: "engine", a catalog id or "repo/file". */
+  cancel: (key: string) => invoke<void>("local_cancel", { key }),
+  downloadCatalog: (entry: string) => invoke<LocalModel>("local_download_catalog", { entry }),
+  hfFiles: (repo: string) => invoke<HfFile[]>("local_hf_files", { repo }),
+  downloadHf: (repo: string, file: string) => invoke<LocalModel>("local_download_hf", { repo, file }),
+  importOllama: (name: string) => invoke<LocalModel>("local_import_ollama", { name }),
+  addFile: (path: string) => invoke<LocalModel>("local_add_file", { path }),
+  pickFile: () => invoke<string | null>("pick_model_file"),
+  removeModel: (id: string) => invoke<void>("local_remove_model", { id }),
+  setContext: (id: string, context: number) => invoke<LocalModel>("local_set_context", { id, context }),
+  saveSettings: (settings: LocalSettings) => invoke<LocalSettings>("local_settings_save", { settings }),
+  stop: () => invoke<void>("local_stop"),
+  log: () => invoke<string[]>("local_log"),
+  /** Removes the connection the app made for Ollama before ADR-0025. */
+  removeLegacy: () => invoke<void>("local_remove_legacy"),
 };
 
 export const mcpApi = {

@@ -344,6 +344,10 @@ pub struct Connection {
     /// rate limited or not answering.
     #[serde(default)]
     pub fallback: Option<Fallback>,
+    /// Served by the Orchestrator's own engine (ADR-0025): the address
+    /// comes from the engine on each call, not from `base_url`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub local: bool,
 }
 
 /// Another connection to ask when this one cannot serve a request.

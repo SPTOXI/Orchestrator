@@ -37,8 +37,8 @@ interface Props {
   activity?: Record<string, SessionActivity>;
   /** Tool calls waiting for the user's authorization. */
   waitingCalls?: ReadonlySet<string>;
-  /** Opens Configurações: subscriptions through CLIs or offline models. */
-  onOpenSettings?: (section: "clis" | "offline") => void;
+  /** Opens Configurações: subscriptions through CLIs or local models. */
+  onOpenSettings?: (section: "clis" | "local") => void;
 }
 
 const CAPABILITY_LABELS: Array<[keyof ProviderCapabilities, string]> = [
@@ -340,7 +340,7 @@ export function ProvidersPanel({
             <p className="meta">
               Três jeitos de ter IAs aqui: uma <strong>API</strong> (OpenAI e compatíveis, Anthropic, Gemini, DeepSeek,
               OpenRouter… ou qualquer outra por perfil genérico), a sua <strong>assinatura</strong> (Claude, ChatGPT,
-              conta Google) pela CLI oficial, ou <strong>modelos offline</strong> no seu computador.
+              conta Google) pela CLI oficial, ou <strong>modelos locais</strong> no seu computador.
             </p>
             <button className="button primary" disabled={!ready} onClick={() => onEditConnection(null)}>
               <PlusIcon /> Adicionar API
@@ -350,8 +350,8 @@ export function ProvidersPanel({
                 <button className="button small" disabled={!ready} onClick={() => onOpenSettings("clis")}>
                   Usar uma assinatura
                 </button>
-                <button className="button small" disabled={!ready} onClick={() => onOpenSettings("offline")}>
-                  Modelos offline
+                <button className="button small" disabled={!ready} onClick={() => onOpenSettings("local")}>
+                  Modelos locais
                 </button>
               </div>
             )}
@@ -381,8 +381,8 @@ export function ProvidersPanel({
                   <button className="link" disabled={!ready} onClick={() => onOpenSettings("clis")}>
                     + Assinatura (CLI)
                   </button>
-                  <button className="link" disabled={!ready} onClick={() => onOpenSettings("offline")}>
-                    + Offline
+                  <button className="link" disabled={!ready} onClick={() => onOpenSettings("local")}>
+                    + Local
                   </button>
                 </>
               )}

@@ -3422,7 +3422,7 @@ textarea.skill-body {
   margin-bottom: 6px;
 }
 
-.offline-status {
+.local-status {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -3435,24 +3435,34 @@ textarea.skill-body {
   font-size: 13px;
 }
 
-.offline-status > span:nth-child(2) {
+.local-status > span:nth-child(2) {
   flex: 1;
   min-width: 0;
 }
 
-.offline-install {
-  display: flex;
-  flex-direction: column;
+.local-context {
   gap: 6px;
+  margin-top: 4px;
+  flex-wrap: wrap;
 }
 
-.offline-section progress {
+.local-context input.num {
+  width: 96px;
+}
+
+.local-log {
+  max-height: 220px;
+  overflow: auto;
+  font-size: 11px;
+}
+
+.local-section progress {
   width: 160px;
   height: 8px;
   vertical-align: middle;
 }
 
-.offline-section .row input.grow {
+.local-section .row input.grow {
   flex: 1;
   min-width: 0;
 }

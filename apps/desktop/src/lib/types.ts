@@ -105,7 +105,12 @@ export type EventKind =
   | "APP_UPDATED"
   | "PROJECT_LINKED"
   | "PROJECT_ASKED"
-  | "SESSION_FAILOVER";
+  | "SESSION_FAILOVER"
+  | "LOCAL_ENGINE_INSTALLED"
+  | "LOCAL_ENGINE_REMOVED"
+  | "LOCAL_MODEL_ADDED"
+  | "LOCAL_MODEL_REMOVED"
+  | "LOCAL_MODEL_LOADED";
 
 export interface AuditEvent {
   id: string;
@@ -727,6 +732,9 @@ export interface Connection {
   firstResponseSecs?: number | null;
   /** Connection that answers when this one is overloaded or not responding. */
   fallback?: { connection: string; model: string | null } | null;
+  /** Served by the Orchestrator's own engine (ADR-0025): the address comes
+   * from the engine, the models from Configurações → Modelos locais. */
+  local?: boolean;
 }
 
 export interface KeyStatus {
@@ -1802,60 +1810,137 @@ export interface GuidanceView {
   projectPath: string | null;
 }
 
-// ---- Offline models (ADR-0021) ------------------------------------------
+// ---- Local models: the Orchestrator's own engine (ADR-0025) -------------
 
-export interface OllamaStatus {
-  url: string;
-  running: boolean;
-  version: string | null;
-  program: string | null;
-  error: string | null;
+export type LocalBackend = "cpu" | "vulkan" | "cuda" | "metal";
+
+export interface LocalSystem {
+  os: "windows" | "macos" | "linux" | "other";
+  arch: "x64" | "arm64" | "other";
+  nvidia: boolean;
+  vulkan: boolean;
+  memoryBytes: number | null;
 }
+
+export interface LocalEngineInfo {
+  /** llama.cpp release ("b9000"). */
+  tag: string;
+  backend: LocalBackend;
+  assets: string[];
+  dir: string;
+  server: string;
+  libraryDirs: string[];
+  version: string | null;
+  installedAt: string;
+}
+
+export type LocalModelSource =
+  | { kind: "catalog"; entry: string; repo: string; file: string }
+  | { kind: "huggingFace"; repo: string; file: string }
+  | { kind: "ollama"; name: string }
+  | { kind: "file" };
 
 export interface LocalModel {
+  id: string;
   name: string;
-  sizeBytes: number;
-  family: string | null;
-  parameterSize: string | null;
+  files: string[];
+  size: number;
+  sha256: string | null;
+  source: LocalModelSource;
+  /** Context it runs with (tokens). */
+  context: number;
+  trainedContext: number | null;
+  architecture: string | null;
+  sizeLabel: string | null;
   quantization: string | null;
-  modifiedAt: string | null;
-  tools: boolean | null;
-  vision: boolean | null;
-  contextWindow: number | null;
+  /** The chat template handles tools (native tool calls). */
+  tools: boolean;
+  chatTemplate: boolean;
+  kvBytesPerToken: number | null;
+  addedAt: string;
 }
 
-export interface CatalogModel {
-  name: string;
+export type LocalGpuMode = "auto" | "off";
+
+export interface LocalSettings {
+  /** null = chosen by the computer. */
+  backend: LocalBackend | null;
+  gpu: LocalGpuMode;
+  /** 0 = never turned off. */
+  idleMinutes: number;
+}
+
+export type LocalServerStatus =
+  | { state: "stopped" }
+  | { state: "starting"; model: string }
+  | { state: "ready"; model: string; port: number; context: number }
+  | { state: "failed"; model: string; error: string };
+
+export interface LocalCatalogEntry {
+  id: string;
   label: string;
+  repo: string;
+  quant: string;
   sizeGb: number;
   memoryGb: number;
   tools: boolean;
   note: string;
+  /** Id of the model downloaded from it. */
+  installed: string | null;
 }
 
-export interface OfflineView {
-  status: OllamaStatus;
+export interface OllamaEntry {
+  /** As Ollama shows it: "phi4-mini:latest". */
+  name: string;
+  blob: string;
+  size: number;
+  sha256: string;
+  imported: string | null;
+}
+
+export interface HfFile {
+  path: string;
+  size: number;
+  sha256: string | null;
+}
+
+export interface LocalView {
+  system: LocalSystem;
+  engine: LocalEngineInfo | null;
+  autoBackend: LocalBackend | null;
+  backends: LocalBackend[];
+  settings: LocalSettings;
+  server: LocalServerStatus;
   models: LocalModel[];
-  catalog: CatalogModel[];
-  connection: string | null;
+  catalog: LocalCatalogEntry[];
+  /** Downloads in progress, by key ("engine", a catalog id, "repo/file"). */
   downloading: string[];
-  installCommand: string | null;
-  downloadPage: string;
-  modelsError: string | null;
+  defaultContext: number;
+  warnings: string[];
+  /** The connection the sessions use, when it exists. */
+  connection: string | null;
+  /** The connection the app made for Ollama before ADR-0025 is still there. */
+  legacyOllama: boolean;
+  ollama: OllamaEntry[];
 }
 
-export interface PullProgress {
-  model: string;
-  status: string;
-  completed: number | null;
-  total: number | null;
-}
+export type LocalServerEvent =
+  | { kind: "starting"; model: string }
+  | { kind: "ready"; model: string; context: number; gpu: LocalGpuMode; ms: number }
+  | { kind: "stopped"; model: string; reason: string }
+  | { kind: "failed"; model: string; error: string };
 
-/** Pushed on `runtime://offline`. */
-export type OfflineEvent =
-  | ({ type: "progress" } & PullProgress)
-  | { type: "done"; model: string }
-  | { type: "failed"; model: string; error: string };
+/** Pushed on `runtime://local`. */
+export type LocalEvent =
+  | { type: "progress"; key: string; done: number; total: number | null }
+  | { type: "downloadDone"; key: string }
+  | { type: "downloadFailed"; key: string; error: string }
+  | { type: "engineInstalled"; tag: string; backend: LocalBackend; previous: string | null }
+  | { type: "engineRemoved"; tag: string; backend: LocalBackend }
+  | { type: "modelAdded"; id: string; source: string; size: number; sha256: string | null }
+  | { type: "modelRemoved"; id: string }
+  | { type: "modelsChanged" }
+  | ({ type: "server" } & LocalServerEvent);
 
 // ---- MCP servers (ADR-0021) ---------------------------------------------
 

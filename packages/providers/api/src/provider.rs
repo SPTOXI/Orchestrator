@@ -8,6 +8,7 @@ use crate::compaction::{self, Compact};
 use crate::config::{ApiKind, Connection, CredentialSource, ModelEntry, ToolMode};
 use crate::conversation::{Conversation, Message, Part, Role, ToolResultPart};
 use crate::http::{FrameReader, HttpClient, Retry, RetryKind};
+use crate::local::{LocalLease, SharedLocal};
 use crate::protocol::{protocol, Delta, Reply, Request, Stop};
 use crate::secrets::SecretStore;
 use crate::tools::{
@@ -32,6 +33,7 @@ use tokio_util::sync::CancellationToken;
 
 const INSPECT_TIMEOUT: Duration = Duration::from_secs(15);
 const TEST_TIMEOUT: Duration = Duration::from_secs(90);
+const LOCAL_TEST_TIMEOUT: Duration = Duration::from_secs(660);
 /// Below this, a reply cut to what the credit pays is not worth asking for.
 const MIN_AFFORDABLE_OUTPUT: u32 = 1024;
 /// How long a limit learned from a 402 holds: the credit may have changed.
@@ -57,6 +59,25 @@ pub struct ApiProvider {
     /// Output limits learned from 402s, by model: what the credit paid for.
     output_caps: Mutex<HashMap<String, (u32, Instant)>>,
     fallbacks: Option<FallbackLookup>,
+    /// The engine of local connections (ADR-0025).
+    local: Option<SharedLocal>,
+}
+
+/// A local model whose context is too small for the request (ADR-0025):
+/// llama.cpp says so in English; the user needs to know where to change it.
+fn local_hint(conn: &Connection, error: ProviderError) -> ProviderError {
+    if conn.local && error.message.contains("exceeds the available context size") {
+        ProviderError::new(
+            error.kind,
+            format!(
+                "{} — o contexto deste modelo local é pequeno para as instruções, as ferramentas e a conversa: \
+                 aumente-o em Configurações → Modelos locais",
+                error.message
+            ),
+        )
+    } else {
+        error
+    }
 }
 
 /// Result of "Testar conexão".
@@ -86,7 +107,36 @@ impl ApiProvider {
             conversations: ConversationStore::default(),
             output_caps: Mutex::default(),
             fallbacks: None,
+            local: None,
         }
+    }
+
+    pub(crate) fn with_local(mut self, local: SharedLocal) -> Self {
+        self.local = Some(local);
+        self
+    }
+
+    /// For a local connection (ADR-0025): the engine's server for `model`,
+    /// and the connection pointed at it. `None` for any other connection.
+    async fn local_endpoint(
+        &self,
+        model: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Option<(Connection, LocalLease)>, ProviderError> {
+        if !self.conn.local {
+            return Ok(None);
+        }
+        let engine = self
+            .local
+            .as_ref()
+            .and_then(|l| l.read().clone())
+            .ok_or_else(|| {
+                ProviderError::unavailable("o motor local não está disponível neste app")
+            })?;
+        let lease = engine.acquire(model, cancel).await?;
+        let mut conn = self.conn.clone();
+        conn.base_url = lease.base_url.clone();
+        Ok(Some((conn, lease)))
     }
 
     pub(crate) fn with_fallbacks(mut self, lookup: FallbackLookup) -> Self {
@@ -221,7 +271,10 @@ impl ApiProvider {
                 model: model_id.clone(),
             },
         });
-        let other = ApiProvider::new(conn.clone(), self.secrets.clone(), self.client.clone());
+        let mut other = ApiProvider::new(conn.clone(), self.secrets.clone(), self.client.clone());
+        if let Some(local) = &self.local {
+            other = other.with_local(local.clone());
+        }
         let model = other.model_entry(&model_id);
         // What one protocol keeps of its replies means nothing to another.
         let same_kind = conn.kind == self.conn.kind;
@@ -278,12 +331,19 @@ impl ApiProvider {
         cancel: &CancellationToken,
     ) -> Result<Reply, ProviderError> {
         let key = self.key().await?;
-        let protocol = protocol(self.conn.kind);
-        let stream = protocol.streams(&self.conn);
+        // A local connection: the engine's server, kept loaded until this
+        // call ends (`_lease`).
+        let local = self.local_endpoint(&call.model.id, cancel).await?;
+        let (conn, _lease) = match &local {
+            Some((conn, lease)) => (conn, Some(lease)),
+            None => (&self.conn, None),
+        };
+        let protocol = protocol(conn.kind);
+        let stream = protocol.streams(conn);
         let mut model = self.capped(call.model);
         let request = |model: &ModelEntry| {
             protocol.request(&Request {
-                conn: &self.conn,
+                conn,
                 key: key.as_deref(),
                 model,
                 system: call.system,
@@ -309,7 +369,7 @@ impl ApiProvider {
             // credit left (OpenRouter asks for that when no limit is set):
             // ask once more for what it pays, and remember it.
             let Some(credit) = crate::http::affordable_output_tokens(&error) else {
-                return Err(error);
+                return Err(local_hint(conn, error));
             };
             let affordable = credit.tokens;
             let tokens = (u64::from(affordable) * 9 / 10) as u32;
@@ -341,7 +401,7 @@ impl ApiProvider {
             });
         };
         let req = Request {
-            conn: &self.conn,
+            conn,
             key: key.as_deref(),
             model: &model,
             system: call.system,
@@ -351,7 +411,7 @@ impl ApiProvider {
             cache_key: call.cache_key,
         };
         let mut decoder = protocol.decoder(&req);
-        let mut reader = FrameReader::new(response, protocol.stream_format(&self.conn, stream))
+        let mut reader = FrameReader::new(response, protocol.stream_format(conn, stream))
             .with_first_frame_limit(first_response);
         while let Some(frame) = reader.next(cancel).await? {
             for delta in decoder.feed(&frame)? {
@@ -659,6 +719,10 @@ impl ApiProvider {
 
     /// Models available to this account (not saved).
     pub async fn list_models(&self) -> Result<Vec<ModelEntry>, ProviderError> {
+        // The app keeps the local connection's models (ADR-0025).
+        if self.conn.local {
+            return Ok(self.conn.models.clone());
+        }
         let key = self.key().await?;
         let protocol = protocol(self.conn.kind);
         let mut call = protocol
@@ -698,12 +762,18 @@ impl ApiProvider {
             tools: "notTested".into(),
             ..Default::default()
         };
-        let outcome = tokio::time::timeout(TEST_TIMEOUT, self.test_steps(model, &mut report)).await;
+        // A local model may first have to load (ADR-0025).
+        let limit = if self.conn.local {
+            LOCAL_TEST_TIMEOUT
+        } else {
+            TEST_TIMEOUT
+        };
+        let outcome = tokio::time::timeout(limit, self.test_steps(model, &mut report)).await;
         report.latency_ms = started.elapsed().as_millis() as u64;
         match outcome {
             Ok(Ok(())) => report.ok = true,
             Ok(Err(err)) => report.error = Some(err.message),
-            Err(_) => report.error = Some(format!("no answer within {} s", TEST_TIMEOUT.as_secs())),
+            Err(_) => report.error = Some(format!("no answer within {} s", limit.as_secs())),
         }
         report
     }
@@ -963,6 +1033,25 @@ impl AIProvider for ApiProvider {
                 detail: Some(detail),
                 checked_at: Utc::now(),
             };
+        if self.conn.local {
+            let ready = self
+                .local
+                .as_ref()
+                .and_then(|l| l.read().clone())
+                .ok_or_else(|| "o motor local não está disponível neste app".to_owned())
+                .and_then(|engine| engine.ready());
+            return match ready {
+                Ok(()) => status(
+                    true,
+                    None,
+                    format!(
+                        "{} modelos locais; o motor liga quando uma sessão pede",
+                        self.conn.enabled_models().count()
+                    ),
+                ),
+                Err(why) => status(false, None, why),
+            };
+        }
         let key = match self.key().await {
             Ok(key) => key,
             Err(err) => return status(false, Some(false), err.message),

@@ -1,4 +1,4 @@
-// "Run this in a terminal" from anywhere in the UI (installing Ollama,
+// "Run this in a terminal" from anywhere in the UI (installing a CLI,
 // logging into a CLI…): the terminal panel opens a new terminal, types the
 // command and shows it; the user sees everything and can answer prompts.
 

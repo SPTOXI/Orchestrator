@@ -79,6 +79,11 @@ const KIND_FILTERS: Array<{ value: EventKind | ""; label: string }> = [
   { value: "PROJECT_LINKED", label: "PROJECT_LINKED" },
   { value: "PROJECT_ASKED", label: "PROJECT_ASKED" },
   { value: "SESSION_FAILOVER", label: "SESSION_FAILOVER" },
+  { value: "LOCAL_ENGINE_INSTALLED", label: "LOCAL_ENGINE_INSTALLED" },
+  { value: "LOCAL_ENGINE_REMOVED", label: "LOCAL_ENGINE_REMOVED" },
+  { value: "LOCAL_MODEL_ADDED", label: "LOCAL_MODEL_ADDED" },
+  { value: "LOCAL_MODEL_REMOVED", label: "LOCAL_MODEL_REMOVED" },
+  { value: "LOCAL_MODEL_LOADED", label: "LOCAL_MODEL_LOADED" },
 ];
 
 const PAGE = 500;

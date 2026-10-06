@@ -280,11 +280,23 @@ Referência: [`docs/settings.md`](./settings.md).
 | `mcp_set_tool` | `id`, `tool`, `enabled` | `ServerView[]` |
 | `clis_list` | — | `CliStatus[]` (instalado, versão, login, comandos de instalar e entrar, opções) |
 | `cli_save` | `kind`, `settings` | `CliStatus[]`; liga ou desliga o provider |
-| `offline_status` | — | `OfflineView` (Ollama, modelos, catálogo, conexão, downloads, comando de instalação) |
-| `offline_start` | — | inicia `ollama serve` |
-| `offline_pull` | `model` | termina com o download; progresso por `runtime://offline` |
-| `offline_cancel` / `offline_delete` | `model` | — |
-| `offline_use` | — | id da conexão `ollama`, criada ou atualizada |
+| `local_status` | — | `LocalView`: sistema, motor, pacote automático, configurações, servidor, modelos, catálogo, downloads, contexto padrão, conexão, conexão antiga do Ollama e os modelos dele (ADR-0025) |
+| `local_engine_install` | — | instala ou atualiza o motor (release mais novo do llama.cpp); progresso por `runtime://local`, chave `engine` → `EngineInfo` |
+| `local_engine_latest` | — | tag do release mais novo |
+| `local_engine_remove` | — | remove o motor (os modelos ficam) |
+| `local_cancel` | `key` | cancela um download (`engine`, id do catálogo ou `dono/repo/arquivo`) |
+| `local_download_catalog` | `entry` | baixa do catálogo → `LocalModel`; a conexão `local` acompanha |
+| `local_hf_files` | `repo` | os `.gguf` de um repositório do Hugging Face |
+| `local_download_hf` | `repo`, `file` | baixa um arquivo (e as partes, se for dividido) → `LocalModel` |
+| `local_import_ollama` | `name` | importa um modelo do Ollama (link físico ou cópia) → `LocalModel` |
+| `local_add_file` | `path` | um `.gguf` do disco, usado onde está → `LocalModel` |
+| `pick_model_file` | — | diálogo nativo para escolher um `.gguf` |
+| `local_remove_model` | `id` | remove (apaga os arquivos, menos os do usuário) |
+| `local_set_context` | `id`, `context` | contexto do modelo (de 2.048 ao de treino) |
+| `local_settings_save` | `settings` | `{ backend, gpu, idleMinutes }` |
+| `local_stop` | — | desliga o motor |
+| `local_log` | — | últimas 200 linhas do motor |
+| `local_remove_legacy` | — | remove a conexão `ollama` criada antes da ADR-0025 |
 
 ### Atualizações (Fase 12, ADR-0019)
 
@@ -320,7 +332,7 @@ restauração, arquivo guardado como `.unreadable-…`).
 | `runtime://stream` | `StreamEvent` | saída de terminal/processo ao vivo, término; eventos de sessão de provider |
 | `runtime://audit` | `AuditEvent` | painel HISTORY, atualização de listas e do explorer |
 | `runtime://update` | `UpdateEvent` (`checked`, `available`, `backedUp`, `progress`, `installed`, `failed`) | aba "Sobre e atualizações" e chip da barra de status (Fase 12) |
-| `runtime://offline` | `OfflineEvent` (`progress`, `done`, `failed`) | downloads de modelos offline (ADR-0021) |
+| `runtime://local` | `LocalEvent` (`progress`, `downloadDone`, `downloadFailed`, `engineInstalled`, `engineRemoved`, `modelAdded`, `modelRemoved`, `modelsChanged`, `server`) | motor local e downloads (ADR-0025) |
 
 `StreamEvent`:
 

@@ -10,7 +10,7 @@ export type SettingsSection =
   | "skills"
   | "mcp"
   | "clis"
-  | "offline"
+  | "local"
   | "policies"
   | "context"
   | "github"
@@ -23,7 +23,7 @@ export const SETTINGS_SECTIONS: Array<{ id: SettingsSection; label: string; grou
   { id: "policies", label: "Políticas e segredos", group: "IAs" },
   { id: "context", label: "Contexto e compactação", group: "IAs" },
   { id: "clis", label: "Assinaturas (CLI)", group: "Modelos" },
-  { id: "offline", label: "Modelos offline", group: "Modelos" },
+  { id: "local", label: "Modelos locais", group: "Modelos" },
   { id: "mcp", label: "Servidores MCP", group: "Integrações" },
   { id: "github", label: "GitHub", group: "Integrações" },
   { id: "data", label: "Dados e backups", group: "Orchestrator" },

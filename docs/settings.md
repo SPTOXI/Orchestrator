@@ -11,7 +11,7 @@ rodam. Decisão: [ADR-0021](./adr/0021-configuracoes-assinaturas-offline-e-mcp.m
 | IAs | Políticas e segredos | modo de autonomia, regras do Autônomo, segredos ([autonomy.md](./autonomy.md)) |
 | IAs | Contexto e compactação | o contexto do projeto e quando compactar ([context.md](./context.md), [tokens.md](./tokens.md)) |
 | Modelos | Assinaturas (CLI) | Claude Code, Codex e Gemini CLI com a sua conta |
-| Modelos | Modelos offline | modelos no seu computador, pelo Ollama |
+| Modelos | Modelos locais | modelos no seu computador, com o motor do próprio Orchestrator (ADR-0025) |
 | Integrações | Servidores MCP | ferramentas novas para todas as IAs |
 | Integrações | GitHub | token e servidor ([github.md](./github.md)) |
 | Orchestrator | Dados e backups | backups automáticos e seus, restaurar ([ADR-0022](./adr/0022-dados-preservados-nas-atualizacoes.md)) |
@@ -78,7 +78,7 @@ navegador, banco de dados, Jira, Figma, documentação…
   (documentação de bibliotecas) e o servidor oficial do GitHub.
 - Valores secretos: `{{secret:NOME}}` em variáveis e cabeçalhos (o valor
   vem do cofre e é mascarado no que volta).
-- As ferramentas chegam a **todas** as IAs — APIs, offline e assinaturas —
+- As ferramentas chegam a **todas** as IAs — APIs, modelos locais e assinaturas —
   como `mcp.<servidor>.<ferramenta>`. Passam pelo gate de autonomia (as que
   o servidor marca como consulta contam como consulta) e ficam no histórico.
   Cada ferramenta pode ser escondida das IAs.
@@ -119,27 +119,54 @@ Use as assinaturas que você já paga, sem chave de API:
   usar; a conta Google entra pelo Gemini CLI.
 - Arquivo: `<dados>/clis.json`.
 
-## Modelos offline
+## Modelos locais
 
 Modelos que rodam no seu computador: sem internet, sem chave, sem custo
-por token. Pelo **Ollama** (gratuito).
+por token. Com o **motor do próprio Orchestrator**, o `llama-server` do
+llama.cpp: nada para instalar à parte. Decisão:
+[ADR-0025](./adr/0025-motor-local-proprio.md).
 
-1. **Instalar o Ollama**: o botão roda, num terminal, `winget install
-   Ollama.Ollama` (Windows), `brew install ollama` (macOS) ou o script
-   oficial (Linux); ou **Baixar do site**. Se estiver instalado e parado,
-   **Iniciar o Ollama**.
-2. **Baixar modelos**: sugestões que funcionam com as ferramentas do
-   Orchestrator, com o tamanho e a memória que pedem, ou qualquer nome de
-   [ollama.com/library](https://ollama.com/library). O progresso aparece na
-   tela; dá para cancelar (o Ollama retoma depois).
-3. **Usar nas sessões**: cria a conexão `ollama` (compatível com a OpenAI,
-   sem chave, preço zero, espera de até 600 s pela primeira resposta,
-   porque carregar o modelo na memória demora). Novos downloads entram nela
-   sozinhos.
+1. **Instalar o motor:** o Orchestrator baixa do GitHub o pacote oficial do
+   llama.cpp feito para este computador e confere o SHA-256 antes de
+   instalar. Ele escolhe o pacote sozinho (placa NVIDIA, outra placa pelo
+   Vulkan, Mac com Apple Silicon ou só o processador), e você pode trocar.
+   "Procurar atualização" mostra quando sai um release novo. Famílias novas
+   de modelos às vezes pedem motor novo.
+2. **Trazer modelos:**
+   - **Catálogo:** modelos que funcionam com as ferramentas do Orchestrator,
+     com o tamanho e a memória que pedem;
+   - **Hugging Face:** qualquer repositório público (`dono/nome`); o app
+     lista os `.gguf` e você escolhe;
+   - **Importar do Ollama:** os modelos que o Ollama já baixou viram
+     modelos do Orchestrator sem baixar de novo (um link para o arquivo, ou
+     uma cópia se estiver em outro disco). Continuam funcionando sem o
+     Ollama;
+   - **Arquivo do computador:** um `.gguf` que você já tem, usado onde está.
 
-Modelos sem chamada de ferramentas (o Ollama informa) recebem as
-ferramentas por prompt. O endereço é `127.0.0.1:11434`, ou o de
-`OLLAMA_HOST`.
+   Os downloads mostram o progresso, continuam de onde pararam e conferem
+   o SHA-256 publicado.
+3. **Contexto:** cada modelo roda com o contexto que você escolher. O
+   padrão é 16.384 tokens (32.768 com 24 GB de memória ou mais), sem
+   passar do contexto de treino. A tela mostra a memória que o modelo vai
+   pedir e avisa abaixo de 16.384, porque as instruções e ferramentas do
+   Orchestrator ocupam cerca de 10 mil tokens.
+4. **Nas sessões:** a conexão **Modelos locais** é criada e mantida
+   sozinha. Quando uma sessão usa um modelo local, o motor liga com ele,
+   espera carregar (até 10 minutos) e desliga depois de um tempo parado
+   (padrão 10 minutos). Um modelo por vez: trocar de modelo espera as
+   chamadas em andamento.
+
+Também na tela: o que está rodando, "Desligar", o registro do motor (as
+últimas 200 linhas, útil quando um modelo não carrega), a placa de vídeo
+(automático ou desligada) e "Remover o motor".
+
+Modelos cujo modelo de conversa não fala de ferramentas recebem as
+ferramentas por prompt.
+
+Arquivos: `<dados>/local/` (`engine/`, `models/`, `models.json`,
+`settings.json`). Espelhos: `ORCHESTRATOR_ENGINE_API` (uma API compatível
+com a do GitHub, com os releases do llama.cpp) e `HF_ENDPOINT` (a mesma
+variável das ferramentas do Hugging Face).
 
 ## Dados e backups
 

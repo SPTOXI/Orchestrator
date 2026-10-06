@@ -103,6 +103,16 @@ pub enum EventKind {
     /// A session's AI failed a turn and one of its reserves took over
     /// (ADR-0024).
     SessionFailover,
+    /// The local engine (llama.cpp) was installed or updated (ADR-0025).
+    LocalEngineInstalled,
+    /// The local engine was removed (ADR-0025).
+    LocalEngineRemoved,
+    /// A local model was downloaded, imported or added (ADR-0025).
+    LocalModelAdded,
+    /// A local model was removed (ADR-0025).
+    LocalModelRemoved,
+    /// The local engine loaded a model to serve a session (ADR-0025).
+    LocalModelLoaded,
 }
 
 /// A durable, provider-independent history entry.

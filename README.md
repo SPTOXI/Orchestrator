@@ -6,8 +6,8 @@ Orchestrator é uma plataforma desktop/local de desenvolvimento assistido e
 autônomo por múltiplas IAs. O usuário conecta **quantas APIs de IA quiser**
 (OpenAI e compatíveis, Anthropic, Gemini ou qualquer API HTTP), usa as
 **assinaturas** que já tem (Claude Pro/Max, ChatGPT, conta Google) pelas
-CLIs oficiais, ou baixa **modelos offline** que rodam no próprio
-computador. Os agentes trabalham sobre o **mesmo projeto**, compartilham memória,
+CLIs oficiais, ou baixa **modelos locais** que rodam no próprio
+computador, com um motor que o Orchestrator instala e gerencia. Os agentes trabalham sobre o **mesmo projeto**, compartilham memória,
 assumem tarefas uns dos outros e operam sobre um ambiente real de
 desenvolvimento — sempre através do runtime do Orchestrator.
 
@@ -69,8 +69,9 @@ orchestrator/
 │   ├── git/                # [Rust] Git local via `git` do sistema e GitHub pela API REST
 │   ├── providers/          # [Rust] AIProvider, Provider Registry, Provider Sessions
 │   │   ├── api/            # [Rust] conexões de API: OpenAI e compatíveis, Anthropic,
-│   │   │                   #        Gemini e perfil genérico; modelos offline (Ollama)
+│   │   │                   #        Gemini e perfil genérico
 │   │   └── cli/            # [Rust] assinaturas pelas CLIs: Claude Code, Codex, Gemini CLI
+│   ├── local/              # [Rust] modelos locais: motor llama.cpp, modelos GGUF, servidor
 │   ├── mcp/                # [Rust] servidores MCP como ferramentas e o endpoint MCP local
 │   └── router/             # [Rust] roteador de modelos e Conselho de IAs
 ├── docs/                   # ADRs, relatórios de fase, referência de IPC e ferramentas
@@ -404,8 +405,8 @@ Referência: [`docs/router.md`](./docs/router.md).
 
 - **Quantas APIs você quiser**, pelo painel AI PROVIDERS → *Adicionar API*.
   Há pontos de partida para OpenAI, Anthropic, Gemini, OpenRouter, APIs
-  compatíveis com a OpenAI (DeepSeek, Groq, Mistral, xAI, vLLM, LM Studio…) e
-  Ollama. O **perfil genérico** descreve qualquer outra API HTTP/JSON sem
+  compatíveis com a OpenAI (DeepSeek, Groq, Mistral, xAI, vLLM, LM Studio…).
+  O **perfil genérico** descreve qualquer outra API HTTP/JSON sem
   código: endpoint, autenticação, corpo, SSE/NDJSON e onde ler a resposta.
 - **Chave no cofre do sistema** (Windows Credential Manager, macOS Keychain,
   Secret Service) ou numa variável de ambiente. Ela nunca vai para arquivo,

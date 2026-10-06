@@ -3,6 +3,7 @@
 
 use crate::config::{Connection, CredentialSource, ModelEntry};
 use crate::http::HttpClient;
+use crate::local::{LocalEndpoint, SharedLocal};
 use crate::presets::{presets, Preset};
 use crate::provider::{ApiProvider, ConversationStore, TestReport};
 use crate::secrets::SecretStore;
@@ -79,6 +80,8 @@ pub struct ConnectionManager {
     /// provider instances (sessions survive an edit of their connection).
     conversations: Mutex<HashMap<String, ConversationStore>>,
     writes: tokio::sync::Mutex<()>,
+    /// The engine of the local connection (ADR-0025), once the app has one.
+    local: SharedLocal,
 }
 
 impl ConnectionManager {
@@ -123,6 +126,7 @@ impl ConnectionManager {
             connections: Arc::new(RwLock::new(Vec::new())),
             conversations: Mutex::new(HashMap::new()),
             writes: tokio::sync::Mutex::new(()),
+            local: SharedLocal::default(),
         };
         for connection in &connections {
             if manager
@@ -149,6 +153,13 @@ impl ConnectionManager {
     /// A throwaway instance for tests and model discovery.
     fn provider(&self, connection: Connection) -> ApiProvider {
         ApiProvider::new(connection, self.secrets.clone(), self.client.clone())
+            .with_local(self.local.clone())
+    }
+
+    /// Gives the local connection its engine (ADR-0025). Providers already
+    /// registered see it from their next call.
+    pub fn set_local_endpoint(&self, endpoint: Arc<dyn LocalEndpoint>) {
+        *self.local.write() = Some(endpoint);
     }
 
     /// The instance registered for a saved connection.
