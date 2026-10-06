@@ -246,12 +246,18 @@ async fn installs_the_engine_brings_models_and_serves_sessions() {
     // The release lists URLs on this same server.
     let routes: Routes = Arc::new(Mutex::new(routes));
     let server = serve(routes.clone()).await;
-    let release = json!({"tag_name": tag, "assets": assets})
-        .to_string()
-        .replace("{addr}", &server.to_string());
+    // As llama.cpp publishes: pre-releases only, newest first; the newest
+    // still without this computer's package, and a draft above it.
+    let releases = json!([
+        {"tag_name": "b9200", "draft": true, "prerelease": true, "assets": assets},
+        {"tag_name": "b9100", "draft": false, "prerelease": true, "assets": []},
+        {"tag_name": tag, "draft": false, "prerelease": true, "assets": assets}
+    ])
+    .to_string()
+    .replace("{addr}", &server.to_string());
     routes.lock().insert(
-        "/repos/ggml-org/llama.cpp/releases/latest".into(),
-        Body::Json(release),
+        "/repos/ggml-org/llama.cpp/releases".into(),
+        Body::Json(releases),
     );
     let base = format!("http://{server}");
 
@@ -297,7 +303,8 @@ async fn installs_the_engine_brings_models_and_serves_sessions() {
         .unwrap_err()
         .contains("não está instalado"));
 
-    // The engine.
+    // The engine: the newest release with this computer's package.
+    assert_eq!(engine.latest_engine().await.unwrap(), tag);
     let info = engine.install_engine().await.unwrap();
     assert_eq!(info.tag, tag);
     assert_eq!(info.backend, backend);

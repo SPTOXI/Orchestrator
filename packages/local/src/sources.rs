@@ -53,10 +53,12 @@ pub struct ReleaseAsset {
     pub sha256: Option<String>,
 }
 
-/// The newest llama.cpp release.
-pub async fn latest_release(client: &reqwest::Client, urls: &Urls) -> Result<Release, String> {
+/// The llama.cpp releases, newest first, drafts left out. Not
+/// `releases/latest`: llama.cpp marks every release as a pre-release, and
+/// that endpoint skips pre-releases.
+pub async fn releases(client: &reqwest::Client, urls: &Urls) -> Result<Vec<Release>, String> {
     let url = format!(
-        "{}/repos/{}/releases/latest",
+        "{}/repos/{}/releases?per_page=10",
         urls.github_api.trim_end_matches('/'),
         urls.engine_repo
     );
@@ -84,7 +86,22 @@ pub async fn latest_release(client: &reqwest::Client, urls: &Urls) -> Result<Rel
         .json()
         .await
         .map_err(|e| format!("resposta inválida do GitHub: {e}"))?;
-    parse_release(&body)
+    parse_releases(&body)
+}
+
+pub fn parse_releases(body: &Value) -> Result<Vec<Release>, String> {
+    let list = body
+        .as_array()
+        .ok_or("resposta inválida do GitHub: esperava a lista de releases")?;
+    let releases: Vec<Release> = list
+        .iter()
+        .filter(|r| !r["draft"].as_bool().unwrap_or(false))
+        .filter_map(|r| parse_release(r).ok())
+        .collect();
+    if releases.is_empty() {
+        return Err("o GitHub não listou nenhum release do llama.cpp".into());
+    }
+    Ok(releases)
 }
 
 pub fn parse_release(body: &Value) -> Result<Release, String> {
@@ -573,6 +590,17 @@ mod tests {
         .unwrap();
         assert_eq!(release.tag, "b9000");
         assert_eq!(release.assets[0].sha256.as_deref(), Some("abc"));
+        // llama.cpp's are all pre-releases: they count; drafts do not.
+        let list = parse_releases(&json!([
+            {"tag_name": "b9200", "draft": true, "prerelease": true, "assets": []},
+            {"tag_name": "b9100", "draft": false, "prerelease": true, "assets": []},
+            {"tag_name": "b9000", "draft": false, "prerelease": false, "assets": []}
+        ]))
+        .unwrap();
+        let tags: Vec<&str> = list.iter().map(|r| r.tag.as_str()).collect();
+        assert_eq!(tags, ["b9100", "b9000"]);
+        assert!(parse_releases(&json!([])).is_err());
+        assert!(parse_releases(&json!({"message": "Not Found"})).is_err());
     }
 
     #[test]

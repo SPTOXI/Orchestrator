@@ -3456,6 +3456,18 @@ textarea.skill-body {
   font-size: 11px;
 }
 
+/* What the last action said, in view while the page scrolls. */
+.local-feedback {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg);
+}
+
+.local-feedback > div {
+  margin: 8px 0;
+}
+
 .local-section progress {
   width: 160px;
   height: 8px;

@@ -130,6 +130,9 @@ function ModelRow({
 
 export function LocalModelsSection({ ready, active, onOpenConnection }: Props) {
   const [view, setView] = useState<LocalView | null>(null);
+  /** Reading the state failed. */
+  const [loadError, setLoadError] = useState<string | null>(null);
+  /** What the last action said: stays until the next one starts. */
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -143,9 +146,9 @@ export function LocalModelsSection({ ready, active, onOpenConnection }: Props) {
   const load = useCallback(async () => {
     try {
       setView(await localApi.status());
-      setError(null);
+      setLoadError(null);
     } catch (e) {
-      setError(errorMessage(e));
+      setLoadError(errorMessage(e));
     }
   }, []);
 
@@ -217,7 +220,7 @@ export function LocalModelsSection({ ready, active, onOpenConnection }: Props) {
   if (!view) {
     return (
       <div className="task-body">
-        {error ? <div className="inline-error">{error}</div> : <div className="meta">verificando…</div>}
+        {loadError ? <div className="inline-error">{loadError}</div> : <div className="meta">verificando…</div>}
       </div>
     );
   }
@@ -257,6 +260,14 @@ export function LocalModelsSection({ ready, active, onOpenConnection }: Props) {
           </div>
         ))}
       </section>
+
+      {(notice || error || loadError) && (
+        <div className="local-feedback" role="status">
+          {notice && <div className="inline-notice ok">{notice}</div>}
+          {error && <div className="inline-error">{error}</div>}
+          {loadError && <div className="inline-error">{loadError}</div>}
+        </div>
+      )}
 
       <section className="task-step">
         <h3>Motor</h3>
@@ -586,8 +597,6 @@ export function LocalModelsSection({ ready, active, onOpenConnection }: Props) {
         </div>
       </section>
 
-      {notice && <div className="inline-notice ok">{notice}</div>}
-      {error && <div className="inline-error">{error}</div>}
     </div>
   );
 }
