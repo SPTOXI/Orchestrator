@@ -162,8 +162,10 @@ Também na tela: o que está rodando, "Desligar", o registro do motor (as
 últimas 200 linhas, útil quando um modelo não carrega), a placa de vídeo
 (automático ou desligada) e "Remover o motor".
 
-Modelos cujo modelo de conversa não fala de ferramentas recebem as
-ferramentas por prompt.
+Modelos cujo modelo de conversa não recebe a lista de ferramentas (como o
+Gemma 3 e o Phi-4-mini) recebem as ferramentas por prompt. Modelos pequenos
+erram mais as chamadas: para trabalhar com arquivos e comandos, prefira o
+Qwen3.
 
 Arquivos: `<dados>/local/` (`engine/`, `models/`, `models.json`,
 `settings.json`). Espelhos: `ORCHESTRATOR_ENGINE_API` (uma API compatível

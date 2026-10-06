@@ -504,9 +504,12 @@ fn manifest_model(
         name_of(model)?,
         name_of(file)?,
     );
-    let name = if host == "registry.ollama.ai" && namespace == "library" {
+    // Ollama's own registry: `registry.ollama.ai`, or `ollama.com` in newer
+    // versions. Its models go by `ollama pull` names.
+    let default_host = host == "registry.ollama.ai" || host == "ollama.com";
+    let name = if default_host && namespace == "library" {
         format!("{model}:{tag}")
-    } else if host == "registry.ollama.ai" {
+    } else if default_host {
         format!("{namespace}/{model}:{tag}")
     } else {
         format!("{host}/{namespace}/{model}:{tag}")
@@ -620,13 +623,29 @@ mod tests {
             .to_string(),
         )
         .unwrap();
+        let layers = json!({"layers": [{"mediaType": "application/vnd.ollama.image.model", "digest": "sha256:aaaa"}]}).to_string();
         let other = root.join("manifests/hf.co/bartowski/Qwen3-GGUF/Q4_K_M");
         std::fs::create_dir_all(other.parent().unwrap()).unwrap();
-        std::fs::write(&other, json!({"layers": [{"mediaType": "application/vnd.ollama.image.model", "digest": "sha256:aaaa"}]}).to_string()).unwrap();
+        std::fs::write(&other, &layers).unwrap();
+        // Newer Ollama versions keep their own registry's models under
+        // `ollama.com`: same names as `ollama pull`.
+        for path in [
+            "ollama.com/library/qwen3/8b",
+            "ollama.com/someone/tool/latest",
+        ] {
+            let file = root.join("manifests").join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(&file, &layers).unwrap();
+        }
         let models = ollama_models(&[root.clone(), dir.path().join("missing")]);
         assert_eq!(
             models.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(),
-            ["hf.co/bartowski/Qwen3-GGUF:Q4_K_M", "phi4-mini:latest"]
+            [
+                "hf.co/bartowski/Qwen3-GGUF:Q4_K_M",
+                "phi4-mini:latest",
+                "qwen3:8b",
+                "someone/tool:latest"
+            ]
         );
         assert_eq!(models[1].blob, root.join("blobs/sha256-aaaa"));
         assert_eq!(models[1].size, 10);

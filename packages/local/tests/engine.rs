@@ -507,6 +507,73 @@ async fn installs_the_engine_brings_models_and_serves_sessions() {
 }
 
 #[tokio::test]
+async fn models_from_an_older_version_get_their_tools_checked_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("local");
+    // Phi-4-mini's template only reads tools from a message: llama.cpp
+    // never fills it, so its tools must go by prompt.
+    let phi = root.join("models/phi4-mini-latest/model.gguf");
+    std::fs::create_dir_all(phi.parent().unwrap()).unwrap();
+    write_header(
+        &phi,
+        &[
+            ("general.architecture", HeaderValue::Str("phi3".into())),
+            (
+                "tokenizer.chat_template",
+                HeaderValue::Str(
+                    "{% if message['role'] == 'system' and 'tools' in message %}{{ message['tools'] }}{% endif %}".into(),
+                ),
+            ),
+        ],
+    )
+    .unwrap();
+    let qwen = root.join("models/qwen3-8b/model.gguf");
+    std::fs::create_dir_all(qwen.parent().unwrap()).unwrap();
+    model_file(&qwen, "Qwen3 8B", 40960);
+    let entry = |id: &str, file: &Path| {
+        json!({
+            "id": id, "name": id, "files": [file], "size": 1, "sha256": null,
+            "source": {"kind": "file"}, "context": 16384, "tools": true,
+            "chatTemplate": true, "addedAt": "2026-10-06T00:00:00Z"
+        })
+    };
+    std::fs::write(
+        root.join("models.json"),
+        json!({"version": 1, "models": [entry("phi4-mini-latest", &phi), entry("qwen3-8b", &qwen)]})
+            .to_string(),
+    )
+    .unwrap();
+
+    let open = || {
+        LocalEngine::open_with(
+            root.clone(),
+            this_system(),
+            Urls::default(),
+            Vec::new(),
+            None,
+            Arc::new(|_| {}),
+            ServerOptions::default(),
+        )
+    };
+    let tools = |engine: &LocalEngine| -> Vec<(String, bool)> {
+        engine
+            .models()
+            .iter()
+            .map(|m| (m.id.clone(), m.tools))
+            .collect()
+    };
+    let expected = vec![
+        ("phi4-mini-latest".to_owned(), false),
+        ("qwen3-8b".to_owned(), true),
+    ];
+    assert_eq!(tools(&open()), expected);
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(root.join("models.json")).unwrap()).unwrap();
+    assert_eq!(saved["version"], 2);
+    assert_eq!(tools(&open()), expected);
+}
+
+#[tokio::test]
 async fn downloads_continue_and_are_checked() {
     let dir = tempfile::tempdir().unwrap();
     let bytes: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
