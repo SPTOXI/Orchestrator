@@ -281,8 +281,8 @@ Referência: [`docs/settings.md`](./settings.md).
 | `clis_list` | — | `CliStatus[]` (instalado, versão, login, comandos de instalar e entrar, opções) |
 | `cli_save` | `kind`, `settings` | `CliStatus[]`; liga ou desliga o provider |
 | `local_status` | — | `LocalView`: sistema, motor, pacote automático, configurações, servidor, modelos, catálogo, downloads, contexto padrão, conexão, conexão antiga do Ollama e os modelos dele (ADR-0025) |
-| `local_engine_install` | — | instala ou atualiza o motor (release mais novo do llama.cpp); progresso por `runtime://local`, chave `engine` → `EngineInfo` |
-| `local_engine_latest` | — | tag do release mais novo |
+| `local_engine_install` | — | instala ou atualiza o motor (o release mais novo do llama.cpp que tem o pacote deste computador); progresso por `runtime://local`, chave `engine` → `EngineInfo` |
+| `local_engine_latest` | — | tag do release mais novo com o pacote deste computador |
 | `local_engine_remove` | — | remove o motor (os modelos ficam) |
 | `local_cancel` | `key` | cancela um download (`engine`, id do catálogo ou `dono/repo/arquivo`) |
 | `local_download_catalog` | `entry` | baixa do catálogo → `LocalModel`; a conexão `local` acompanha |

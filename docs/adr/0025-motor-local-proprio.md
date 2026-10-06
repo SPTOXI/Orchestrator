@@ -38,9 +38,12 @@ motor que o próprio Ollama usa por baixo. O Orchestrator baixa, instala,
 liga e desliga esse motor, sem nada a instalar à parte.
 
 - **De onde:** os releases oficiais de `ggml-org/llama.cpp` no GitHub.
-  Instala o release mais recente e guarda qual foi. "Atualizar motor"
-  aparece quando sai um release novo, porque famílias novas de modelos
-  pedem um motor novo.
+  Instala o release mais recente que já tem o pacote deste computador e
+  guarda qual foi. A lista vem de `releases`, e não de `releases/latest`:
+  o llama.cpp marca todos como pré-lançamento, e `releases/latest` os
+  ignora. Rascunhos não contam, e um release ainda sendo publicado, sem
+  o pacote, fica para depois. "Atualizar motor" aparece quando sai um
+  release novo, porque famílias novas de modelos pedem um motor novo.
 - **Qual pacote:** escolhido pelo sistema e pela placa de vídeo. O
   usuário pode trocar.
 

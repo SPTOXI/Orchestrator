@@ -5,7 +5,7 @@
 use crate::archive;
 use crate::download::{self, Expected, OnProgress};
 use crate::platform::{pick_assets, Backend, System};
-use crate::sources::Release;
+use crate::sources::{Release, ReleaseAsset};
 use crate::store::{read_json, write_json};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -70,23 +70,8 @@ impl EngineDir {
         on_progress: OnProgress<'_>,
         cancel: &CancellationToken,
     ) -> Result<EngineInfo, String> {
-        let patterns = system
-            .asset_patterns(backend, &release.tag)
-            .ok_or_else(|| format!("não há motor {} para este sistema", backend.label()))?;
-        let names: Vec<String> = release.assets.iter().map(|a| a.name.clone()).collect();
-        let picked = pick_assets(&patterns, &names)?;
-        let assets: Vec<_> = picked
-            .iter()
-            .filter_map(|name| release.assets.iter().find(|a| &a.name == name))
-            .collect();
-        for asset in &assets {
-            if asset.sha256.is_none() {
-                return Err(format!(
-                    "o GitHub não publicou a conferência (SHA-256) de {}: nada foi instalado",
-                    asset.name
-                ));
-            }
-        }
+        let assets = package_assets(system, release, backend)?;
+        let picked: Vec<String> = assets.iter().map(|a| a.name.clone()).collect();
         let staging = self.root.join(format!(
             ".installing-{}-{}",
             release.tag,
@@ -184,6 +169,32 @@ impl EngineDir {
         }
         Ok(info)
     }
+}
+
+/// The files of `release` that make the `backend` engine for `system`,
+/// each with its SHA-256.
+pub fn package_assets<'a>(
+    system: &System,
+    release: &'a Release,
+    backend: Backend,
+) -> Result<Vec<&'a ReleaseAsset>, String> {
+    let patterns = system
+        .asset_patterns(backend, &release.tag)
+        .ok_or_else(|| format!("não há motor {} para este sistema", backend.label()))?;
+    let names: Vec<String> = release.assets.iter().map(|a| a.name.clone()).collect();
+    let assets: Vec<_> = pick_assets(&patterns, &names)?
+        .iter()
+        .filter_map(|name| release.assets.iter().find(|a| &a.name == name))
+        .collect();
+    for asset in &assets {
+        if asset.sha256.is_none() {
+            return Err(format!(
+                "o GitHub não publicou a conferência (SHA-256) de {}: nada foi instalado",
+                asset.name
+            ));
+        }
+    }
+    Ok(assets)
 }
 
 pub fn backend_id(backend: Backend) -> &'static str {

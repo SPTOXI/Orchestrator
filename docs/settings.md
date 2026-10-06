@@ -130,8 +130,10 @@ llama.cpp: nada para instalar à parte. Decisão:
    llama.cpp feito para este computador e confere o SHA-256 antes de
    instalar. Ele escolhe o pacote sozinho (placa NVIDIA, outra placa pelo
    Vulkan, Mac com Apple Silicon ou só o processador), e você pode trocar.
-   "Procurar atualização" mostra quando sai um release novo. Famílias novas
-   de modelos às vezes pedem motor novo.
+   Usa o release mais novo que já tem esse pacote: o llama.cpp publica
+   vários por dia, todos marcados como pré-lançamento. "Procurar
+   atualização" mostra quando sai um release novo. Famílias novas de
+   modelos às vezes pedem motor novo.
 2. **Trazer modelos:**
    - **Catálogo:** modelos que funcionam com as ferramentas do Orchestrator,
      com o tamanho e a memória que pedem;

@@ -253,25 +253,51 @@ impl LocalEngine {
         Ok(settings)
     }
 
-    /// The newest llama.cpp release, to offer an update.
+    /// The newest llama.cpp release with this computer's package, to offer
+    /// an update.
     pub async fn latest_engine(&self) -> Result<String, String> {
-        Ok(sources::latest_release(&self.client, &self.urls).await?.tag)
+        Ok(self.release_for(self.backend()?).await?.tag)
+    }
+
+    /// The package in the settings, or the one this computer calls for.
+    fn backend(&self) -> Result<Backend, String> {
+        self.settings
+            .lock()
+            .backend
+            .filter(|b| self.system.backends().contains(b))
+            .or_else(|| self.system.auto_backend())
+            .ok_or_else(|| "não há motor do llama.cpp para este sistema".into())
+    }
+
+    /// The newest release that has the `backend` package for this computer:
+    /// llama.cpp publishes several a day, and one still being published may
+    /// lack it.
+    async fn release_for(&self, backend: Backend) -> Result<sources::Release, String> {
+        let releases = sources::releases(&self.client, &self.urls).await?;
+        let mut newest_problem = None;
+        for release in releases {
+            match engine::package_assets(&self.system, &release, backend) {
+                Ok(_) => return Ok(release),
+                Err(e) => {
+                    newest_problem.get_or_insert(format!("{}: {e}", release.tag));
+                }
+            }
+        }
+        Err(format!(
+            "nenhum release recente do llama.cpp tem o motor {} para este computador ({})",
+            backend.label(),
+            newest_problem.unwrap_or_default()
+        ))
     }
 
     /// Installs (or updates) the engine: the package in the settings, or
     /// the one this computer calls for.
     pub async fn install_engine(&self) -> Result<EngineInfo, String> {
-        let backend = self
-            .settings
-            .lock()
-            .backend
-            .filter(|b| self.system.backends().contains(b))
-            .or_else(|| self.system.auto_backend())
-            .ok_or("não há motor do llama.cpp para este sistema")?;
+        let backend = self.backend()?;
         let _guard = self.changes.lock().await;
         let cancel = self.begin(ENGINE_DOWNLOAD)?;
         let result = async {
-            let release = sources::latest_release(&self.client, &self.urls).await?;
+            let release = self.release_for(backend).await?;
             // The server must not run the files being replaced.
             self.server.stop("atualização do motor").await;
             let key = ENGINE_DOWNLOAD.to_owned();
