@@ -95,8 +95,14 @@ Hugging Face publica (`lfs.oid`). Os arquivos ficam em
 
 O app lê o cabeçalho GGUF de cada modelo: arquitetura, nome, contexto de
 treino, quantização e o modelo de conversa (`tokenizer.chat_template`).
-Se o modelo de conversa fala de ferramentas, o modelo recebe as
-ferramentas pela API. Se não, elas vão pelo prompt, como já acontecia.
+Se o modelo de conversa recebe a lista de ferramentas (a variável
+`tools`, como no Qwen, no Llama 3.1, no Mistral e no gpt-oss) ou mostra
+chamadas de ferramenta, o modelo recebe as ferramentas pela API. Se não,
+elas vão pelo prompt, como já acontecia. O modelo de conversa do
+Phi-4-mini só lê ferramentas de dentro de uma mensagem
+(`message['tools']`), que o llama.cpp nunca preenche: as ferramentas dele
+vão pelo prompt. Os modelos adicionados antes dessa regra são conferidos
+de novo na primeira abertura (`models.json` versão 2).
 
 ### Contexto: definido pelo Orchestrator
 

@@ -92,6 +92,10 @@ impl LocalModel {
     }
 }
 
+/// `models.json` as this version writes it. 2: `tools` tells apart chat
+/// templates that only read tools from a message.
+pub const MODELS_VERSION: u32 = 2;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelsFile {
@@ -104,7 +108,7 @@ pub struct ModelsFile {
 impl Default for ModelsFile {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: MODELS_VERSION,
             models: Vec::new(),
         }
     }
@@ -271,6 +275,6 @@ mod tests {
             .any(|e| e.file_name().to_string_lossy().contains("unreadable"));
         assert!(kept);
         write_json(&path, &ModelsFile::default()).unwrap();
-        assert_eq!(read_json::<ModelsFile>(&path).0.version, 1);
+        assert_eq!(read_json::<ModelsFile>(&path).0.version, MODELS_VERSION);
     }
 }

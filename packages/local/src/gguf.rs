@@ -39,7 +39,7 @@ impl GgufInfo {
     pub fn takes_tools(&self) -> bool {
         self.chat_template
             .as_deref()
-            .is_some_and(|t| t.contains("tools") || t.contains("tool_call"))
+            .is_some_and(template_takes_tools)
     }
 
     /// Bytes of KV cache per token of context (f16 keys and values).
@@ -290,6 +290,23 @@ fn file_type(t: u64) -> Option<String> {
     Some(name.to_owned())
 }
 
+/// Whether a chat template takes the tools the server passes: it reads the
+/// `tools` variable (Qwen, Llama 3.1, Mistral, gpt-oss) or renders tool
+/// calls (DeepSeek). Phi-4-mini's only reads `message['tools']`, which
+/// llama.cpp never fills: its tools go by prompt instead.
+pub fn template_takes_tools(template: &str) -> bool {
+    let bytes = template.as_bytes();
+    let name_char = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let variable = template.match_indices("tools").any(|(i, _)| {
+        let before = i.checked_sub(1).map(|j| bytes[j]);
+        let after = bytes.get(i + "tools".len()).copied();
+        // Not a quoted key, an attribute or part of a longer name.
+        !before.is_some_and(|b| name_char(b) || matches!(b, b'\'' | b'"' | b'.'))
+            && !after.is_some_and(|b| name_char(b) || matches!(b, b'\'' | b'"'))
+    });
+    variable || template.contains("tool_call")
+}
+
 /// Writes a minimal GGUF header (tests and tools that need a model file).
 pub fn write_header(path: &Path, keys: &[(&str, HeaderValue)]) -> std::io::Result<()> {
     use std::io::Write;
@@ -382,6 +399,25 @@ mod tests {
         assert!(info.takes_tools());
         // 36 layers × 8 KV heads × (128 + 128) × 2 bytes.
         assert_eq!(info.kv_bytes_per_token(), Some(36 * 8 * 256 * 2));
+    }
+
+    #[test]
+    fn tells_which_templates_take_tools() {
+        // Excerpts of the real templates.
+        let qwen3 = "{%- if tools %}\n{{- '<|im_start|>system\\n' }}{%- for tool in tools %}";
+        let llama31 = "{%- if not tools is defined %}\n{%- set tools = none %}\n{%- endif %}";
+        let gpt_oss = "{%- if tools -%}{{- render_tool_namespace(\"functions\", tools) }}";
+        let deepseek = "{%- for tool in message['tool_calls'] %}";
+        let phi4_mini = "{% for message in messages %}{% if message['role'] == 'system' and 'tools' in message \
+            and message['tools'] is not none %}{{ '<|' + message['role'] + '|>' + message['content'] + '<|tool|>' \
+            + message['tools'] + '<|/tool|>' + '<|end|>' }}{% endif %}{% endfor %}";
+        let gemma3 = "{{ bos_token }}{%- for message in loop_messages -%}<start_of_turn>{{ role }}";
+        for t in [qwen3, llama31, gpt_oss, deepseek] {
+            assert!(template_takes_tools(t), "{t}");
+        }
+        for t in [phi4_mini, gemma3, "{{ message.tools }}", "{{ toolset }}"] {
+            assert!(!template_takes_tools(t), "{t}");
+        }
     }
 
     #[test]

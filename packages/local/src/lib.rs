@@ -172,8 +172,11 @@ impl LocalEngine {
         options: ServerOptions,
     ) -> Arc<Self> {
         let mut warnings = Vec::new();
-        let (models, w) = store::read_json::<ModelsFile>(&root.join("models.json"));
+        let (mut models, w) = store::read_json::<ModelsFile>(&root.join("models.json"));
         warnings.extend(w);
+        if models.version < store::MODELS_VERSION {
+            upgrade_models(&root, &mut models, &mut warnings);
+        }
         let (settings, w) = store::read_json::<Settings>(&root.join("settings.json"));
         warnings.extend(w);
         let engine_dir = EngineDir::new(root.join("engine"));
@@ -760,6 +763,25 @@ impl LocalEngine {
             gpu: self.settings.lock().gpu,
         };
         self.server.acquire(&engine, &launch, cancel).await
+    }
+}
+
+/// Models added by an older version: what the chat template says about
+/// tools is read again (version 2 tells apart templates that only read
+/// tools from a message, such as Phi-4-mini's, which go by prompt).
+fn upgrade_models(root: &Path, models: &mut ModelsFile, warnings: &mut Vec<String>) {
+    for model in &mut models.models {
+        let Some(info) = model.main_file().and_then(|f| gguf::read(f).ok()) else {
+            continue;
+        };
+        model.tools = info.takes_tools();
+        model.chat_template = info.chat_template.is_some();
+    }
+    models.version = store::MODELS_VERSION;
+    if !models.models.is_empty() {
+        if let Err(e) = store::write_json(&root.join("models.json"), &*models) {
+            warnings.push(e);
+        }
     }
 }
 
