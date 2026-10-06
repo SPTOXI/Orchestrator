@@ -25,9 +25,10 @@ adiciona algo fora dela, é registrada aqui **antes** de ser implementada.
 | [0018](./0018-tokens-cache-compactacao-e-escalonamento.md) | Tokens, cache, compactação de contexto e escalonamento de agentes | Aceita |
 | [0019](./0019-instaladores-release-e-atualizacao.md) | Instaladores, release e atualização automática | Aceita |
 | [0020](./0020-acesso-total-da-ia.md) | Acesso total da IA: internet, APIs e segredos | Aceita |
-| [0021](./0021-configuracoes-assinaturas-offline-e-mcp.md) | Configurações, regras e skills, MCP, assinaturas por CLI e modelos offline | Aceita |
+| [0021](./0021-configuracoes-assinaturas-offline-e-mcp.md) | Configurações, regras e skills, MCP, assinaturas por CLI e modelos offline | Aceita; modelos offline substituídos pela [0025](./0025-motor-local-proprio.md) |
 | [0022](./0022-dados-preservados-nas-atualizacoes.md) | Os dados do usuário sobrevivem às atualizações | Aceita |
 | [0023](./0023-varios-projetos-e-projetos-relacionados.md) | Vários projetos abertos e projetos relacionados | Aceita |
 | [0024](./0024-conselho-que-analisa-junto.md) | Conselho que analisa junto, com reserva entre os membros | Aceita |
+| [0025](./0025-motor-local-proprio.md) | Motor local próprio (llama.cpp), sem Ollama | Aceita |
 
 Formato: Contexto → Decisão → Consequências.

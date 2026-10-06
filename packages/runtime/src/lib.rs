@@ -812,6 +812,19 @@ impl ToolRuntime {
         .await
     }
 
+    /// Supervises a process started outside the runtime, like the local
+    /// models' engine (ADR-0025): it does not outlive the app, even when
+    /// the app dies (ADR-0018). The process must lead its own process group
+    /// on Unix.
+    pub fn supervise(&self, child: &tokio::process::Child, command: &str) {
+        self.inner.supervisor.adopt(child, command, true);
+    }
+
+    /// The process given to [`Self::supervise`] ended.
+    pub fn unsupervise(&self, pid: Option<u32>) {
+        self.inner.supervisor.release(pid);
+    }
+
     /// Keeps the process groups `process.start` creates in `path`, and ends
     /// the ones a previous run that died left there (Linux and macOS; on
     /// Windows a Job Object ends them with the app). Each one ended is

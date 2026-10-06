@@ -36,6 +36,27 @@ pub async fn pick_folder(app: tauri::AppHandle) -> Result<Option<String>, String
         .transpose()
 }
 
+/// Native "open file" dialog for a model file (`.gguf`, ADR-0025).
+#[tauri::command]
+pub async fn pick_model_file(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .add_filter("Modelo GGUF", &["gguf"])
+            .blocking_pick_file()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    picked
+        .map(|path| {
+            path.into_path()
+                .map(|p| p.display().to_string())
+                .map_err(|e| e.to_string())
+        })
+        .transpose()
+}
+
 #[tauri::command]
 pub fn runtime_tools() -> Vec<ToolSpec> {
     ToolRuntime::catalog().to_vec()

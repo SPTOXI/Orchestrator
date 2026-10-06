@@ -168,7 +168,7 @@ export function McpSection({ ready, active }: { ready: boolean; active: boolean 
         <p className="meta">
           MCP (Model Context Protocol) é o padrão para dar ferramentas novas às IAs: um navegador, um banco de dados,
           o Jira, o Figma, documentação… Cada servidor ligado aqui oferece as ferramentas dele a <strong>todas</strong>{" "}
-          as IAs do Orchestrator (APIs, modelos offline e assinaturas por CLI), com o nome <code>mcp.servidor.ferramenta</code>
+          as IAs do Orchestrator (APIs, modelos locais e assinaturas por CLI), com o nome <code>mcp.servidor.ferramenta</code>
           . Elas passam pelas mesmas regras de autonomia e ficam no histórico; as que o servidor marca como consulta
           contam como consulta. Valores secretos em cabeçalhos ou variáveis: <code>{"{{secret:NOME}}"}</code>.
         </p>

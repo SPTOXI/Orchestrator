@@ -4,6 +4,7 @@ members = [
     "packages/agents",
     "packages/core",
     "packages/git",
+    "packages/local",
     "packages/mcp",
     "packages/memory",
     "packages/orchestrator",
@@ -16,7 +17,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 rust-version = "1.90"
 publish = false
@@ -26,6 +27,7 @@ orchestrator-agents = { path = "packages/agents" }
 orchestrator-core = { path = "packages/core" }
 orchestrator-engine = { path = "packages/orchestrator" }
 orchestrator-git = { path = "packages/git" }
+orchestrator-local = { path = "packages/local" }
 orchestrator-mcp = { path = "packages/mcp" }
 orchestrator-memory = { path = "packages/memory" }
 orchestrator-providers = { path = "packages/providers" }

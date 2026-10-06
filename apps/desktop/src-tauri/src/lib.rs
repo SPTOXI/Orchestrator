@@ -16,9 +16,9 @@ mod cost_commands;
 mod files;
 mod github_commands;
 mod guidance_commands;
+mod local_commands;
 mod mcp_commands;
 mod memory_commands;
-mod offline_commands;
 mod persistence;
 mod provider_commands;
 mod router_commands;
@@ -132,6 +132,8 @@ pub struct AppState {
     pub mcp: McpManager,
     /// Subscriptions through CLIs: Claude Code, Codex, Gemini (ADR-0021).
     pub clis: CliManager,
+    /// The local models' engine (ADR-0025).
+    pub local: Arc<orchestrator_local::LocalEngine>,
     pub sink: Arc<DesktopSink>,
     pub data_dir: PathBuf,
     /// What this start did to keep the user's data (backups, a restore,
@@ -293,6 +295,12 @@ pub fn run() {
             };
             for warning in &connection_warnings {
                 eprintln!("[orchestrator] {warning}");
+            }
+            // Local models (ADR-0025): the local connection asks this
+            // engine for its address on each call.
+            let local = local_commands::open(&data_dir, runtime.clone(), sink.clone(), app.handle().clone());
+            if let Some(manager) = &connections {
+                manager.set_local_endpoint(local.clone());
             }
             // Subscriptions through CLIs (ADR-0021): their tools come from
             // a local MCP endpoint that runs each call through the session.
@@ -492,17 +500,18 @@ pub fn run() {
                 guidance,
                 mcp,
                 clis,
+                local,
                 sink,
                 data_dir,
                 data_notices,
             });
+            tauri::async_runtime::block_on(local_commands::sync_at_start(&app.state::<AppState>()));
             // Updates (ADR-0019): the version this run is, and a new one
             // in the history when it changed.
             let data_dir = app.state::<AppState>().data_dir.clone();
             let (updates, change) = update_commands::Updates::open(&data_dir, &version);
             update_commands::record_change(app.state::<AppState>().sink.as_ref(), change, &version);
             app.manage(updates);
-            app.manage(offline_commands::Downloads::default());
             update_commands::start_auto_check(app.handle().clone());
             #[cfg(unix)]
             exit_on_termination_signals(app.handle().clone());
@@ -516,6 +525,7 @@ pub fn run() {
             commands::history_recent,
             commands::app_info,
             commands::pick_folder,
+            commands::pick_model_file,
             backup_commands::backup_status,
             backup_commands::backup_create,
             backup_commands::backup_delete,
@@ -571,12 +581,22 @@ pub fn run() {
             context_commands::handoff_start,
             context_commands::handoffs_list,
             context_commands::handoff_get,
-            offline_commands::offline_status,
-            offline_commands::offline_start,
-            offline_commands::offline_pull,
-            offline_commands::offline_cancel,
-            offline_commands::offline_delete,
-            offline_commands::offline_use,
+            local_commands::local_status,
+            local_commands::local_engine_install,
+            local_commands::local_engine_latest,
+            local_commands::local_engine_remove,
+            local_commands::local_cancel,
+            local_commands::local_download_catalog,
+            local_commands::local_hf_files,
+            local_commands::local_download_hf,
+            local_commands::local_import_ollama,
+            local_commands::local_add_file,
+            local_commands::local_remove_model,
+            local_commands::local_set_context,
+            local_commands::local_settings_save,
+            local_commands::local_stop,
+            local_commands::local_log,
+            local_commands::local_remove_legacy,
             cli_commands::clis_list,
             cli_commands::cli_save,
             mcp_commands::mcp_list,
@@ -644,6 +664,7 @@ pub fn run() {
             // Never leave `npm run dev` & co. orphaned when the app closes.
             if let Some(state) = handle.try_state::<AppState>() {
                 state.mcp.shutdown();
+                state.local.shutdown();
                 tauri::async_runtime::block_on(async {
                     state.sessions.shutdown().await;
                     state.runtime.shutdown().await;

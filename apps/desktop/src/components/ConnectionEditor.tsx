@@ -305,6 +305,12 @@ export function ConnectionEditor({ ready, active, connectionId, view, onSaved, o
             </button>
           ))}
       </div>
+      {draft.local && (
+        <div className="inline-notice">
+          Conexão mantida pelo Orchestrator: o endereço vem do motor local, e os modelos e o contexto de cada um ficam
+          em Configurações → Modelos locais.
+        </div>
+      )}
       {error && <div className="inline-error">{error}</div>}
       {notice && <div className="inline-notice ok">{notice}</div>}
       {report && <TestResult report={report} />}

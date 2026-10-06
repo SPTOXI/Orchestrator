@@ -3,7 +3,7 @@
 
 import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "./runtime";
-import type { AuditEvent, OfflineEvent, StreamEvent, UpdateEvent } from "./types";
+import type { AuditEvent, LocalEvent, StreamEvent, UpdateEvent } from "./types";
 
 type Handler<T> = (event: T) => void;
 
@@ -62,5 +62,5 @@ export const auditEvents = tauriChannel<AuditEvent>("runtime://audit");
 /** Update checks and downloads (ADR-0019). */
 export const updateEvents = tauriChannel<UpdateEvent>("runtime://update");
 
-/** Offline model downloads (ADR-0021). */
-export const offlineEvents = tauriChannel<OfflineEvent>("runtime://offline");
+/** The local models' engine: downloads and its state (ADR-0025). */
+export const localEvents = tauriChannel<LocalEvent>("runtime://local");

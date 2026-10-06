@@ -1,0 +1,36 @@
+[package]
+name = "orchestrator-local"
+description = "Orchestrator local models (ADR-0025): the llama.cpp engine it downloads and runs, GGUF models from Hugging Face, files or Ollama, and the server each session talks to."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+flate2 = "1"
+futures-util.workspace = true
+hex = "0.4"
+orchestrator-provider-api.workspace = true
+orchestrator-providers.workspace = true
+parking_lot.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+tar = "0.4"
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "process", "rt", "sync", "time"] }
+tokio-util.workspace = true
+zip = { version = "4", default-features = false, features = ["deflate-flate2"] }
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_SystemInformation"] }
+
+[dev-dependencies]
+orchestrator-core.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "fs"] }

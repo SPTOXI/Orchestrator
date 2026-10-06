@@ -3,11 +3,10 @@
 //! the generic profile.
 
 use crate::config::{
-    ApiKind, Connection, Credential, CredentialSource, GenericAuth, GenericProfile, MessageFormat,
-    ModelEntry, ProtocolOptions, StreamFormat, DEFAULT_MAX_TOOL_ROUNDS,
+    ApiKind, Connection, Credential, CredentialSource, GenericProfile, ModelEntry, ProtocolOptions,
+    DEFAULT_MAX_TOOL_ROUNDS,
 };
 use serde::Serialize;
-use serde_json::json;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -47,6 +46,7 @@ fn base(
         notes: None,
         first_response_secs: None,
         fallback: None,
+        local: false,
     }
 }
 
@@ -79,38 +79,6 @@ pub fn presets() -> Vec<Preset> {
     );
     anthropic.models = claude_models();
     anthropic.default_model = Some("claude-opus-5-5".into());
-
-    let ollama_native = {
-        let mut c = base(
-            "ollama-nativo",
-            "Ollama (API nativa)",
-            ApiKind::Generic,
-            "http://localhost:11434",
-            CredentialSource::None,
-        );
-        c.generic = Some(GenericProfile {
-            path: "/api/chat".into(),
-            auth: GenericAuth::None,
-            message_format: MessageFormat::Chat,
-            body: json!({
-                "model": "{{model}}",
-                "messages": "{{messages}}",
-                "stream": "{{stream}}",
-            }),
-            stream: StreamFormat::Ndjson,
-            text_path: "message.content".into(),
-            done_path: Some("done".into()),
-            done_marker: None,
-            input_tokens_path: Some("prompt_eval_count".into()),
-            output_tokens_path: Some("eval_count".into()),
-            error_path: Some("error".into()),
-            models_path: Some("/api/tags".into()),
-            models_list_path: Some("models".into()),
-            model_id_field: Some("name".into()),
-            ..GenericProfile::default()
-        });
-        c
-    };
 
     vec![
         Preset {
@@ -166,24 +134,6 @@ pub fn presets() -> Vec<Preset> {
                 "https://",
                 CredentialSource::Vault,
             ),
-        },
-        Preset {
-            key: "ollama",
-            label: "Ollama local (compatível)",
-            hint: "Modelos locais pelo endpoint compatível com OpenAI; sem chave.",
-            connection: base(
-                "ollama",
-                "Ollama local",
-                ApiKind::Openai,
-                "http://localhost:11434/v1",
-                CredentialSource::None,
-            ),
-        },
-        Preset {
-            key: "ollama-native",
-            label: "Ollama (API nativa, perfil genérico)",
-            hint: "Exemplo de API não compatível descrita por perfil: /api/chat em NDJSON.",
-            connection: ollama_native,
         },
         Preset {
             key: "generic",

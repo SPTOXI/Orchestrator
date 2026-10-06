@@ -332,15 +332,10 @@ async fn a_generic_api_works_with_the_prompt_tool_protocol() {
     })
     .await;
     let h = Harness::new();
-    let mut preset = orchestrator_provider_api::presets()
-        .into_iter()
-        .find(|p| p.key == "ollama-native")
-        .unwrap()
-        .connection;
-    preset.base_url = api.url("");
+    let mut preset = ndjson_connection(api.url(""));
     preset.models = vec![orchestrator_provider_api::ModelEntry::new("llama-test")];
     h.add(preset, None).await;
-    let session = h.start("ollama-nativo").await;
+    let session = h.start("ndjson-api").await;
     let done = h.turn(&session.id, "leia").await;
     assert_eq!(h.last_turn(&session.id), (TurnStatus::Completed, None));
     let shown = h.text(&session.id);
@@ -532,16 +527,11 @@ async fn models_are_discovered_for_each_protocol() {
     assert_eq!(gemini.len(), 1);
     assert_eq!(gemini[0].id, "gemini-x");
 
-    let mut ollama = orchestrator_provider_api::presets()
-        .into_iter()
-        .find(|p| p.key == "ollama-native")
-        .unwrap()
-        .connection;
-    ollama.base_url = api.url("");
+    let ndjson = ndjson_connection(api.url(""));
     let local = h
         .connections
         .models(ProbeRequest {
-            connection: ollama,
+            connection: ndjson,
             api_key: None,
             model: None,
         })
@@ -1279,4 +1269,32 @@ async fn an_overloaded_server_gives_way_to_the_fallback_connection() {
         "{error}"
     );
     assert_eq!(spare.requests().len(), 2, "no fallback configured");
+}
+
+/// A generic profile for an NDJSON chat API (`/api/chat`), the example
+/// the presets had before ADR-0025.
+fn ndjson_connection(base_url: String) -> orchestrator_provider_api::Connection {
+    serde_json::from_value(json!({
+        "id": "ndjson-api",
+        "name": "API NDJSON",
+        "kind": "generic",
+        "baseUrl": base_url,
+        "credential": {"source": "none"},
+        "generic": {
+            "path": "/api/chat",
+            "auth": {"type": "none"},
+            "messageFormat": "chat",
+            "body": {"model": "{{model}}", "messages": "{{messages}}", "stream": "{{stream}}"},
+            "stream": "ndjson",
+            "textPath": "message.content",
+            "donePath": "done",
+            "inputTokensPath": "prompt_eval_count",
+            "outputTokensPath": "eval_count",
+            "errorPath": "error",
+            "modelsPath": "/api/tags",
+            "modelsListPath": "models",
+            "modelIdField": "name"
+        }
+    }))
+    .unwrap()
 }

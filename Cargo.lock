@@ -2785,7 +2785,7 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "orchestrator-agents"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2805,7 +2805,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "chrono",
  "serde",
@@ -2815,7 +2815,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-desktop"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2824,6 +2824,7 @@ dependencies = [
  "orchestrator-core",
  "orchestrator-engine",
  "orchestrator-git",
+ "orchestrator-local",
  "orchestrator-mcp",
  "orchestrator-memory",
  "orchestrator-provider-api",
@@ -2846,7 +2847,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-engine"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2866,7 +2867,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-git"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "chrono",
  "parking_lot",
@@ -2880,8 +2881,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "orchestrator-local"
+version = "0.1.2"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "flate2",
+ "futures-util",
+ "hex",
+ "libc",
+ "orchestrator-core",
+ "orchestrator-provider-api",
+ "orchestrator-providers",
+ "parking_lot",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "windows-sys 0.59.0",
+ "zip",
+]
+
+[[package]]
 name = "orchestrator-mcp"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2901,7 +2928,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-memory"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "chrono",
  "orchestrator-core",
@@ -2915,7 +2942,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-provider-api"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2935,7 +2962,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-provider-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2955,7 +2982,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-providers"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2972,7 +2999,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-router"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2988,7 +3015,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-runtime"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -6329,6 +6356,7 @@ checksum = "caa8cd6af31c3b31c6631b8f483848b91589021b28fffe50adada48d4f4d2ed1"
 dependencies = [
  "arbitrary",
  "crc32fast",
+ "flate2",
  "indexmap 2.14.2",
  "memchr",
 ]

@@ -23,6 +23,7 @@ orchestrator-engine.workspace = true
 orchestrator-git.workspace = true
 orchestrator-mcp.workspace = true
 orchestrator-memory.workspace = true
+orchestrator-local.workspace = true
 orchestrator-provider-api.workspace = true
 orchestrator-provider-cli.workspace = true
 orchestrator-providers.workspace = true

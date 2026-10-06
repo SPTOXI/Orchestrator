@@ -41,8 +41,6 @@ Pontos de partida ("Adicionar API"), todos editáveis:
 | Google Gemini | `gemini` | `https://generativelanguage.googleapis.com/v1beta` |
 | OpenRouter | `openai` | `https://openrouter.ai/api/v1` (a descoberta traz preços) |
 | Compatível com OpenAI | `openai` | a preencher: DeepSeek, Groq, Mistral, xAI, Together, vLLM, LM Studio… |
-| Ollama local (compatível) | `openai` | `http://localhost:11434/v1`, sem chave |
-| Ollama (API nativa) | `generic` | `http://localhost:11434`: exemplo de perfil (`/api/chat` em NDJSON) |
 | Qualquer API | `generic` | perfil em branco |
 
 Pode haver várias conexões do mesmo tipo (ex.: duas contas OpenAI, três
@@ -220,7 +218,7 @@ Descreve uma API sem código. Caminhos usam pontos e índices
 | `errorPath` | mensagem de erro no corpo |
 | `modelsPath` / `modelsListPath` / `modelIdField` | descoberta de modelos (opcional) |
 
-Exemplo (preset "Ollama, API nativa"):
+Exemplo (uma API de chat que responde em NDJSON):
 
 ```json
 {

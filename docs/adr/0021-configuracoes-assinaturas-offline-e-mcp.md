@@ -1,6 +1,8 @@
 # ADR-0021 — Configurações, regras e skills, MCP, assinaturas por CLI e modelos offline
 
-- **Estado:** Aceita
+- **Estado:** Aceita; os modelos offline pelo Ollama (item 5) foram
+  substituídos pelo motor próprio da
+  [ADR-0025](./0025-motor-local-proprio.md)
 - **Fase:** depois da 12 (pedido do usuário)
 
 ## Contexto

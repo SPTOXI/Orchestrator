@@ -17,7 +17,7 @@ import { MemoryPanel } from "./components/MemoryPanel";
 import { TasksPanel } from "./components/TasksPanel";
 import { CliSection } from "./components/CliSection";
 import { McpSection } from "./components/McpSection";
-import { OfflineSection } from "./components/OfflineSection";
+import { LocalModelsSection } from "./components/LocalModelsSection";
 import { type SettingsSection, SettingsPage, SettingsView } from "./components/SettingsView";
 import { DataSection } from "./components/DataSection";
 import { terminalRequests } from "./lib/terminalRequests";
@@ -1053,10 +1053,10 @@ export function App() {
                                 <McpSection ready={ready} active={shown} />
                               </SettingsPage>
                             );
-                          case "offline":
+                          case "local":
                             return (
-                              <SettingsPage title="Modelos offline">
-                                <OfflineSection
+                              <SettingsPage title="Modelos locais">
+                                <LocalModelsSection
                                   ready={ready}
                                   active={shown}
                                   onOpenConnection={(id) => {
@@ -1349,8 +1349,8 @@ function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenPr
                   quando há versão nova — você decide quando instalar (clique na versão, na barra de status).
                 </li>
                 <li>
-                  <strong>Assinaturas e modelos offline</strong>: use Claude Pro/Max, ChatGPT ou a conta Google pelas
-                  CLIs oficiais, ou modelos que rodam no seu computador pelo Ollama.
+                  <strong>Assinaturas e modelos locais</strong>: use Claude Pro/Max, ChatGPT ou a conta Google pelas
+                  CLIs oficiais, ou modelos que rodam no seu computador com o motor do próprio Orchestrator.
                 </li>
                 <li>
                   <strong>Configurações</strong> (engrenagem): regras de desenvolvimento, skills, servidores MCP,
@@ -1369,7 +1369,7 @@ function Welcome({ ready, hasProject, recent, onPickFolder, onDiscover, onOpenPr
             <li>0 a 11 concluídas: o plano do documento mestre está completo.</li>
             <li>12 — instaladores, release e atualização automática.</li>
             <li>
-              Depois: acesso total à internet, Configurações, assinaturas por CLI, modelos offline, MCP, dados
+              Depois: acesso total à internet, Configurações, assinaturas por CLI, modelos locais, MCP, dados
               preservados nas atualizações e vários projetos com IAs que se consultam.
             </li>
           </ul>
