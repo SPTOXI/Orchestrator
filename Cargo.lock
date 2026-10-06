@@ -2785,7 +2785,7 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "orchestrator-agents"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2805,7 +2805,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "serde",
@@ -2815,7 +2815,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-desktop"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2846,7 +2846,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-engine"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2866,7 +2866,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-git"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "parking_lot",
@@ -2881,7 +2881,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-mcp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2901,7 +2901,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-memory"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "orchestrator-core",
@@ -2915,7 +2915,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-provider-api"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2935,7 +2935,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-provider-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2955,7 +2955,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-providers"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2972,7 +2972,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-router"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2988,7 +2988,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrator-runtime"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "chrono",
