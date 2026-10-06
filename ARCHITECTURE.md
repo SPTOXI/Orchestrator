@@ -1,0 +1,590 @@
+# Arquitetura do Orchestrator
+
+Este documento descreve a arquitetura-alvo do Orchestrator, o que já foi
+implementado e onde cada responsabilidade vive no repositório. Toda mudança
+estrutural é registrada antes como ADR em [`docs/adr/`](./docs/adr).
+
+## 1. Princípios (regra de ouro)
+
+1. **IA é substituível.** Nenhum módulo do núcleo depende de OpenAI ou Anthropic.
+2. **Projeto é permanente.** Memória, histórico e decisões pertencem ao projeto.
+3. **Agentes são descartáveis.** Conhecimento vive no projeto, não no agente.
+4. **Providers são intercambiáveis.** Todos implementam a mesma interface `AIProvider`.
+5. **Workspace local é a fonte primária.** GitHub é remoto.
+6. **O Orchestrator controla a execução.** Providers pedem `tool_call`; o runtime executa.
+7. **O usuário decide o nível de autonomia** (Assistido, Autônomo, Acesso Irrestrito).
+8. **Observabilidade não é restrição.** Logs, histórico e auditoria são sempre registrados,
+   inclusive em Acesso Irrestrito.
+
+## 2. Visão em camadas
+
+```text
+┌──────────────────────────────────────────────────────────────────────┐
+│ Desktop UI (React + TypeScript)                  apps/desktop/src    │
+│   painéis: PROJECT · AI PROVIDERS · TASKS · AGENTS · TERMINAL · GIT   │
+│            MEMORY · HISTORY                                           │
+└───────────────▲──────────────────────────────┬───────────────────────┘
+                │ eventos (runtime://stream,    │ invoke (runtime_invoke,
+                │          runtime://audit)     │  terminal_input, session_*, …)
+┌───────────────┴──────────────────────────────▼───────────────────────┐
+│ Tauri (ponte IPC, sem lógica de domínio)   apps/desktop/src-tauri    │
+└───────────────▲──────────────────────────────┬───────────────────────┘
+                │ EventSink                     │ ToolRuntime::invoke(ToolCall),
+                │                               │ SessionManager (providers)
+┌───────────────┴──────────────────────────────▼───────────────────────┐
+│ Rust Runtime                                                          │
+│   Tool Runtime (packages/runtime)                                     │
+│     filesystem · shell · terminal (PTY) · process manager             │
+│     git (Fase 2) · github (Fase 10) · package managers · runtimes     │
+├───────────────────────────────────────────────────────────────────────┤
+│ Orchestrator Core                                                     │
+│   core (contratos)  · provider layer (Fase 3: AIProvider, registro,   │
+│   sessões; Fase 4: conexões de API) · router/Conselho (Fase 5) ·      │
+│   memory/history (Fase 6) · orchestrator engine (Fase 7: context      │
+│   builder, handoff, ferramentas de memória) · agent manager ·         │
+│   task manager                                                        │
+├───────────────────────────────────────────────────────────────────────┤
+│ Local Database (SQLite, Fase 6)        <app-data>/orchestrator.db     │
+└───────────────────────────────────────────────────────────────────────┘
+```
+
+O fluxo de controle é sempre:
+
+```text
+React → Tauri → Rust Runtime → Orchestrator Core
+```
+
+e o fluxo de trabalho de uma IA é:
+
+```text
+AIProvider ──tool_call──▶ Orchestrator ──▶ Tool Runtime ──▶ SO / Workspace / Git ──▶ GitHub
+```
+
+**Nenhum provider acessa o sistema operacional diretamente.** Providers só
+produzem `ToolCall`s; quem executa é o `ToolRuntime`, que registra cada
+execução como evento de auditoria.
+
+## 3. Módulos e localização
+
+Todo o núcleo roda em Rust, no processo do Tauri (ver
+[ADR-0001](./docs/adr/0001-monorepo-hibrido-nucleo-em-rust.md)). O React é
+apenas apresentação.
+
+| Módulo | Local | Linguagem | Fase | Estado |
+| ------ | ----- | --------- | ---- | ------ |
+| Desktop UI | `apps/desktop/src` | React/TS | 1–7 | ✅ shell, PROJECT, AI PROVIDERS (cadastro de APIs, Conselho) + sessões, GIT, terminal, processos, MEMORY, HISTORY, abas Contexto e Handoff |
+| Ponte IPC | `apps/desktop/src-tauri` | Rust | 1–7 | ✅ (inclui o cofre do SO, `vault.rs`, a ligação dos stores com o banco, `persistence.rs`, e os comandos de contexto e handoff) |
+| Core (contratos) | `packages/core` | Rust | 1–7 | ✅ `ToolCall`, `ToolResult`, `ToolDefinition`, `AuditEvent`, `StreamEvent`, `EventSink`, `ProjectProfile`, `SessionInfo`, `SessionEvent`, `TokenUsage`, `HandoffPacket`, `Handoff`, `ContextSummary` |
+| Tool Runtime | `packages/runtime` | Rust | 1–4 | ✅ filesystem, shell, terminal, process, project, git, package, runtime; JSON Schema dos argumentos (Fase 4) |
+| Git local | `packages/git` | Rust | 2 | ✅ `git` do sistema (ADR-0007) |
+| Project Discovery / Profile | `packages/core` (tipos) + `packages/runtime` (detecção) | Rust | 2 | ✅ (ADR-0008) |
+| AIProvider / Registry / Sessions | `packages/providers` | Rust | 3, 5–7 | ✅ trait, registro, sessões, provider `echo` de desenvolvimento (ADR-0009); respostas avulsas `complete` (ADR-0011); `snapshot` e `SessionStore` (ADR-0012); `ContextSource` e contexto no primeiro turno (ADR-0013) |
+| Conexões de API (OpenAI e compatíveis, Anthropic, Gemini, perfil genérico) | `packages/providers/api` | Rust | 4, 6, 7 | ✅ cadastro livre, cofre do SO, ferramentas nativas ou por prompt, custo, teste de conexão (ADR-0010); conversa retomável após reiniciar (ADR-0012); contexto do projeto nas instruções de sistema (ADR-0013) |
+| Roteador de modelos e Conselho | `packages/router` | Rust | 5, 6 | ✅ ranking sem tokens, modos Desligado/Sugerir/Full (ADR-0011); deliberações e cache guardados (ADR-0012); Conselho de 1 a 5 IAs que analisam juntas e executam com reserva entre os membros (ADR-0024) |
+| SQLite, Memory, History, Decisions | `packages/memory` | Rust | 6, 7 | ✅ banco local, histórico por projeto, projetos, sessões, memória L1/L2/L3, decisões, deliberações (ADR-0012); handoffs, fatos da sessão e busca por relevância (ADR-0013) |
+| Context Builder, Handoff, ferramentas de memória das IAs | `packages/orchestrator` (`orchestrator-engine`) | Rust | 7 | ✅ contexto por seções com orçamento de tokens, `HandoffPacket` com rascunho por fatos e pela IA, `memory.*`/`decision.*` para as IAs (ADR-0013) |
+| SQLite: tasks | `packages/memory` | Rust | 8a | ✅ migração 3: `tasks` e `task_dependencies` (ADR-0014) |
+| Task Manager | `packages/orchestrator` (`orchestrator-engine`) | Rust | 8a | ✅ tasks com estados, dependências, subtasks e prioridade; contexto e sessão a partir da task (ADR-0014) |
+| SQLite: agentes e travas | `packages/memory` | Rust | 8b | ✅ migração 4: `agents` e `file_locks` (ADR-0015) |
+| Agent Manager, Subagents, File Locks | `packages/agents` | Rust | 8b | ✅ agentes executando tasks em paralelo, subagentes, travas por arquivo, handoff automático, Agent Board (ADR-0015) |
+| Autonomia (Assistido/Autônomo/Irrestrito), pedidos de autorização e Pause | `packages/orchestrator` (`orchestrator-engine`, módulo `autonomy`) | Rust | 9 | ✅ gate na frente de toda chamada de IA, regras do usuário, pedidos com resposta, liberação por sessão, modo por projeto e por agente, pausa (ADR-0016) |
+| GitHub, pull requests e operações remotas | `packages/git` (módulo `github`) + `packages/runtime` (`github.*`) | Rust | 10 | ✅ API REST v3, token do cofre/ambiente/`gh`, PRs com CI e revisões, merge, issues, `git.fetch`/`git.remotes` (ADR-0017) |
+| Instaladores, release e atualização automática | `apps/desktop/src-tauri` (`tauri.conf.json`, `update_commands.rs`) + `.github/workflows/release.yml` + `scripts/version.mjs` | Rust, Node | 12 | ✅ pacotes nos três sistemas, versão única, release em rascunho por tag, updater assinado só do lado Rust, `APP_UPDATED` (ADR-0019) |
+| Dados preservados nas atualizações | `apps/desktop/src-tauri` (`backup_commands.rs`, `files.rs`) + `packages/memory` (`VACUUM INTO`) | Rust | — | ✅ backup antes de instalar, ao abrir versão nova e antes de migrar o banco; restauração na abertura; gravação atômica; arquivos ilegíveis guardados (ADR-0022) |
+| Vários projetos e projetos relacionados | `packages/runtime` (`ToolCall.workspace`) + `packages/memory` (migração 5) + `packages/orchestrator` (`projects.rs`, seção RELATED PROJECTS) + painel PROJECT | Rust + TS | — | ✅ sessões presas ao seu projeto; projetos abertos lado a lado com abas por projeto; `projects.related`, `projects.ask` e `projects.request` entre projetos relacionados (ADR-0023) |
+| Otimização de tokens, cache, compactação, scheduling | `packages/providers/api` (custo, cache, compactação, retentativas) + `packages/agents` (fila e tetos) + `packages/memory` (gasto) + `packages/runtime` (supervisão) | Rust | 11 | ✅ custo real com cache, cache de prompt por protocolo, compactação pela própria IA, fila por prioridade com limite por provider, teto de custo por agente e orçamento diário, Job Object e órfãos (ADR-0018) |
+
+Alterações à estrutura original:
+
+- adição de `packages/runtime`
+  ([ADR-0002](./docs/adr/0002-pacote-runtime-para-o-tool-runtime.md));
+- `packages/providers/openai` e `packages/providers/claude` substituídos por
+  `packages/providers/api`, com providers só por API e cadastro livre
+  ([ADR-0010](./docs/adr/0010-providers-por-api-com-cadastro-livre.md));
+- adição de `packages/router` para o roteador de modelos e o Conselho
+  ([ADR-0011](./docs/adr/0011-roteador-de-modelos-e-conselho.md));
+- `packages/memory` como crate `orchestrator-memory`, que depende só de
+  `core`; providers e roteador expõem traits (`SessionStore`,
+  `DeliberationStore`) que o app liga ao banco
+  ([ADR-0012](./docs/adr/0012-sqlite-memoria-e-historico.md));
+- `packages/orchestrator` como crate `orchestrator-engine`, que depende de
+  `core`, `providers`, `memory` e `git`; recebe o executor de ferramentas do
+  app (`ToolExecutor`) em vez de depender do runtime, e o `SessionManager`
+  recebe o contexto por um trait (`ContextSource`)
+  ([ADR-0013](./docs/adr/0013-context-builder-e-handoff.md)).
+
+## 4. Tool Runtime (Fases 1–2)
+
+Ponto único de execução de operações de sistema. Entrada: `ToolCall`
+(`{ id, tool, args, origin }`). Saída: `ToolResult`
+(`{ callId, tool, ok, output, error, startedAt, finishedAt, durationMs }`).
+
+```text
+ToolRuntime::invoke(call)
+  ├── valida e desserializa args (camelCase, campos desconhecidos rejeitados)
+  ├── despacha para o módulo (filesystem | shell | terminal | process |
+  │                          project | git | package | runtime)
+  ├── emite AuditEvent TOOL_CALLED (sempre, com sucesso ou erro)
+  ├── emite eventos de domínio (FILE_CHANGED, COMMAND_EXECUTED, …)
+  └── retorna ToolResult
+```
+
+Catálogo implementado (detalhes em [`docs/tool-runtime.md`](./docs/tool-runtime.md)):
+
+| Grupo | Operações |
+| ----- | --------- |
+| filesystem | `list`, `read`, `write`, `move`, `delete` |
+| shell | `execute`, `list` |
+| terminal | `create`, `write`, `read`, `close`, `list` |
+| process | `start`, `stop`, `list`, `read` |
+| project | `discover`, `profile`, `open` |
+| git | `status`, `diff`, `log`, `branch`, `checkout`, `add`, `commit`, `pull`, `push`, `stash`, `reset` |
+| package | `install`, `run` |
+| runtime | `node`, `python`, `docker` |
+
+Cada ferramenta é marcada no catálogo como consulta (`readOnly`) ou ação; a
+marca vai no evento `TOOL_CALLED` (ADR-0008). Extensões ao catálogo da seção 9:
+`shell.list`, `terminal.list`, `process.read`
+([ADR-0004](./docs/adr/0004-operacoes-auxiliares-do-tool-runtime.md)) e
+`project.*` ([ADR-0008](./docs/adr/0008-projeto-deteccao-e-diretorio-base.md)).
+
+`git.remotes`, `git.fetch` e `github.*` (status, PRs, CI, issues; criar PR,
+comentar, merge, abrir issue) vêm da Fase 10
+([ADR-0017](./docs/adr/0017-github-e-operacoes-remotas.md), referência em
+[`docs/github.md`](./docs/github.md)).
+
+### 4.1 Terminal real
+
+- PTY nativo via `portable-pty` (ConPTY no Windows, pty Unix no Linux/macOS).
+- Shells detectados: PowerShell 7 (`pwsh`), Windows PowerShell, CMD, WSL,
+  Git Bash (Windows); bash, zsh, fish, sh, pwsh (Unix).
+- A saída é decodificada em UTF-8 de forma incremental, publicada em tempo real
+  (`StreamEvent::TerminalOutput`) e mantida num buffer circular endereçado por
+  offset, para que uma IA leia apenas o que é novo (`terminal.read { since }`).
+
+### 4.2 Shell e processos
+
+- `shell.execute` roda um comando não interativo e devolve stdout, stderr,
+  exit code, duração e `timedOut`. Exit code ≠ 0 **não** é erro da ferramenta:
+  é informação para quem chamou.
+- `process.start` mantém processos de longa duração; saída em tempo real e em
+  buffer; `process.stop` encerra a **árvore** de processos (grupo de processos
+  no Unix, `taskkill /T /F` no Windows).
+- Ao fechar o app (inclusive por SIGTERM/SIGINT/SIGHUP no Unix), todos os
+  terminais e processos gerenciados são encerrados.
+- **Queda do app** (Fase 11): no Windows, cada processo entra num Job Object
+  com "encerrar ao fechar"; no Linux e no macOS, os grupos ficam em
+  `<app-data>/processes.json` e o app encerra os que sobraram ao abrir de
+  novo, conferindo o horário de início para não matar um pid reaproveitado
+  ([ADR-0018](./docs/adr/0018-tokens-cache-compactacao-e-escalonamento.md)).
+
+### 4.3 Projeto (Fase 2)
+
+- `project.open` define o projeto ativo: o **diretório base do runtime** passa
+  a ser a raiz do projeto (caminhos relativos e `cwd` padrão de shell,
+  terminais e processos) e é emitido `PROJECT_OPENED`.
+- `project.profile` monta o PROJECT PROFILE: nome, caminho, Git (root, branch,
+  upstream, remotes, contagem de alterações), linguagens, frameworks, package
+  managers, runtimes (com versão pedida), Docker (Dockerfiles, compose,
+  imagens), bancos (Prisma, compose, dependências), ferramentas, arquivos
+  importantes, scripts e as **evidências** de cada conclusão. `.env` nunca é
+  lido.
+- `project.discover` varre raízes (padrão: pasta do usuário e pastas comuns
+  como `C:\Projetos`) em largura, sem entrar em `node_modules`, `target`,
+  pastas ocultas etc., e sem descer dentro de um projeto encontrado.
+
+### 4.4 Git (Fase 2)
+
+`packages/git` executa o `git` do sistema (credenciais, hooks e configuração
+do usuário valem igual ao terminal) e lê formatos estáveis para máquinas
+([ADR-0007](./docs/adr/0007-git-via-cli-do-sistema.md)). Sem prompts
+interativos (`GIT_TERMINAL_PROMPT=0`); consultas não disputam o `index.lock`
+(`GIT_OPTIONAL_LOCKS=0`). `git.commit` emite `GIT_COMMIT`; `git.push`, `GIT_PUSH`.
+Falhas do Git viram `COMMAND_FAILED` com a saída do comando.
+
+**GitHub (Fase 10).** O módulo `github` do mesmo crate é um cliente da API
+REST v3; o repositório vem do remoto do projeto (o do *upstream* da branch,
+senão `origin`) ou de `repo: "dono/nome"`. O token vem do cofre do sistema,
+de `GH_TOKEN`/`GITHUB_TOKEN` ou do `gh`, e nunca aparece em argumentos,
+eventos ou saídas. `github.pr.create` só abre PR de uma branch que está no
+GitHub sem commits pendentes (não faz push sozinho); o merge não é
+bloqueado pelo Orchestrator — quem decide é a proteção de branch do
+repositório. Eventos: `GITHUB_PR_CREATED`, `GITHUB_PR_MERGED`,
+`GITHUB_ISSUE_CREATED`. Nas IAs, as ações `github.*` passam pelo gate como
+qualquer outra (no Autônomo padrão, perguntam).
+
+### 4.5 Autonomia e o runtime (Fase 9)
+
+Há dois chamadores: o usuário, pela UI (`runtime_invoke`, origem `user`), e
+as sessões de provider, por `TurnContext::call_tool` (origem `agent`). Só o
+segundo caminho passa pelo gate de autonomia
+([ADR-0016](./docs/adr/0016-autonomia-e-pause.md), referência em
+[`docs/autonomy.md`](./docs/autonomy.md)), que é o executor mais de fora das
+sessões:
+
+```text
+TurnContext::call_tool → AutonomyGate → AgentTools → EngineTools → RuntimeTools → ToolRuntime::invoke
+```
+
+| Modo | Comportamento no gate |
+| ---- | --------------------- |
+| Assistido | consultas rodam; toda ação, leitura fora do projeto ou de `.env*` pede autorização |
+| Autônomo | as regras do usuário decidem (permitir, perguntar, negar; a primeira que casa decide) |
+| Acesso Irrestrito | **nada** é avaliado: sem confirmações, sem lista de comandos proibidos, sem exceção |
+
+- O modo de uma chamada é o do agente (quando o usuário deu um a ele), senão
+  o do projeto, senão o padrão (Assistido).
+- "Perguntar" abre um pedido que o usuário responde (Permitir, Permitir
+  nesta sessão, Negar com motivo); cancelar o turno cancela o pedido.
+- `Pause` retém as chamadas no gate e os turnos dos agentes.
+- Em todos os modos a auditoria continua ativa: uma chamada recusada pelo
+  gate é registrada como `TOOL_CALLED` pelo próprio gate. O runtime continua
+  sem lista de comandos proibidos e sem bloqueio silencioso.
+
+## 5. Contratos e eventos (packages/core)
+
+- `ToolCall`, `ToolResult`, `ToolError`, `ToolErrorKind`, `CallOrigin`
+  (`user` | `agent { agentId, sessionId?, provider? }` | `system` |
+  `council { deliberationId? }`, Fase 5), `ToolSpec`,
+  `ToolDefinition` (com o JSON Schema dos argumentos, Fase 4).
+- `SessionInfo`, `SessionEvent`, `SessionLogEntry`, `TokenUsage`,
+  `SessionStatus`, `TurnStatus`, ids `SessionId`/`TurnId`/`ProviderId` —
+  contratos das sessões de provider (Fase 3, ADR-0009).
+- `ProjectProfile`, `ProjectCandidate`, `GitSummary` — contratos do projeto
+  (Fase 2).
+- `AuditEvent { id, at, kind, origin, summary, data }` — histórico durável,
+  independente de provider. `EventKind` contém todos os eventos da seção 22 do
+  documento mestre, mais `PROCESS_EXITED` e `TERMINAL_EXITED`
+  ([ADR-0005](./docs/adr/0005-observabilidade-antes-do-sqlite.md)) e
+  `SESSION_STARTED`, `SESSION_RESUMED`, `SESSION_CLOSED`, `TURN_COMPLETED`
+  ([ADR-0009](./docs/adr/0009-camada-de-providers-e-sessoes.md)),
+  `CONNECTION_SAVED`, `CONNECTION_REMOVED`
+  ([ADR-0010](./docs/adr/0010-providers-por-api-com-cadastro-livre.md)),
+  `COUNCIL_CONFIGURED`, `COUNCIL_DELIBERATED`, `ROUTE_DECIDED`
+  ([ADR-0011](./docs/adr/0011-roteador-de-modelos-e-conselho.md)),
+  `MEMORY_SAVED`, `MEMORY_REMOVED`, `DECISION_SAVED`
+  ([ADR-0012](./docs/adr/0012-sqlite-memoria-e-historico.md)),
+  `CONTEXT_BUILT` ([ADR-0013](./docs/adr/0013-context-builder-e-handoff.md);
+  `HANDOFF_CREATED` e `HANDOFF_ACCEPTED` já eram da seção 22) e
+  `TASK_UPDATED` ([ADR-0014](./docs/adr/0014-task-manager.md); os três
+  `TASK_*` restantes já eram da seção 22).
+- `Task`, `TaskStatus`, `TaskPriority`, `TaskInput`, `TaskId` — contratos
+  das tasks (Fase 8a).
+- `Agent`, `AgentStatus`, `AgentId`, `FileLock` — contratos dos agentes e
+  das travas de arquivo (Fase 8b, ADR-0015), e `ToolErrorKind::Locked` para
+  a escrita recusada por trava. `AGENT_STARTED` e `AGENT_FINISHED` já eram
+  da seção 22.
+- `AutonomyMode`, `Decision`, `PolicyRule`, `ApprovalRequest`,
+  `ApprovalAnswer`, `ApprovalId` — contratos da autonomia (Fase 9,
+  ADR-0016), `ToolErrorKind::Denied` e os eventos `AUTONOMY_CHANGED`,
+  `APPROVAL_REQUESTED`, `APPROVAL_DECIDED`, `EXECUTION_PAUSED` e
+  `EXECUTION_RESUMED`. O agente ganhou o campo `autonomy` (o modo que o
+  usuário deu a ele).
+- Eventos `GITHUB_PR_CREATED`, `GITHUB_PR_MERGED` e `GITHUB_ISSUE_CREATED`
+  (Fase 10, ADR-0017); os tipos do GitHub ficam em `orchestrator-git`, não
+  no `core`: são dados de uma ferramenta, não contratos entre módulos.
+- Evento `CONTEXT_COMPACTED` e o evento de sessão `compacted`; `TokenUsage`
+  com `cacheWriteTokens` e `cacheSavedUsd`; `Agent.maxCostUsd`;
+  `TURN_COMPLETED` com o `model` e `AGENT_FINISHED` com o `reason`
+  (`costCeiling`, `dailyBudget`) (Fase 11, ADR-0018).
+- Evento `APP_UPDATED` (`from`, `to`, `via`) na primeira abertura de uma
+  versão nova (Fase 12, ADR-0019).
+- `HandoffPacket`, `Handoff`, `HandoffEnd`, `HandoffStatus`, `HandoffId`,
+  `ContextSummary` e os eventos de sessão `contextAttached` e `handedOff`
+  (Fase 7).
+- `StreamEvent` — eventos de alta frequência e não duráveis (saída de
+  terminal/processo, término, eventos de sessão de provider).
+- `EventSink` — trait que desacopla o runtime de quem consome eventos. O
+  sink do app grava no banco local e depois emite para a UI.
+
+IDs são UUID v7 (ordenáveis por tempo) e servem de chave primária no banco.
+
+## 6. Camada IPC
+
+Detalhada em [`docs/ipc.md`](./docs/ipc.md) e
+[ADR-0003](./docs/adr/0003-gateway-ipc-unico.md).
+
+| Comando Tauri | Finalidade |
+| ------------- | ---------- |
+| `runtime_invoke(tool, args)` | gateway único para qualquer ferramenta; auditado |
+| `runtime_tools()` | catálogo de ferramentas |
+| `terminal_input(id, data)` | canal de digitação humana no terminal (streaming, não auditado por tecla) |
+| `terminal_resize(id, cols, rows)` | redimensionamento do PTY |
+| `history_recent(limit)`, `history_query(query)` | histórico do banco: janela recente ou página com filtros e cursor (Fase 6) |
+| `app_info()` | versão, SO, diretórios, projeto aberto |
+| `pick_folder()` | seletor nativo de pasta (só UI; a pasta escolhida é aberta via `project.open`) |
+| `providers_list`, `provider_inspect`, `provider_select` | registro de providers e provider ativo (Fase 3) |
+| `sessions_list`, `session_start`, `session_get`, `session_send`, `session_cancel`, `session_close`, `session_resume`, `session_spawn`, `session_context_get`, `session_context_set` | sessões de provider (Fase 3); opções de contexto antes do primeiro turno (Fase 7) |
+| `connections_list`, `connection_save`, `connection_delete`, `connection_test`, `connection_models` | cadastro de APIs (Fase 4); a chave nunca volta para a webview |
+| `router_recommend`, `council_*`, `route_start_session` | roteador e Conselho (Fase 5) |
+| `projects_recent`, `project_current`, `project_forget`, `projects_import_recent` | projetos registrados no banco (Fase 6) |
+| `memory_overview`, `memory_list`, `memory_save`, `memory_delete`, `memory_search`, `decisions_list`, `decision_save` | memória do projeto e decisões (Fase 6) |
+| `context_preview`, `context_settings_get`, `context_settings_save` | prévia e configuração do contexto (Fase 7) |
+| `handoff_prepare`, `handoff_create`, `handoff_start`, `handoffs_list`, `handoff_get` | handoff entre IAs (Fase 7) |
+| `tasks_list`, `task_get`, `task_save`, `task_status`, `task_start_session`, `task_context` | tasks do projeto (Fase 8a) |
+| `agents_list`, `agent_get`, `agent_start`, `agent_stop`, `agents_stop_all`, `agent_locks`, `agent_settings_get`, `agent_settings_save` | agentes e travas de arquivo (Fase 8b) |
+
+| Evento Tauri | Payload |
+| ------------ | ------- |
+| `runtime://stream` | `StreamEvent` (saída/término de terminal e processo, eventos de sessão) |
+| `runtime://audit` | `AuditEvent` |
+
+## 7. Modelo de dados (Fase 6)
+
+Um banco SQLite por instalação, `<app-data>/orchestrator.db`, embutido e em
+WAL, com migrações por `PRAGMA user_version`
+([ADR-0012](./docs/adr/0012-sqlite-memoria-e-historico.md), referência em
+[`docs/memory.md`](./docs/memory.md)). Nada é gravado dentro da pasta do
+projeto.
+
+| Tabela | Conteúdo |
+| ------ | -------- |
+| `projects` | projetos abertos (caminho, nome, stack detectada) |
+| `audit_events` | histórico durável, com `project_id` e `session_id`; `tool_calls` é uma *view* sobre ele |
+| `sessions`, `session_entries` | sessões de provider (com a conversa nativa) e transcripts: o `agent_sessions`/`messages` do documento mestre |
+| `memory_entries` | memória L2 |
+| `decisions` | decisões do projeto |
+| `deliberations` | deliberações e cache do Conselho |
+| `search_index` | índice FTS5 da busca L3 |
+| `handoffs` | handoffs entre IAs, com o pacote (Fase 7, migração 2) |
+| `tasks`, `task_dependencies` | tasks do projeto e suas dependências (Fase 8a, migração 3) |
+| `agents`, `file_locks` | agentes e os arquivos que eles seguram enquanto trabalham (Fase 8b, migração 4) |
+
+As tabelas `artifacts` e `git_operations` entram com as migrações das
+Fases 9–10. Configuração
+(`connections.json`, `council.json`, `context.json`) continua em arquivos, e
+segredos só no cofre do SO.
+
+## 8. Memória, contexto e handoff (Fases 6–7)
+
+Implementado na Fase 6 (`packages/memory`):
+
+- **L1 Working Memory**: derivada do histórico do projeto: sessões, arquivos
+  alterados, comandos com código de saída e erros recentes. A task atual e o
+  objetivo entram com as tasks (Fase 8).
+- **L2 Project Memory**: entradas de arquitetura, stack, convenção, regra e
+  nota, com etiquetas, fixação e origem (usuário, IA ou detector). A stack
+  detectada vira uma entrada ao abrir o projeto.
+- **Decisões**: contexto, decisão, consequências e estado. Nunca são
+  apagadas.
+- **L3 Historical Memory**: busca FTS5 na memória, decisões, mensagens das
+  sessões, handoffs e eventos notáveis (commits, comandos, falhas).
+
+Implementado na Fase 7 (`packages/orchestrator`,
+[ADR-0013](./docs/adr/0013-context-builder-e-handoff.md), referência em
+[`docs/context.md`](./docs/context.md)):
+
+- **Context Builder**: monta `TASK + WORKING MEMORY + PROJECT MEMORY +
+  RELEVANT FILES + RECENT ERRORS + RELEVANT HISTORY + GIT STATE + HANDOFF`
+  por regras e busca FTS, sem chamar IA, dentro de um orçamento de tokens
+  (padrão 1.500). Arquivos entram só pelo caminho. Nunca envia L3 inteiro,
+  o repositório ou todas as mensagens; o que o orçamento cortou é
+  informado.
+- **Quando:** uma vez, no primeiro turno de cada sessão (nova, Conselho
+  Full, subagente, handoff), nas instruções de sistema. Registrado no
+  transcript (`contextAttached`) e no histórico (`CONTEXT_BUILT`), sem o
+  texto.
+- **Ferramentas de memória das IAs**: `memory.working`, `memory.search`,
+  `memory.list`, `memory.save`, `decision.list`, `decision.save`, pelo
+  mesmo caminho auditado das outras ferramentas. A IA grava com origem
+  `agent`, não altera o que o usuário escreveu e não apaga nada.
+- **HandoffPacket**: `goal, status, completed, remaining, files, commands,
+  errors, decisions, tests, nextAction`. O rascunho junta os fatos do
+  histórico (sem custo) e a narrativa da IA atual (um turno, opcional); o
+  usuário revisa e escolhe quem assume. A nova sessão recebe o pacote no
+  contexto, nunca a conversa anterior (`HANDOFF_CREATED`,
+  `HANDOFF_ACCEPTED`).
+
+Os buffers com offset do runtime (`terminal.read`/`process.read { since }`)
+permitem que uma IA leia só a saída nova.
+
+## 8.1 Tasks (Fase 8a)
+
+Implementado em `packages/orchestrator` e `packages/memory`
+([ADR-0014](./docs/adr/0014-task-manager.md), referência em
+[`docs/tasks.md`](./docs/tasks.md)):
+
+- **Task**: título, descrição, estado (`TODO`, `IN_PROGRESS`, `BLOCKED`,
+  `REVIEW`, `DONE`, `CANCELLED`), prioridade, provider/modelo, subtasks,
+  dependências, arquivos, sessões e resultado. Tasks não são apagadas: são
+  canceladas.
+- **Regras no motor**: transições válidas, dependências sem ciclo e
+  "só inicia quando o que ela espera está concluído". A UI só oferece o
+  que o motor aceitaria (`TaskView.can`).
+- **A task alimenta o resto**: o Context Builder monta o contexto a partir
+  dela (*task-scoped context*), o roteador sugere o modelo pelo texto dela
+  e a busca L3 a encontra.
+## 8.2 Agentes e travas de arquivo (Fase 8b)
+
+Implementado em `packages/agents`
+([ADR-0015](./docs/adr/0015-agentes-subagentes-e-file-locks.md), referência
+em [`docs/agents.md`](./docs/agents.md)):
+
+- **Agente**: uma task, uma sessão e um desfecho (`QUEUED`, `RUNNING`,
+  `DONE`, `FAILED`, `STOPPED`). Ele abre a sessão da task, conduz os turnos
+  e encerra chamando `agent.finish`; o resultado vai para a task, que fica
+  **em revisão** — quem conclui é o usuário.
+- **Fila e paralelismo**: começa quando há vaga (`maxParallel`, padrão 2) e
+  os arquivos da task estão livres; o painel diz o que está no caminho.
+- **Subagentes**: `agent.delegate` cria uma subtask e enfileira um
+  subagente (profundidade 2, até 5 por agente).
+- **File Lock Manager**: um dono por arquivo, tomado ao iniciar e ao
+  escrever, solto quando o agente termina. Escrita em arquivo de outro
+  agente é recusada com `LOCKED` e o motivo; leitura nunca trava e o
+  usuário nunca é bloqueado.
+- **Parou no meio, sai handoff** montado pelos fatos da sessão, sem gastar
+  turno de IA.
+- **Controles** da seção 11: Pausar, Retomar, Parar e Parar todos (Fase 9).
+  O que um agente pode fazer é o modo de autonomia (do projeto ou dado a ele
+  ao iniciar); quanto ele roda é o teto de turnos (padrão 12) e o de
+  paralelismo.
+
+## 8.3 Tokens, cache, compactação e escalonamento (Fase 11)
+
+[ADR-0018](./docs/adr/0018-tokens-cache-compactacao-e-escalonamento.md),
+referência em [`docs/tokens.md`](./docs/tokens.md). Nenhuma solução depende
+de um fornecedor; o que é de um fornecedor é otimização a mais.
+
+- **Custo real:** `TokenUsage` com `cacheWriteTokens` e `cacheSavedUsd`;
+  preço do cache por modelo (`cachedInputPrice`); o custo é o que o
+  fornecedor cobra, com leituras e gravações do cache.
+- **Cache de prompt:** prefixo estável (instruções congeladas, ferramentas
+  fixas, conversa só acrescentada); marcadores `cache_control` na
+  Anthropic, `prompt_cache_key` na OpenAI oficial.
+- **Compactação:** no adapter das conexões de API, entre turnos ou rodadas
+  e nunca com ferramenta pendente; a mesma IA resume a conversa (lendo do
+  cache) e o resumo abre a próxima mensagem. `CONTEXT_COMPACTED` no
+  histórico; a tela continua com tudo.
+- **Retentativas:** 408/429/5xx/529 e falhas de conexão, até duas, com
+  `retry-after`.
+- **Escalonamento:** fila por prioridade e chegada sem bloqueio de quem está
+  atrás, `providerLimits`, `maxCostUsd` por agente, `dailyBudgetUsd` por
+  projeto (para agentes, nunca as sessões do usuário), `maxSubagents`.
+- **Gasto:** lido do histórico (`TURN_COMPLETED` com o `model` e
+  `COUNCIL_DELIBERATED`), sem migração; barra de status, painel AGENTS e a
+  aba "Tokens e custo".
+
+## 8.4 Instaladores, release e atualizações (Fase 12)
+
+[ADR-0019](./docs/adr/0019-instaladores-release-e-atualizacao.md),
+referência em [`docs/release.md`](./docs/release.md).
+
+- **Pacotes:** `nsis`/`msi` (Windows), `app`/`dmg` universal (macOS),
+  `deb`/`rpm`/AppImage (Linux), pelo bundler do Tauri.
+- **Versão única:** o `package.json` da raiz manda; `scripts/version.mjs`
+  grava e confere a versão no desktop, no workspace Cargo, no `Cargo.lock`
+  e contra a tag. O `tauri.conf.json` lê a do `package.json` do desktop.
+- **Release:** `release.yml` gera os pacotes nos três sistemas e cria o
+  release em rascunho com o `latest.json`; o usuário publica.
+- **Atualização:** `tauri-plugin-updater` registrado só no Rust e só
+  quando o build traz a chave pública (`ORCHESTRATOR_UPDATER_PUBKEY`, do
+  release); a webview chama `update_*` como qualquer comando. Instalar é
+  do usuário, depois de parar os agentes com handoff; a assinatura é
+  conferida antes. `APP_UPDATED` registra a troca de versão na abertura.
+
+## 9. Providers (Fases 3–7)
+
+```typescript
+interface AIProvider {
+  start(); resume(); execute(); stream(); cancel();
+  spawnAgent(); inspect(); capabilities();
+  complete(); // Fase 5: resposta avulsa, sem sessão nem ferramentas
+  snapshot(); // Fase 6: estado da sessão nativa para retomar após reiniciar
+}
+```
+
+Implementado na Fase 3 como trait Rust em `packages/providers`
+([ADR-0009](./docs/adr/0009-camada-de-providers-e-sessoes.md), referência em
+[`docs/providers.md`](./docs/providers.md)):
+
+- **`AIProvider`** — os métodos acima (+ `descriptor`), com padrões
+  sensatos para `stream`, `resume`, `cancel`, `spawn_agent`, `complete` e
+  `snapshot`.
+- **`ProviderRegistry`** — providers registrados, provider ativo,
+  `PROVIDER_SWITCHED`.
+- **`SessionManager`** — a sessão pertence ao Orchestrator: um turno por vez,
+  transcript numerado, uso de tokens/custo, cancelamento com prazo,
+  encerrar/retomar, subagentes (mesmo provider ou outro), eventos ao vivo e
+  histórico. Desde a Fase 6, com um `SessionStore`, sessões e transcripts
+  sobrevivem ao reinício e voltam encerradas, prontas para retomar. Desde a
+  Fase 7, com um `ContextSource`, o primeiro turno leva o contexto do
+  projeto (`TurnInput.context`).
+- **`TurnContext::call_tool`** — única saída do provider para o sistema; o
+  Orchestrator executa pelo Tool Runtime com a sessão como origem.
+- **`echo`** — provider de desenvolvimento sem IA, para testes e builds de
+  desenvolvimento.
+
+### 9.1 Conexões de API (Fase 4)
+
+Os providers são **APIs cadastradas pelo usuário**, quantas ele quiser
+([ADR-0010](./docs/adr/0010-providers-por-api-com-cadastro-livre.md),
+referência em [`docs/api-connections.md`](./docs/api-connections.md)).
+Crate `packages/providers/api`:
+
+- **Tipos:** `openai` (e qualquer API compatível), `anthropic`, `gemini` e
+  `generic`. O `generic` descreve qualquer API HTTP/JSON por um perfil:
+  caminho, autenticação, modelo do corpo, SSE/NDJSON e onde ler texto e uso.
+- **Ferramentas:** chamada de funções nativa, protocolo por prompt
+  (`<tool_call>`, para qualquer modelo de texto) ou nenhuma. O catálogo vai
+  ao modelo com o JSON Schema de cada ferramenta, e quem executa é sempre o
+  Orchestrator.
+- **Credenciais:** a chave fica no cofre do SO ou numa variável de
+  ambiente. Nunca vai para arquivo, histórico, log ou UI.
+- **Modelos:** descoberta pela API, preços informados pelo usuário (custo
+  por turno, com o preço do cache desde a Fase 11), contexto e etiquetas
+  usadas pelo roteador e pelo Conselho (9.2).
+- **Sessões:** usam a instância registrada a cada turno. Editar uma conexão
+  vale para as sessões abertas, sem perder a conversa. A conversa vai para
+  o banco ao fim de cada turno e continua depois de reiniciar o app.
+
+Nenhuma chamada específica de fornecedor fora do adapter. Uma IA nova entra
+como conexão cadastrada (sem código) ou como um protocolo novo no crate.
+
+### 9.2 Roteador e Conselho (Fase 5)
+
+Escolha do modelo de cada tarefa
+([ADR-0011](./docs/adr/0011-roteador-de-modelos-e-conselho.md), referência
+em [`docs/router.md`](./docs/router.md)). Crate `packages/router`, que
+depende só de `core` e `providers`:
+
+- **Roteador:** detecta a atividade (código, depuração, revisão, testes,
+  planejamento, documentação, resumo, geral) e dá nota de 0 a 100 a cada
+  modelo registrado. A nota combina etiquetas, preço, contexto, ferramentas
+  e perfil (qualidade/velocidade), com pesos pela preferência. Não gasta
+  tokens e explica cada nota e cada exclusão.
+- **Conselho** (ADR-0024): de 1 a 5 membros (provider + modelo), e só
+  eles trabalham.
+  - Cada membro analisa a demanda por `AIProvider::complete`, sem sessão e
+    sem ferramentas, com o contexto do projeto
+    (`SessionManager::project_context`). Os membros rodam em paralelo.
+  - O 1º que respondeu escreve a síntese, o Plano do Conselho. Se falhar,
+    o próximo escreve.
+  - A ordem dos membros é a fila de execução. Quem falhou na análise vai
+    para o fim.
+  - A sessão abre com o 1º da fila e `StartRequest.reserves` = os outros.
+    Um turno que falha passa para a próxima reserva no mesmo turno
+    (`SessionEvent::FailedOver`, `SESSION_FAILOVER`).
+- **Modos:**
+  - *Desligado:* só o roteador;
+  - *Sugerir:* o Conselho analisa e o usuário aprova a execução
+    (`council_execute`);
+  - *Full:* o Conselho analisa e executa, com origem `council`. O Full
+    não dispensa o gate de autonomia: as ferramentas que a sessão pedir
+    passam por ele (Fase 9).
+- **Cache:** mesma demanda, mesmo projeto e mesmos membros = zero tokens,
+  também entre execuções do app (Fase 6).
+- **Histórico:** `COUNCIL_CONFIGURED`, `COUNCIL_DELIBERATED`,
+  `ROUTE_DECIDED` e `SESSION_FAILOVER`; as deliberações ficam no banco.
+- **Configuração:** `council.json` (configuração continua em arquivo,
+  ADR-0012).
+
+## 10. Plataformas
+
+| SO | Terminal | Shell padrão | Encerramento de árvore |
+| -- | -------- | ------------ | ---------------------- |
+| Windows | ConPTY | pwsh → powershell → cmd | `taskkill /T /F` |
+| Linux | pty | `$SHELL` → bash → sh | `kill(-pgid)` |
+| macOS | pty | `$SHELL` → zsh → bash → sh | `kill(-pgid)` |
+
+CI em Linux, Windows e macOS: ver
+[ADR-0006](./docs/adr/0006-ci-multiplataforma.md).

@@ -1,0 +1,23 @@
+{
+  "name": "orchestrator",
+  "version": "0.1.1",
+  "private": true,
+  "description": "Plataforma desktop/local de desenvolvimento assistido e autônomo por múltiplas IAs.",
+  "scripts": {
+    "dev": "pnpm --filter @orchestrator/desktop tauri dev",
+    "build": "pnpm --filter @orchestrator/desktop tauri build",
+    "tauri": "pnpm --filter @orchestrator/desktop tauri",
+    "test": "pnpm test:rust && pnpm test:web && pnpm test:scripts",
+    "test:rust": "cargo test --workspace",
+    "test:web": "pnpm --filter @orchestrator/desktop test",
+    "test:scripts": "node --test scripts/version.test.mjs",
+    "typecheck": "pnpm --filter @orchestrator/desktop typecheck",
+    "check": "pnpm typecheck && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings",
+    "version:set": "node scripts/version.mjs",
+    "version:check": "node scripts/version.mjs --check"
+  },
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  }
+}

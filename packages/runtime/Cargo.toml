@@ -1,0 +1,33 @@
+[package]
+name = "orchestrator-runtime"
+description = "Orchestrator Tool Runtime: filesystem, shell, terminal (PTY) and process manager."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+orchestrator-core.workspace = true
+orchestrator-git.workspace = true
+base64.workspace = true
+chrono.workspace = true
+encoding_rs = "0.8"
+parking_lot.workspace = true
+portable-pty.workspace = true
+reqwest.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+which.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+which.workspace = true
+tokio = { workspace = true, features = ["test-util", "net"] }

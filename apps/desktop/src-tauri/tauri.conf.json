@@ -1,0 +1,95 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Orchestrator",
+  "version": "../package.json",
+  "identifier": "dev.orchestrator.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Orchestrator",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 960,
+        "minHeight": 600
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": "'self' ipc: http://ipc.localhost",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' data:",
+        "font-src": "'self' data:"
+      },
+      "dangerousDisableAssetCspModification": [
+        "style-src"
+      ]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis",
+      "msi",
+      "app",
+      "dmg",
+      "deb",
+      "rpm",
+      "appimage"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Desenvolvimento assistido e autônomo por múltiplas IAs.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "publisher": "Orchestrator",
+    "copyright": "© 2026 Orchestrator",
+    "homepage": "https://github.com/SPTOXI/Orchestrator",
+    "longDescription": "Orchestrator é uma plataforma desktop de desenvolvimento assistido e autônomo por múltiplas IAs: conecte quantas APIs de IA quiser, trabalhe com agentes sobre o mesmo projeto, com memória, histórico, tasks, autonomia controlada e GitHub — sempre pelo runtime do Orchestrator.",
+    "createUpdaterArtifacts": false,
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": [
+          "PortugueseBR",
+          "English"
+        ],
+        "displayLanguageSelector": false
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
+    "linux": {
+      "deb": {
+        "recommends": [
+          "git"
+        ]
+      },
+      "rpm": {
+        "recommends": [
+          "git"
+        ]
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": [],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

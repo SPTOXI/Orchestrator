@@ -1,0 +1,20 @@
+[package]
+name = "orchestrator-git"
+description = "Orchestrator Git: the system git executable (ADR-0007) and the GitHub REST API (ADR-0017)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+chrono.workspace = true
+reqwest.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+which.workspace = true
+
+[dev-dependencies]
+parking_lot.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util"] }

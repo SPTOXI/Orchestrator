@@ -1,0 +1,263 @@
+//! Tauri commands of the AI Provider Layer (ADR-0009). They only forward to
+//! the `ProviderRegistry` / `SessionManager`, which record the history.
+//! The UI always acts as the user.
+
+use crate::AppState;
+use async_trait::async_trait;
+use orchestrator_core::{
+    CallOrigin, ProviderId, SessionId, SessionInfo, ToolCall, ToolDefinition, ToolResult, TurnId,
+};
+use orchestrator_provider_api::{
+    ConnectionManager, ConnectionView, ModelEntry, Preset, ProbeRequest, SaveRequest, TestReport,
+};
+use orchestrator_providers::{
+    ContextOptions, ProviderError, ProviderInfo, ProviderStatus, SessionSnapshot, StartRequest,
+    ToolExecutor,
+};
+use orchestrator_runtime::ToolRuntime;
+use serde::Serialize;
+use tauri::State;
+
+/// Provider tool calls run through the same audited `invoke` as the UI's.
+pub struct RuntimeTools(pub ToolRuntime);
+
+#[async_trait]
+impl ToolExecutor for RuntimeTools {
+    fn tools(&self) -> Vec<ToolDefinition> {
+        ToolRuntime::definitions().to_vec()
+    }
+
+    async fn execute(&self, call: ToolCall) -> ToolResult {
+        self.0.invoke(call).await
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProvidersView {
+    pub providers: Vec<ProviderInfo>,
+    pub active: Option<ProviderId>,
+}
+
+fn providers_view(state: &AppState) -> ProvidersView {
+    let registry = state.sessions.registry();
+    ProvidersView {
+        providers: registry.list(),
+        active: registry.active_id(),
+    }
+}
+
+#[tauri::command]
+pub fn providers_list(state: State<'_, AppState>) -> ProvidersView {
+    providers_view(&state)
+}
+
+#[tauri::command]
+pub async fn provider_inspect(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<ProviderStatus, ProviderError> {
+    state
+        .sessions
+        .registry()
+        .inspect(&ProviderId::from(id))
+        .await
+}
+
+/// Changes the active provider (`PROVIDER_SWITCHED`).
+#[tauri::command]
+pub fn provider_select(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<ProvidersView, ProviderError> {
+    state
+        .sessions
+        .registry()
+        .select(&ProviderId::from(id), CallOrigin::User)?;
+    Ok(providers_view(&state))
+}
+
+#[tauri::command]
+pub fn sessions_list(state: State<'_, AppState>) -> Vec<SessionInfo> {
+    state.sessions.list()
+}
+
+/// Opens a session on the open project (the runtime base directory).
+#[tauri::command]
+pub async fn session_start(
+    state: State<'_, AppState>,
+    request: Option<StartRequest>,
+) -> Result<SessionInfo, ProviderError> {
+    state
+        .sessions
+        .start(
+            request.unwrap_or_default(),
+            state.runtime.base_dir(),
+            CallOrigin::User,
+        )
+        .await
+}
+
+/// Session info plus transcript (merge with live events by `seq`).
+#[tauri::command]
+pub fn session_get(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<SessionSnapshot, ProviderError> {
+    state.sessions.snapshot(&SessionId::from(id))
+}
+
+/// Starts a streaming turn; progress arrives as `session` stream events.
+#[tauri::command]
+pub async fn session_send(
+    state: State<'_, AppState>,
+    id: String,
+    input: String,
+) -> Result<TurnId, ProviderError> {
+    state
+        .sessions
+        .send(&SessionId::from(id), input, CallOrigin::User)
+        .await
+}
+
+#[tauri::command]
+pub async fn session_cancel(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<SessionInfo, ProviderError> {
+    state.sessions.cancel(&SessionId::from(id)).await
+}
+
+#[tauri::command]
+pub async fn session_close(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<SessionInfo, ProviderError> {
+    state
+        .sessions
+        .close(&SessionId::from(id), CallOrigin::User)
+        .await
+}
+
+#[tauri::command]
+pub async fn session_resume(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<SessionInfo, ProviderError> {
+    state
+        .sessions
+        .resume(&SessionId::from(id), CallOrigin::User)
+        .await
+}
+
+/// Context options of a session (ADR-0013); changeable before its first
+/// turn.
+#[tauri::command]
+pub fn session_context_get(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<ContextOptions, ProviderError> {
+    state.sessions.context_options(&SessionId::from(id))
+}
+
+#[tauri::command]
+pub fn session_context_set(
+    state: State<'_, AppState>,
+    id: String,
+    options: ContextOptions,
+) -> Result<ContextOptions, ProviderError> {
+    state
+        .sessions
+        .set_context_options(&SessionId::from(id), options)
+}
+
+/// Opens a subagent session (`spawnAgent`).
+#[tauri::command]
+pub async fn session_spawn(
+    state: State<'_, AppState>,
+    parent_id: String,
+    request: Option<StartRequest>,
+) -> Result<SessionInfo, ProviderError> {
+    state
+        .sessions
+        .spawn(
+            &SessionId::from(parent_id),
+            request.unwrap_or_default(),
+            CallOrigin::User,
+        )
+        .await
+}
+
+// ------------------------------------------------------ API connections ---
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionsView {
+    pub connections: Vec<ConnectionView>,
+    pub presets: Vec<Preset>,
+    /// Where keys are stored (OS vault name).
+    pub vault: String,
+    /// Problems found when loading `connections.json`.
+    pub warnings: Vec<String>,
+}
+
+fn connections(state: &AppState) -> Result<&ConnectionManager, ProviderError> {
+    state.connections.as_deref().ok_or_else(|| {
+        ProviderError::unavailable("API connections are unavailable (see the app log)")
+    })
+}
+
+#[tauri::command]
+pub async fn connections_list(
+    state: State<'_, AppState>,
+) -> Result<ConnectionsView, ProviderError> {
+    let manager = connections(&state)?;
+    Ok(ConnectionsView {
+        connections: manager.list().await,
+        presets: manager.presets(),
+        vault: manager.secrets_backend(),
+        warnings: state.connection_warnings.clone(),
+    })
+}
+
+/// Creates or updates a connection; a typed key goes to the OS vault.
+#[tauri::command]
+pub async fn connection_save(
+    state: State<'_, AppState>,
+    request: SaveRequest,
+) -> Result<ConnectionView, ProviderError> {
+    let view = connections(&state)?.save(request, CallOrigin::User).await?;
+    // A new key or URL may change whether the provider is available.
+    state
+        .router
+        .forget_availability(&ProviderId::from(view.connection.id.as_str()));
+    Ok(view)
+}
+
+#[tauri::command]
+pub async fn connection_delete(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), ProviderError> {
+    connections(&state)?.remove(&id, CallOrigin::User).await?;
+    state.router.forget_availability(&ProviderId::from(id));
+    Ok(())
+}
+
+/// Tests a (possibly unsaved) connection: short reply + tool call check.
+#[tauri::command]
+pub async fn connection_test(
+    state: State<'_, AppState>,
+    request: ProbeRequest,
+) -> Result<TestReport, ProviderError> {
+    connections(&state)?.test(request).await
+}
+
+/// Models available to a (possibly unsaved) connection.
+#[tauri::command]
+pub async fn connection_models(
+    state: State<'_, AppState>,
+    request: ProbeRequest,
+) -> Result<Vec<ModelEntry>, ProviderError> {
+    connections(&state)?.models(request).await
+}

@@ -1,0 +1,188 @@
+name: Release
+
+# Installers for Windows, macOS and Linux (ADR-0019).
+# - tag vX.Y.Z (or a manual run with "release"): a DRAFT release on GitHub
+#   with the installers and the update manifest (latest.json). Publishing
+#   the draft is the user's call.
+# - a push whose commits touch the packaging: the same installers, kept as
+#   workflow artifacts; nothing is released. (Path filters do not apply to
+#   tag pushes, so every tag builds.)
+
+on:
+  push:
+    tags: ["v*"]
+    branches: ["**"]
+    paths:
+      - ".github/workflows/release.yml"
+      - "apps/desktop/src-tauri/tauri.conf.json"
+      - "apps/desktop/src-tauri/Cargo.toml"
+      - "apps/desktop/src-tauri/icons/**"
+      - "scripts/version.mjs"
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Criar o release em rascunho (senão, só os instaladores como artefatos)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    name: Versão
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: version
+        name: Uma versão só (e a da tag)
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            node scripts/version.mjs --check "${GITHUB_REF_NAME}"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            node scripts/version.mjs --check
+            echo "publish=${{ github.event_name == 'workflow_dispatch' && inputs.release || false }}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Instaladores (${{ matrix.name }})
+    needs: version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            args: ""
+            bundles: target/release/bundle/
+          - name: macOS universal
+            os: macos-latest
+            args: "--target universal-apple-darwin"
+            bundles: target/universal-apple-darwin/release/bundle/
+          - name: Linux
+            # The oldest supported Ubuntu: the packages then run on newer ones.
+            os: ubuntu-22.04
+            args: ""
+            bundles: target/release/bundle/
+    env:
+      # Embedded in the app: where updates come from and the key that
+      # verifies them. Without the key the app does not look for updates.
+      ORCHESTRATOR_UPDATER_PUBKEY: ${{ vars.UPDATER_PUBKEY }}
+      ORCHESTRATOR_UPDATER_ENDPOINT: https://github.com/${{ github.repository }}/releases/latest/download/latest.json
+      ORCHESTRATOR_COMMIT: ${{ github.sha }}
+      # Signs the update artifacts (never stored in the repository).
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tauri system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Assinatura de código (macOS, opcional)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          ID: ${{ secrets.APPLE_ID }}
+          PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        # The bundler signs whenever APPLE_CERTIFICATE exists, even empty:
+        # the variables are exported only when the secrets are there.
+        run: |
+          if [ -z "${CERTIFICATE}" ]; then
+            echo "::warning::Sem APPLE_CERTIFICATE: o app do macOS sai sem assinatura (o macOS pede confirmação na primeira abertura)."
+            exit 0
+          fi
+          for pair in APPLE_CERTIFICATE:CERTIFICATE APPLE_CERTIFICATE_PASSWORD:CERTIFICATE_PASSWORD \
+                      APPLE_SIGNING_IDENTITY:SIGNING_IDENTITY APPLE_ID:ID APPLE_PASSWORD:PASSWORD APPLE_TEAM_ID:TEAM_ID; do
+            name="${pair%%:*}"
+            source="${pair##*:}"
+            value="${!source}"
+            [ -n "${value}" ] || continue
+            delimiter="EOF_$(openssl rand -hex 8)"
+            { echo "${name}<<${delimiter}"; echo "${value}"; echo "${delimiter}"; } >> "$GITHUB_ENV"
+          done
+      - name: Assinatura das atualizações
+        id: signing
+        shell: bash
+        run: |
+          config="${RUNNER_TEMP}/release.conf.json"
+          if [ -n "${TAURI_SIGNING_PRIVATE_KEY}" ] && [ -n "${ORCHESTRATOR_UPDATER_PUBKEY}" ]; then
+            # The CLI checks each signature against the configured public key.
+            node -e 'console.log(JSON.stringify({bundle: {createUpdaterArtifacts: true},
+              plugins: {updater: {pubkey: process.env.ORCHESTRATOR_UPDATER_PUBKEY}}}))' > "$config"
+            echo "Atualizações assinadas: o app vai procurar e instalar versões novas."
+          elif [ -n "${TAURI_SIGNING_PRIVATE_KEY}" ]; then
+            echo "::error::Há o segredo TAURI_SIGNING_PRIVATE_KEY, mas falta a variável UPDATER_PUBKEY (a chave pública correspondente)."
+            exit 1
+          else
+            echo '{}' > "$config"
+            echo "::warning::Sem TAURI_SIGNING_PRIVATE_KEY: os instaladores saem sem atualização automática (veja docs/release.md)."
+          fi
+          echo "config=$config" >> "$GITHUB_OUTPUT"
+      - uses: tauri-apps/tauri-action@v0
+        id: tauri
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/desktop
+          tauriScript: pnpm tauri
+          args: ${{ matrix.args }} --config ${{ steps.signing.outputs.config }}
+          tagName: ${{ needs.version.outputs.publish == 'true' && 'v__VERSION__' || '' }}
+          releaseName: Orchestrator v__VERSION__
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true
+          updaterJsonPreferNsis: true
+          releaseBody: |
+            Instaladores do Orchestrator v__VERSION__.
+
+            - **Windows:** `Orchestrator_*_x64-setup.exe` (por usuário) ou `.msi`.
+            - **macOS** (Apple Silicon e Intel): `Orchestrator_*_universal.dmg`.
+            - **Linux:** `.AppImage`, `.deb` (Debian/Ubuntu) ou `.rpm` (Fedora/openSUSE).
+
+            Quem já tem o app recebe o aviso de atualização em "Sobre e atualizações".
+            Notas da versão: ver o histórico de commits desde o release anterior.
+      - name: Guardar os instaladores (sem release)
+        if: needs.version.outputs.publish != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: orchestrator-${{ needs.version.outputs.version }}-${{ matrix.name }}
+          path: ${{ matrix.bundles }}
+          if-no-files-found: error
+          retention-days: 7

@@ -1,0 +1,33 @@
+[package]
+name = "orchestrator-mcp"
+description = "Orchestrator MCP: external MCP servers as tools for the AIs, and the Orchestrator's tools served over MCP (ADR-0021)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+futures-util.workspace = true
+orchestrator-core.workspace = true
+orchestrator-providers.workspace = true
+parking_lot.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros", "net", "io-util", "io-std", "process"] }
+tokio-util.workspace = true
+uuid.workspace = true
+which.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "process"] }
+
+[[bin]]
+# A tiny stdio MCP server for the tests (not shipped with the app).
+name = "mcp-test-server"
+path = "src/bin/mcp-test-server.rs"
+test = false
+doc = false

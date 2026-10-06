@@ -1,0 +1,63 @@
+[workspace]
+resolver = "2"
+members = [
+    "packages/agents",
+    "packages/core",
+    "packages/git",
+    "packages/mcp",
+    "packages/memory",
+    "packages/orchestrator",
+    "packages/providers",
+    "packages/providers/api",
+    "packages/providers/cli",
+    "packages/router",
+    "packages/runtime",
+    "apps/desktop/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.1"
+edition = "2021"
+rust-version = "1.90"
+publish = false
+
+[workspace.dependencies]
+orchestrator-agents = { path = "packages/agents" }
+orchestrator-core = { path = "packages/core" }
+orchestrator-engine = { path = "packages/orchestrator" }
+orchestrator-git = { path = "packages/git" }
+orchestrator-mcp = { path = "packages/mcp" }
+orchestrator-memory = { path = "packages/memory" }
+orchestrator-providers = { path = "packages/providers" }
+orchestrator-provider-api = { path = "packages/providers/api" }
+orchestrator-provider-cli = { path = "packages/providers/cli" }
+orchestrator-router = { path = "packages/router" }
+orchestrator-runtime = { path = "packages/runtime" }
+
+async-trait = "0.1"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
+libc = "0.2"
+parking_lot = "0.12"
+portable-pty = "0.9"
+rusqlite = { version = "0.40", features = ["bundled"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "rustls-tls-native-roots", "stream", "json", "http2", "charset"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
+tokio-util = "0.7"
+uuid = { version = "1", features = ["serde", "v7"] }
+which = "8"
+
+tauri = { version = "2.12", features = [] }
+tauri-build = { version = "2.7", features = [] }
+tauri-plugin-dialog = "2.8"
+tauri-plugin-updater = "2.13"
+
+[profile.dev.package."*"]
+opt-level = 1

@@ -1,0 +1,296 @@
+//! The `AIProvider` interface (section 18 of the master document).
+
+use crate::context::TurnContext;
+use crate::error::ProviderError;
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use orchestrator_core::{ProviderId, SessionId, TokenUsage};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::path::PathBuf;
+use tokio_util::sync::CancellationToken;
+
+/// Who a provider is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderDescriptor {
+    /// Stable id, e.g. `openai-codex`.
+    pub id: ProviderId,
+    pub name: String,
+    pub vendor: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelInfo {
+    pub id: String,
+    pub name: String,
+    /// Context window in tokens, when known.
+    pub context_window: Option<u32>,
+    /// Can call tools natively, when known.
+    pub supports_tools: Option<bool>,
+    /// USD per million input tokens, when known.
+    pub input_price: Option<f64>,
+    /// USD per million output tokens, when known.
+    pub output_price: Option<f64>,
+    /// Free labels (e.g. "código", "barato"), used to route work (ADR-0011).
+    pub tags: Vec<String>,
+}
+
+/// What a provider supports. The Orchestrator adapts to it instead of
+/// assuming a specific vendor.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderCapabilities {
+    /// Emits output incrementally (`stream`).
+    pub streaming: bool,
+    /// Asks the Orchestrator to execute tools (`TurnContext::call_tool`).
+    pub tool_calls: bool,
+    /// Can reopen a native session (`resume`).
+    pub resume: bool,
+    /// Can stop a running turn.
+    pub cancel: bool,
+    /// Has its own subagents; otherwise `spawn_agent` opens a new session.
+    pub native_subagents: bool,
+    /// Exposes reasoning / thinking output.
+    pub reasoning: bool,
+    /// Reports token usage.
+    pub token_usage: bool,
+    /// Reports cost.
+    pub cost: bool,
+    /// Answers one-off requests without a session or tools (`complete`);
+    /// required to sit on the model Council (ADR-0011).
+    pub completion: bool,
+    /// Compacts its conversation into a summary (`TurnInput::compact`,
+    /// ADR-0018).
+    pub compaction: bool,
+    pub models: Vec<ModelInfo>,
+    pub default_model: Option<String>,
+}
+
+/// Result of `inspect`: can this provider be used right now?
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderStatus {
+    pub available: bool,
+    pub version: Option<String>,
+    /// `None` when not applicable or unknown.
+    pub authenticated: Option<bool>,
+    /// Human readable detail (what is missing, where it was found, …).
+    pub detail: Option<String>,
+    pub checked_at: DateTime<Utc>,
+}
+
+/// The provider's own session (e.g. an API conversation). Opaque to the
+/// Orchestrator, which only stores it to call the provider again.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeSession {
+    /// Provider-native id, shown to the user and used for `resume`.
+    pub reference: String,
+    pub model: Option<String>,
+    /// Provider-specific state needed to resume.
+    #[serde(default)]
+    pub data: Value,
+}
+
+/// What a session is opened for.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionSpec {
+    /// Orchestrator session id (not the native one).
+    pub session_id: SessionId,
+    /// Project workspace: the working directory of the session.
+    pub project_path: PathBuf,
+    pub title: String,
+    /// Requested model; `None` = provider default.
+    pub model: Option<String>,
+    /// System instructions (built by the Context Builder from Phase 7 on).
+    pub instructions: Option<String>,
+}
+
+/// When a provider compacts its conversation (ADR-0018): at a turn or
+/// tool-round boundary, once the last prompt passes the smaller of
+/// `thresholdTokens` and `thresholdPercent` of the model's context window.
+/// Kept in `context.json`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CompactionPolicy {
+    pub auto: bool,
+    pub threshold_tokens: u64,
+    pub threshold_percent: u8,
+}
+
+impl CompactionPolicy {
+    pub const DEFAULT_TOKENS: u64 = 150_000;
+    pub const MIN_TOKENS: u64 = 8_000;
+    pub const MAX_TOKENS: u64 = 2_000_000;
+    pub const DEFAULT_PERCENT: u8 = 80;
+
+    pub fn validate(&self) -> Result<(), String> {
+        if !(Self::MIN_TOKENS..=Self::MAX_TOKENS).contains(&self.threshold_tokens) {
+            return Err(format!(
+                "o limite da compactação vai de {} a {} tokens",
+                Self::MIN_TOKENS,
+                Self::MAX_TOKENS
+            ));
+        }
+        if !(10..=95).contains(&self.threshold_percent) {
+            return Err("a porcentagem da janela de contexto vai de 10% a 95%".into());
+        }
+        Ok(())
+    }
+
+    /// The prompt size, in tokens, past which a conversation is compacted.
+    pub fn limit(&self, context_window: Option<u32>) -> u64 {
+        match context_window {
+            Some(window) if window > 0 => self
+                .threshold_tokens
+                .min(u64::from(window) * u64::from(self.threshold_percent) / 100),
+            _ => self.threshold_tokens,
+        }
+    }
+}
+
+impl Default for CompactionPolicy {
+    fn default() -> Self {
+        Self {
+            auto: true,
+            threshold_tokens: Self::DEFAULT_TOKENS,
+            threshold_percent: Self::DEFAULT_PERCENT,
+        }
+    }
+}
+
+/// Input of one turn.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TurnInput {
+    pub text: String,
+    /// Project context for the session, set on its first turn only
+    /// (ADR-0013). Providers add it to the session's system instructions,
+    /// which then stay the same for the following turns.
+    pub context: Option<String>,
+    /// When the provider compacts on its own (ADR-0018).
+    pub compaction: CompactionPolicy,
+    /// Compact before anything else ("Compactar"). With an empty `text`
+    /// the turn only compacts.
+    pub compact: bool,
+}
+
+/// Aggregated output of one turn.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TurnOutput {
+    /// Final assistant text.
+    pub text: String,
+}
+
+/// A one-off request: no session, no history, no tools (ADR-0011).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CompletionRequest {
+    /// Model; `None` = the provider's default.
+    pub model: Option<String>,
+    pub system: Option<String>,
+    pub prompt: String,
+}
+
+/// Answer to a [`CompletionRequest`].
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Completion {
+    pub text: String,
+    /// Model that answered (reported by the API, else the requested one).
+    pub model: Option<String>,
+    /// Tokens and cost, when known.
+    pub usage: TokenUsage,
+}
+
+/// An AI provider adapter. Implementations live in their own crates
+/// (`packages/providers/api`, …) and never touch the operating
+/// system: every operation goes through [`TurnContext::call_tool`].
+///
+/// Text output goes to the context (`emit_text`) only in `stream`; `execute`
+/// returns it in [`TurnOutput`] and the Orchestrator records it.
+#[async_trait]
+pub trait AIProvider: Send + Sync + 'static {
+    fn descriptor(&self) -> ProviderDescriptor;
+
+    fn capabilities(&self) -> ProviderCapabilities;
+
+    /// Checks whether the provider can be used (installed, authenticated,
+    /// version).
+    async fn inspect(&self) -> ProviderStatus;
+
+    /// Opens a native session.
+    async fn start(&self, spec: &SessionSpec) -> Result<NativeSession, ProviderError>;
+
+    /// Reopens a native session. Returns the (possibly updated) session.
+    async fn resume(
+        &self,
+        _native: &NativeSession,
+        _spec: &SessionSpec,
+    ) -> Result<NativeSession, ProviderError> {
+        Err(ProviderError::unsupported(format!(
+            "{} cannot resume sessions",
+            self.descriptor().name
+        )))
+    }
+
+    /// Runs one turn and returns the complete answer.
+    async fn execute(
+        &self,
+        native: &NativeSession,
+        input: &TurnInput,
+        ctx: &TurnContext,
+    ) -> Result<TurnOutput, ProviderError>;
+
+    /// Runs one turn emitting output as it is produced. The default runs
+    /// `execute` and emits the answer at once.
+    async fn stream(
+        &self,
+        native: &NativeSession,
+        input: &TurnInput,
+        ctx: &TurnContext,
+    ) -> Result<TurnOutput, ProviderError> {
+        let output = self.execute(native, input, ctx).await?;
+        ctx.emit_text(&output.text);
+        Ok(output)
+    }
+
+    /// Provider-side cleanup when a turn is cancelled (kill a CLI, send an
+    /// interrupt, …). The turn also sees the cancellation through its
+    /// context.
+    async fn cancel(&self, _native: &NativeSession) -> Result<(), ProviderError> {
+        Ok(())
+    }
+
+    /// The native session with everything the provider needs to resume it
+    /// later, even after the app restarts (e.g. an API conversation). Called
+    /// after every turn and stored by the Orchestrator (ADR-0012). The
+    /// default returns it unchanged.
+    async fn snapshot(&self, native: &NativeSession) -> NativeSession {
+        native.clone()
+    }
+
+    /// Answers a one-off request without a session, history or tools. The
+    /// model Council uses it to deliberate (ADR-0011); a provider that
+    /// implements it sets `capabilities().completion`.
+    async fn complete(
+        &self,
+        _request: &CompletionRequest,
+        _cancel: &CancellationToken,
+    ) -> Result<Completion, ProviderError> {
+        Err(ProviderError::unsupported(format!(
+            "{} cannot answer one-off requests",
+            self.descriptor().name
+        )))
+    }
+
+    /// Opens a subagent session derived from `parent`. The default opens an
+    /// independent session; providers with native subagents override it.
+    async fn spawn_agent(
+        &self,
+        _parent: &NativeSession,
+        spec: &SessionSpec,
+    ) -> Result<NativeSession, ProviderError> {
+        self.start(spec).await
+    }
+}
