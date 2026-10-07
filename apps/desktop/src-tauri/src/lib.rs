@@ -597,6 +597,7 @@ pub fn run() {
             local_commands::local_stop,
             local_commands::local_log,
             local_commands::local_remove_legacy,
+            local_commands::local_connection_activate,
             cli_commands::clis_list,
             cli_commands::cli_save,
             mcp_commands::mcp_list,

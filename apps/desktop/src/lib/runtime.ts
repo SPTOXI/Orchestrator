@@ -463,6 +463,7 @@ export const localApi = {
   log: () => invoke<string[]>("local_log"),
   /** Removes the connection the app made for Ollama before ADR-0025. */
   removeLegacy: () => invoke<void>("local_remove_legacy"),
+  activateConnection: () => invoke<void>("local_connection_activate"),
 };
 
 export const mcpApi = {

@@ -1,6 +1,6 @@
 {
   "name": "orchestrator",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "description": "Plataforma desktop/local de desenvolvimento assistido e autônomo por múltiplas IAs.",
   "scripts": {
