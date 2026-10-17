@@ -152,7 +152,10 @@ async fn anthropic_requests_keep_a_stable_prefix_marked_for_the_cache() {
         .unwrap()
         .len() as u64
         / 4;
-    assert!(prompt.tools > tools_once, "tools counted on every request");
+    assert!(
+        u64::from(prompt.tools) > tools_once,
+        "tools counted on every request"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

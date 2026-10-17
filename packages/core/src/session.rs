@@ -44,20 +44,21 @@ pub struct TokenUsage {
     pub prompt: PromptBreakdown,
 }
 
-/// Where the input tokens of the requests went, estimated at about four
+/// Where the input tokens of the requests went (`u32`: keeps `TokenUsage`
+/// small; a turn never nears 4 billion tokens), estimated at about four
 /// characters per token (ADR-0018): the parts sum to roughly
 /// `input_tokens`, so the user sees what to cut.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct PromptBreakdown {
     /// System instructions, the project context among them.
-    pub system: u64,
+    pub system: u32,
     /// Tool definitions.
-    pub tools: u64,
+    pub tools: u32,
     /// Messages of the conversation (user, assistant, tool calls).
-    pub history: u64,
+    pub history: u32,
     /// Tool results sent back.
-    pub tool_results: u64,
+    pub tool_results: u32,
 }
 
 impl PromptBreakdown {
@@ -66,16 +67,19 @@ impl PromptBreakdown {
     }
 
     pub fn total(&self) -> u64 {
-        self.system + self.tools + self.history + self.tool_results
+        [self.system, self.tools, self.history, self.tool_results]
+            .into_iter()
+            .map(u64::from)
+            .sum::<u64>()
     }
 }
 
 impl AddAssign for PromptBreakdown {
     fn add_assign(&mut self, other: Self) {
-        self.system += other.system;
-        self.tools += other.tools;
-        self.history += other.history;
-        self.tool_results += other.tool_results;
+        self.system = self.system.saturating_add(other.system);
+        self.tools = self.tools.saturating_add(other.tools);
+        self.history = self.history.saturating_add(other.history);
+        self.tool_results = self.tool_results.saturating_add(other.tool_results);
     }
 }
 

@@ -66,23 +66,26 @@ pub(crate) fn breakdown(
     tools: &[ToolDefinition],
     messages: &[Message],
 ) -> PromptBreakdown {
+    let tokens = |text: &str| u32::try_from(estimate(text)).unwrap_or(u32::MAX);
     let mut parts = PromptBreakdown {
-        system: system.map_or(0, estimate),
+        system: system.map_or(0, tokens),
         tools: if tools.is_empty() {
             0
         } else {
-            serde_json::to_string(tools).map_or(0, |t| estimate(&t))
+            serde_json::to_string(tools).map_or(0, |t| tokens(&t))
         },
         ..Default::default()
     };
     for part in messages.iter().flat_map(|m| &m.parts) {
-        match part {
-            Part::Text(text) => parts.history += estimate(text),
-            Part::ToolCall(call) => {
-                parts.history += estimate(&call.name) + estimate(&call.args.to_string())
-            }
-            Part::ToolResult(result) => parts.tool_results += estimate(&result.content),
-        }
+        let (slot, size) = match part {
+            Part::Text(text) => (&mut parts.history, tokens(text)),
+            Part::ToolCall(call) => (
+                &mut parts.history,
+                tokens(&call.name).saturating_add(tokens(&call.args.to_string())),
+            ),
+            Part::ToolResult(result) => (&mut parts.tool_results, tokens(&result.content)),
+        };
+        *slot = slot.saturating_add(size);
     }
     parts
 }

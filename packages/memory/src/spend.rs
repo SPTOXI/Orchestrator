@@ -136,10 +136,10 @@ impl MemoryStore {
                 since,
                 compactions: compactions as u64,
                 prompt: PromptBreakdown {
-                    system: system as u64,
-                    tools: tools as u64,
-                    history: history as u64,
-                    tool_results: results as u64,
+                    system: system as u32,
+                    tools: tools as u32,
+                    history: history as u32,
+                    tool_results: results as u32,
                 },
                 prompt_calls: prompt_calls as u64,
                 ..Default::default()
