@@ -40,6 +40,7 @@ fn base(
         tool_mode: None,
         max_tool_rounds: DEFAULT_MAX_TOOL_ROUNDS,
         max_output_tokens: None,
+        max_tool_result_chars: None,
         options: ProtocolOptions::default(),
         generic: None,
         enabled: true,

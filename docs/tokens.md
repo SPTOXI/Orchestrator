@@ -87,9 +87,36 @@ formato que gasta menos tokens:
   comando) vão como blocos crus (`[content]` seguido do texto) depois do
   JSON compacto do resto, em vez de uma string JSON com `\n` e `\"`;
 - o resto vai em JSON compacto (antes, pelo MCP, ia indentado);
-- acima de 40.000 caracteres, o resultado é cortado nos dois lados: fica o
-  começo e o fim (onde costumam estar erros e resumos), com o aviso de
-  quanto saiu. O resultado inteiro continua no transcript e no histórico.
+- acima do limite, o resultado é cortado nos dois lados: fica o começo e o
+  fim (onde costumam estar erros e resumos), com o aviso de quanto saiu. O
+  resultado inteiro continua no transcript e no histórico.
+
+O limite é por conexão de API, em "Avançado" no editor da conexão ("Máx.
+caracteres por resultado de ferramenta", `maxToolResultChars`, de 1.000 a
+1.000.000). Sem ele, vale cerca de 10% da janela de contexto do modelo (4
+caracteres por token), entre 4.000 e 40.000: um modelo de 32 mil tokens
+recebe até 12.800 caracteres por resultado; sem janela informada, 40.000.
+Pelas CLIs (MCP), o limite é 40.000.
+
+### Resultados antigos saem da conversa
+
+Antes de compactar, quando o prompt passa da **metade** do limite da
+compactação, os resultados grandes de ferramentas (2.000 caracteres ou
+mais) de rodadas antigas viram uma nota de uma linha: "[result of
+filesystem.read cleared by the Orchestrator to save context (~2.600 tokens);
+call the tool again if you need it]". Ficam como estão os resultados das
+**3 últimas rodadas**, os erros e os curtos.
+
+- Acontece em blocos: só quando tira pelo menos um quarto do limite da
+  compactação. Mexer no começo da conversa recomeça o cache dali em diante,
+  então não pode acontecer a cada rodada.
+- A sessão recebe o aviso "2 resultados antigos de ferramentas saíram do
+  contexto (~5.200 tokens); a IA pode pedir de novo". A tela e o histórico
+  continuam com tudo.
+- Só nas conexões de API, como a compactação. Opção `clearToolResults` em
+  `context.json` ("Antes, tirar da conversa resultados antigos de
+  ferramentas", na aba Contexto), ligada por padrão; desligar a
+  compactação automática também desliga isto.
 
 ## Ferramentas por sessão
 
@@ -161,7 +188,7 @@ continua mostrando a conversa inteira: só o que vai para a IA é compactado.
 **Configuração** em `<app-data>/context.json`, na aba Contexto:
 
 ```json
-{ "compaction": { "auto": true, "thresholdTokens": 150000, "thresholdPercent": 80 } }
+{ "compaction": { "auto": true, "thresholdTokens": 150000, "thresholdPercent": 80, "clearToolResults": true } }
 ```
 
 | Ajuste | Padrão | Faixa |
@@ -169,6 +196,7 @@ continua mostrando a conversa inteira: só o que vai para a IA é compactado.
 | `auto` | `true` | — |
 | `thresholdTokens` | 150.000 | 8.000–2.000.000 |
 | `thresholdPercent` | 80 | 10–95 |
+| `clearToolResults` | `true` | — |
 
 ## Retentativas
 

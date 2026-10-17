@@ -60,6 +60,116 @@ fn estimate_messages(messages: &[Message]) -> u64 {
         .sum()
 }
 
+/// Messages of tool results, counted from the end, that are never cleared:
+/// what the AI is working with now.
+const KEEP_RESULT_MESSAGES: usize = 3;
+/// Results shorter than this stay: the note would save nothing.
+const CLEAR_MIN_CHARS: usize = 2_000;
+/// Opens the note that replaces a cleared result.
+const CLEARED_MARK: &str = "[result of ";
+
+/// What clearing old tool results did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Cleared {
+    pub results: u32,
+    /// Estimated tokens taken out of the prompt.
+    pub tokens: u64,
+}
+
+/// Whether the prompt passed the point where old tool results go
+/// (`CompactionPolicy::clear_limit`).
+pub(crate) fn clear_due(policy: &CompactionPolicy, model: &ModelEntry, prompt: u64) -> bool {
+    policy
+        .clear_limit(model.context_window)
+        .is_some_and(|limit| prompt >= limit)
+}
+
+/// Replaces large tool results older than the last rounds with a one-line
+/// note (ADR-0018): the AI can call the tool again. Only when that takes
+/// out at least `min_tokens`, so it happens in blocks and the prompt cache
+/// is not restarted on every round. Results of the latest rounds, errors
+/// and short results stay.
+pub(crate) fn clear_old_results(conv: &mut Conversation, min_tokens: u64) -> Cleared {
+    let holders: Vec<usize> = conv
+        .messages
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.tool_results().next().is_some())
+        .map(|(i, _)| i)
+        .collect();
+    let Some(cut) = holders.len().checked_sub(KEEP_RESULT_MESSAGES) else {
+        return Cleared::default();
+    };
+    let clearable = |result: &crate::conversation::ToolResultPart| {
+        !result.is_error
+            && !result.content.starts_with(CLEARED_MARK)
+            && result.content.chars().count() >= CLEAR_MIN_CHARS
+    };
+    let gain: u64 = holders[..cut]
+        .iter()
+        .flat_map(|&i| conv.messages[i].tool_results())
+        .filter(|r| clearable(r))
+        .map(|r| estimate(&r.content))
+        .sum();
+    if gain == 0 || gain < min_tokens {
+        return Cleared::default();
+    }
+    let mut cleared = Cleared::default();
+    for &i in &holders[..cut] {
+        for part in &mut conv.messages[i].parts {
+            let Part::ToolResult(result) = part else {
+                continue;
+            };
+            if !clearable(result) {
+                continue;
+            }
+            let tokens = estimate(&result.content);
+            result.content = format!(
+                "{CLEARED_MARK}{} cleared by the Orchestrator to save context (~{tokens} tokens); \
+                 call the tool again if you need it]",
+                result.name
+            );
+            cleared.results += 1;
+            cleared.tokens += tokens.saturating_sub(estimate(&result.content));
+        }
+    }
+    cleared
+}
+
+/// Clears old tool results when the prompt passed the point for it, says
+/// so in the session, and returns the new prompt size.
+pub(crate) fn clear_if_due(
+    conv: &mut Conversation,
+    policy: &CompactionPolicy,
+    model: &ModelEntry,
+    prompt: u64,
+    ctx: &TurnContext,
+) -> u64 {
+    if !clear_due(policy, model, prompt) {
+        return prompt;
+    }
+    let min_tokens = policy.clear_limit(model.context_window).unwrap_or(0) / 2;
+    let cleared = clear_old_results(conv, min_tokens);
+    if cleared.results == 0 {
+        return prompt;
+    }
+    conv.last_prompt_tokens = conv.last_prompt_tokens.saturating_sub(cleared.tokens);
+    ctx.notice(
+        orchestrator_core::NoticeLevel::Info,
+        format!(
+            "{} {} de ferramentas saíram do contexto (~{} tokens); a IA pode pedir de novo",
+            cleared.results,
+            if cleared.results == 1 {
+                "resultado antigo"
+            } else {
+                "resultados antigos"
+            },
+            cleared.tokens
+        ),
+    );
+    prompt.saturating_sub(cleared.tokens)
+}
+
 /// What a request is made of (ADR-0018), for the "Tokens e custo" view.
 pub(crate) fn breakdown(
     system: Option<&str>,
@@ -236,6 +346,80 @@ impl ApiProvider {
 mod tests {
     use super::*;
     use crate::conversation::ToolResultPart;
+
+    fn results(contents: &[&str]) -> Message {
+        Message {
+            role: Role::User,
+            parts: contents
+                .iter()
+                .enumerate()
+                .map(|(i, c)| {
+                    Part::ToolResult(ToolResultPart {
+                        id: format!("c{i}"),
+                        name: "filesystem.read".into(),
+                        content: (*c).into(),
+                        is_error: false,
+                        native_id: true,
+                    })
+                })
+                .collect(),
+            native: None,
+        }
+    }
+
+    fn contents(conv: &Conversation) -> Vec<String> {
+        conv.messages
+            .iter()
+            .flat_map(|m| m.tool_results())
+            .map(|r| r.content.clone())
+            .collect()
+    }
+
+    #[test]
+    fn old_large_results_leave_in_blocks() {
+        let big = "x".repeat(8_000);
+        let mut conv = Conversation {
+            messages: vec![
+                Message::user("leia"),
+                results(&[&big, "curto"]),
+                results(&[&big]),
+                results(&[&big]),
+                results(&[&big]),
+            ],
+            ..Default::default()
+        };
+        // Too little to gain: nothing changes (the cache stays).
+        assert_eq!(clear_old_results(&mut conv, 10_000), Cleared::default());
+        let cleared = clear_old_results(&mut conv, 1_000);
+        assert_eq!(cleared.results, 1);
+        assert!(cleared.tokens > 1_900, "{cleared:?}");
+        let after = contents(&conv);
+        assert!(
+            after[0].starts_with("[result of filesystem.read cleared"),
+            "{}",
+            after[0]
+        );
+        assert_eq!(after[1], "curto", "short results stay");
+        assert!(after[2..].iter().all(|c| c == &big), "the last rounds stay");
+        // Already cleared: nothing left to gain.
+        assert_eq!(clear_old_results(&mut conv, 0), Cleared::default());
+    }
+
+    #[test]
+    fn clearing_starts_at_half_the_compaction_limit() {
+        let policy = CompactionPolicy::default();
+        let model = ModelEntry {
+            context_window: Some(100_000),
+            ..ModelEntry::new("m")
+        };
+        assert!(!clear_due(&policy, &model, 39_999));
+        assert!(clear_due(&policy, &model, 40_000));
+        let off = CompactionPolicy {
+            clear_tool_results: false,
+            ..policy
+        };
+        assert!(!clear_due(&off, &model, 1_000_000));
+    }
 
     #[test]
     fn the_summary_comes_out_of_its_tags() {

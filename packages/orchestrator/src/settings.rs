@@ -108,6 +108,7 @@ mod tests {
                 auto: false,
                 threshold_tokens: 60_000,
                 threshold_percent: 50,
+                clear_tool_results: false,
             },
         };
         save(&path, &settings).unwrap();

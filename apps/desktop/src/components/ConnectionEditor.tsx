@@ -707,6 +707,23 @@ export function ConnectionEditor({ ready, active, connectionId, view, onSaved, o
               }}
             />
           </label>
+          <label
+            className="form-row"
+            title="Resultados maiores são cortados no começo e no fim antes de voltar para a IA; o resultado inteiro fica no histórico"
+          >
+            <span>Máx. caracteres por resultado de ferramenta</span>
+            <DraftInput
+              className="num"
+              placeholder="10% da janela do modelo, até 40000"
+              value={String(draft.maxToolResultChars ?? "")}
+              onCommit={(text) => {
+                const chars = numberOrNull(text);
+                update({
+                  maxToolResultChars: chars === null ? null : Math.min(1_000_000, Math.max(1_000, Math.round(chars))),
+                });
+              }}
+            />
+          </label>
           {(draft.kind === "anthropic" || draft.kind === "openai") && (
             <label
               className="form-row check-row"

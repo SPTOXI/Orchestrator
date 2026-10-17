@@ -741,6 +741,8 @@ export interface Connection {
   toolMode: ToolMode | null;
   maxToolRounds: number;
   maxOutputTokens: number | null;
+  /** Characters of one tool result sent to the AI; null: 10% of the context window, up to 40 000. */
+  maxToolResultChars?: number | null;
   options: ProtocolOptions;
   generic: GenericProfile | null;
   enabled: boolean;
@@ -1223,6 +1225,8 @@ export interface CompactionPolicy {
   auto: boolean;
   thresholdTokens: number;
   thresholdPercent: number;
+  /** Old large tool results leave the conversation at half the limit. */
+  clearToolResults: boolean;
 }
 
 export interface ContextSettings {

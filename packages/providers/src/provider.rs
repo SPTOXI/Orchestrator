@@ -119,6 +119,9 @@ pub struct CompactionPolicy {
     pub auto: bool,
     pub threshold_tokens: u64,
     pub threshold_percent: u8,
+    /// Before compacting, old large tool results leave the conversation
+    /// (a one-line note stays), once the prompt passes half the limit.
+    pub clear_tool_results: bool,
 }
 
 impl CompactionPolicy {
@@ -150,6 +153,12 @@ impl CompactionPolicy {
             _ => self.threshold_tokens,
         }
     }
+
+    /// The prompt size past which old tool results are cleared: half the
+    /// compaction limit, so it happens in blocks, well before compacting.
+    pub fn clear_limit(&self, context_window: Option<u32>) -> Option<u64> {
+        (self.auto && self.clear_tool_results).then(|| self.limit(context_window) / 2)
+    }
 }
 
 impl Default for CompactionPolicy {
@@ -158,6 +167,7 @@ impl Default for CompactionPolicy {
             auto: true,
             threshold_tokens: Self::DEFAULT_TOKENS,
             threshold_percent: Self::DEFAULT_PERCENT,
+            clear_tool_results: true,
         }
     }
 }
