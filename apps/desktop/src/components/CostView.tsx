@@ -5,7 +5,7 @@
 // twice.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { cacheRatio, SPEND_PERIODS, spendLabel } from "../lib/cost";
+import { cacheRatio, promptParts, SPEND_PERIODS, spendLabel } from "../lib/cost";
 import { auditEvents } from "../lib/events";
 import { formatUsd } from "../lib/format";
 import { costApi, errorMessage } from "../lib/runtime";
@@ -185,6 +185,38 @@ export function CostView({ active, ready, projectName, providerName, onOpenAgent
               )}
             </section>
             <section>
+              <h3>Do que a entrada é feita</h3>
+              {promptParts(report.prompt).length === 0 ? (
+                <p className="meta">
+                  Sem dados neste período: a composição é medida nas conexões de API (não nas assinaturas por CLI).
+                </p>
+              ) : (
+                <>
+                  <table className="cost-table">
+                    <tbody>
+                      {promptParts(report.prompt).map((part) => (
+                        <tr key={part.key}>
+                          <td>{part.label}</td>
+                          <td className="num">~{tokens(part.tokens)}</td>
+                          <td className="num">{part.percent}%</td>
+                          <td>
+                            <div className="prompt-bar">
+                              <div style={{ width: `${part.percent}%` }} />
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <p className="meta">
+                    Estimativa (cerca de 4 caracteres por token) de {tokens(report.promptCalls)}{" "}
+                    {report.promptCalls === 1 ? "turno" : "turnos"}, somando todos os pedidos de cada um. Ferramentas
+                    pesando muito? Escolha só os grupos que a sessão usa, na barra de contexto da sessão.
+                  </p>
+                </>
+              )}
+            </section>
+            <section>
               <h3>Como o Orchestrator economiza</h3>
               <ul className="plain-list meta">
                 <li>
@@ -194,6 +226,10 @@ export function CostView({ active, ready, projectName, providerName, onOpenAgent
                 <li>
                   Instruções, ferramentas e conversa repetem o mesmo começo a cada mensagem, marcado para o cache do
                   fornecedor: a leitura custa uma fração da entrada.
+                </li>
+                <li>
+                  Cada sessão pode oferecer só alguns grupos de ferramentas, e os resultados voltam para a IA sem
+                  escapes de JSON.
                 </li>
                 <li>
                   Conversas longas são compactadas pela própria IA (aba Contexto); cada sessão tem o botão “Compactar”.

@@ -36,6 +36,66 @@ pub trait ToolExecutor: Send + Sync + 'static {
     }
 }
 
+/// The tools of a session limited to some groups (`ContextOptions::tool_groups`,
+/// ADR-0018): only those go to the model, in the same order every turn (the
+/// prompt cache needs a stable prefix), and a call to another group is
+/// refused without running.
+pub struct ToolFilter {
+    inner: Arc<dyn ToolExecutor>,
+    groups: Vec<String>,
+}
+
+impl ToolFilter {
+    pub fn new(inner: Arc<dyn ToolExecutor>, groups: Vec<String>) -> Self {
+        Self { inner, groups }
+    }
+
+    fn allows(&self, group: &str) -> bool {
+        self.groups.iter().any(|g| g == group)
+    }
+
+    /// The group of `tool` when it exists and is outside the filter.
+    fn refused_group(&self, tool: &str) -> Option<String> {
+        self.inner
+            .tools()
+            .into_iter()
+            .find(|t| t.name == tool)
+            .map(|t| t.group)
+            .filter(|group| !self.allows(group))
+    }
+}
+
+#[async_trait]
+impl ToolExecutor for ToolFilter {
+    fn tools(&self) -> Vec<ToolDefinition> {
+        self.inner
+            .tools()
+            .into_iter()
+            .filter(|t| self.allows(&t.group))
+            .collect()
+    }
+
+    async fn execute(&self, call: ToolCall) -> ToolResult {
+        self.execute_with(call, CancellationToken::new()).await
+    }
+
+    async fn execute_with(&self, call: ToolCall, cancel: CancellationToken) -> ToolResult {
+        match self.refused_group(&call.tool) {
+            Some(group) => not_executed(
+                &call,
+                ToolError::new(
+                    ToolErrorKind::PermissionDenied,
+                    format!(
+                        "the tool group `{group}` is off for this session (its tools: {})",
+                        self.groups.join(", ")
+                    ),
+                ),
+            ),
+            None => self.inner.execute_with(call, cancel).await,
+        }
+    }
+}
+
 /// Receives the events of a turn: the session manager (transcript + live
 /// stream), or a test.
 pub trait TurnObserver: Send + Sync + 'static {

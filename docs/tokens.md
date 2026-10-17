@@ -91,6 +91,37 @@ formato que gasta menos tokens:
   começo e o fim (onde costumam estar erros e resumos), com o aviso de
   quanto saiu. O resultado inteiro continua no transcript e no histórico.
 
+## Ferramentas por sessão
+
+As definições das ferramentas vão em **todo** pedido à IA. Cada sessão pode
+oferecer só alguns grupos (`filesystem`, `git`, `github`, `web`, `memory`…):
+na barra de contexto da sessão, antes da primeira mensagem, "Ferramentas:
+todas (~9.800 tokens por pedido)" abre a lista de grupos, com quantas
+ferramentas e quantos tokens cada um custa.
+
+- A escolha fica em `ContextOptions.toolGroups` (`null`: todas), guardada
+  com a sessão, e só muda antes do primeiro turno: a lista de ferramentas
+  fica igual em todos os pedidos, como o cache de prompt precisa.
+- Só os grupos escolhidos vão para a IA, na ordem do catálogo, tanto nas
+  APIs quanto nas CLIs (pelo MCP). Uma chamada a outro grupo é recusada
+  sem executar (`PERMISSION_DENIED`, dizendo quais grupos a sessão tem).
+- Subagentes herdam os grupos do pai, a menos que o pedido diga outros.
+- Na Anthropic, o cache das ferramentas é compartilhado entre sessões do
+  mesmo modelo **com o mesmo conjunto** de grupos: conjuntos diferentes
+  gravam caches diferentes.
+
+## Do que a entrada é feita
+
+Cada pedido das conexões de API registra, em `TokenUsage.prompt`, uma
+estimativa (cerca de 4 caracteres por token) das partes do prompt:
+`system` (instruções e contexto do projeto), `tools` (definições de
+ferramentas), `history` (a conversa) e `toolResults` (resultados de
+ferramentas). Os pedidos de um turno se somam, como na cobrança. A aba
+"Tokens e custo" mostra "Do que a entrada é feita", com a parte de cada uma
+no período (`SpendReport.prompt` e `promptCalls`, os turnos que têm a
+medida). As CLIs não mostram o prompt que montam; para elas não há
+composição.
+
 ## Compactação de contexto
 
 Conversas longas são **resumidas pela própria IA**, igual nos quatro

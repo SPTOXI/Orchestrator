@@ -13,7 +13,7 @@ use crate::conversation::{Conversation, Message, Part, Role};
 use crate::protocol::{Delta, Stop};
 use crate::provider::{as_prompt_messages, retry_notice, ApiProvider, ModelCall};
 use crate::tools::parse_prompt_calls;
-use orchestrator_core::ToolDefinition;
+use orchestrator_core::{PromptBreakdown, ToolDefinition};
 use orchestrator_providers::{Compaction, CompactionPolicy, ProviderError, TurnContext};
 
 /// Asked after the conversation, as the last user text of the request.
@@ -58,6 +58,36 @@ fn estimate_messages(messages: &[Message]) -> u64 {
             Part::ToolResult(result) => estimate(&result.content),
         })
         .sum()
+}
+
+/// What a request is made of (ADR-0018), for the "Tokens e custo" view.
+pub(crate) fn breakdown(
+    system: Option<&str>,
+    tools: &[ToolDefinition],
+    messages: &[Message],
+) -> PromptBreakdown {
+    let tokens = |text: &str| u32::try_from(estimate(text)).unwrap_or(u32::MAX);
+    let mut parts = PromptBreakdown {
+        system: system.map_or(0, tokens),
+        tools: if tools.is_empty() {
+            0
+        } else {
+            serde_json::to_string(tools).map_or(0, |t| tokens(&t))
+        },
+        ..Default::default()
+    };
+    for part in messages.iter().flat_map(|m| &m.parts) {
+        let (slot, size) = match part {
+            Part::Text(text) => (&mut parts.history, tokens(text)),
+            Part::ToolCall(call) => (
+                &mut parts.history,
+                tokens(&call.name).saturating_add(tokens(&call.args.to_string())),
+            ),
+            Part::ToolResult(result) => (&mut parts.tool_results, tokens(&result.content)),
+        };
+        *slot = slot.saturating_add(size);
+    }
+    parts
 }
 
 /// Size of the next prompt: what the provider reported (plus what was

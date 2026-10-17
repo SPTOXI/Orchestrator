@@ -4,6 +4,7 @@
 
 use crate::store::{ts, MemoryStore, Sql};
 use chrono::{DateTime, Utc};
+use orchestrator_core::PromptBreakdown;
 use rusqlite::params;
 use serde::Serialize;
 
@@ -42,6 +43,10 @@ pub struct SpendReport {
     pub unpriced: u64,
     /// Conversations compacted (`CONTEXT_COMPACTED`).
     pub compactions: u64,
+    /// What the prompts were made of (estimates, API providers only).
+    pub prompt: PromptBreakdown,
+    /// Turns that reported `prompt`: the parts cover only these.
+    pub prompt_calls: u64,
     /// Most expensive first.
     pub rows: Vec<SpendRow>,
 }
@@ -78,6 +83,16 @@ FROM (
 )
 GROUP BY provider, model";
 
+/// Totals of `usage.prompt` over the turns that have it.
+const PROMPT: &str = "
+SELECT COALESCE(SUM(json_extract(data, '$.usage.prompt.system')), 0),
+       COALESCE(SUM(json_extract(data, '$.usage.prompt.tools')), 0),
+       COALESCE(SUM(json_extract(data, '$.usage.prompt.history')), 0),
+       COALESCE(SUM(json_extract(data, '$.usage.prompt.toolResults')), 0),
+       COUNT(json_extract(data, '$.usage.prompt'))
+FROM audit_events
+WHERE kind = 'TURN_COMPLETED' AND at >= ?1 AND (?2 IS NULL OR project_id = ?2)";
+
 impl MemoryStore {
     /// What the AIs of `project_id` (every project when `None`) spent since
     /// `since`. Never fails: an unreadable history reports nothing.
@@ -113,9 +128,20 @@ impl MemoryStore {
                 params![ts(&since), project_id],
                 |r| r.get(0),
             )?;
+            let (system, tools, history, results, prompt_calls): (i64, i64, i64, i64, i64) =
+                conn.query_row(PROMPT, params![ts(&since), project_id], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+                })?;
             let mut report = SpendReport {
                 since,
                 compactions: compactions as u64,
+                prompt: PromptBreakdown {
+                    system: system as u32,
+                    tools: tools as u32,
+                    history: history as u32,
+                    tool_results: results as u32,
+                },
+                prompt_calls: prompt_calls as u64,
                 ..Default::default()
             };
             for row in &rows {
@@ -177,6 +203,13 @@ mod tests {
         store.record(&turn(&a, "claude", "opus", usage(Some(1.0))));
         store.record(&turn(&a, "claude", "opus", usage(Some(2.0))));
         store.record(&turn(&a, "local", "llama", usage(None)));
+        store.record(&turn(
+            &a,
+            "claude",
+            "opus",
+            json!({"inputTokens": 100, "outputTokens": 1, "costUsd": 0.0,
+                   "prompt": {"system": 10, "tools": 50, "history": 30, "toolResults": 10}}),
+        ));
         store.record(&turn(&b, "claude", "opus", usage(Some(9.0))));
         store.record(&AuditEvent::new(
             EventKind::CouncilDeliberated,
@@ -203,12 +236,15 @@ mod tests {
         let report = store.spend(Some(&a), since);
         assert!((report.cost_usd - 3.25).abs() < 1e-9, "{report:?}");
         assert!((report.cache_saved_usd - 1.0).abs() < 1e-9);
-        assert_eq!(report.calls, 4);
+        assert_eq!(report.calls, 5);
+        assert_eq!(report.prompt_calls, 1);
+        assert_eq!(report.prompt.tools, 50);
+        assert_eq!(report.prompt.total(), 100);
         assert_eq!(report.unpriced, 1, "the local model has no price");
         assert_eq!(report.cached_input_tokens, 2400);
         assert_eq!(report.compactions, 1);
         assert_eq!(report.rows[0].provider, "claude");
-        assert_eq!(report.rows[0].calls, 2);
+        assert_eq!(report.rows[0].calls, 3);
         assert!(report.rows.iter().any(|r| r.provider == "conselho"));
 
         let all = store.spend(None, since);

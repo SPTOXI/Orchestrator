@@ -597,7 +597,10 @@ impl ApiProvider {
             if streaming && mode == ToolMode::Prompt {
                 ctx.emit_text(&filter.lock().finish());
             }
-            ctx.report_usage(self.priced(&model, &reply));
+            let mut usage = self.priced(&model, &reply);
+            usage.prompt =
+                compaction::breakdown(system.as_deref(), native_tools, &request_messages);
+            ctx.report_usage(usage);
             // What the next prompt starts from: this one plus the reply.
             conv.last_prompt_tokens = match reply.usage.input_tokens {
                 0 => 0,

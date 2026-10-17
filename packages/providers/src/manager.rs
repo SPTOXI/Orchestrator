@@ -4,7 +4,7 @@
 //! a time per session, keeps the transcript, sums token usage, publishes
 //! live events and records the history (`SESSION_*`, `TURN_COMPLETED`).
 
-use crate::context::{ToolExecutor, TurnContext, TurnObserver};
+use crate::context::{ToolExecutor, ToolFilter, TurnContext, TurnObserver};
 use crate::error::{ProviderError, ProviderErrorKind};
 use crate::failover::{handover_input, Reserve};
 use crate::log::SessionLog;
@@ -63,6 +63,16 @@ pub struct StartRequest {
     /// (ADR-0024). Empty: a failed turn just fails.
     #[serde(default)]
     pub reserves: Vec<Reserve>,
+}
+
+/// A group of tools as offered to the AI (`SessionManager::tool_groups`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolGroup {
+    pub group: String,
+    pub tools: u32,
+    /// Estimated tokens of its definitions, sent on every request.
+    pub tokens: u64,
 }
 
 /// A session with its transcript.
@@ -155,6 +165,8 @@ struct TurnStart {
     context: Option<ContextRequest>,
     /// "Compactar": the turn only compacts the conversation (ADR-0018).
     compact: bool,
+    /// The session's tool groups; `None`: every tool.
+    tool_groups: Option<Vec<String>>,
 }
 
 impl Session {
@@ -464,6 +476,28 @@ impl SessionManager {
         Ok(self.session(id)?.state.lock().context.clone())
     }
 
+    /// The tool groups an AI can be offered, in catalog order, with what
+    /// each one costs on every request (ADR-0018).
+    pub fn tool_groups(&self) -> Vec<ToolGroup> {
+        let mut groups: Vec<ToolGroup> = Vec::new();
+        for tool in self.inner.tools.tools() {
+            let tokens =
+                serde_json::to_string(&tool).map_or(0, |t| (t.chars().count() as u64).div_ceil(4));
+            match groups.iter_mut().find(|g| g.group == tool.group) {
+                Some(group) => {
+                    group.tools += 1;
+                    group.tokens += tokens;
+                }
+                None => groups.push(ToolGroup {
+                    group: tool.group,
+                    tools: 1,
+                    tokens,
+                }),
+            }
+        }
+        groups
+    }
+
     /// Changes the context options before the first turn (the context goes
     /// with it and is not rebuilt later).
     pub fn set_context_options(
@@ -479,9 +513,10 @@ impl SessionManager {
                     "the project context was already sent with the first turn",
                 ));
             }
-            state.context = options.clone();
+            state.context = options.normalized();
         }
         self.inner.persist(&session);
+        let options = session.state.lock().context.clone();
         Ok(options)
     }
 
@@ -579,7 +614,13 @@ impl SessionManager {
             model: request.model.filter(|m| !m.trim().is_empty()),
             instructions: request.instructions,
         };
-        let context = request.context;
+        let mut context = request.context.normalized();
+        // A subagent works with its parent's tools unless told otherwise.
+        if context.tool_groups.is_none() {
+            if let Some(parent) = &parent {
+                context.tool_groups = parent.state.lock().context.tool_groups.clone();
+            }
+        }
         // The session's own seat is no reserve of itself; neither is a seat
         // named twice.
         let own = Reserve {
@@ -839,6 +880,7 @@ impl SessionManager {
             project_path: state.spec.project_path.clone(),
             context,
             compact,
+            tool_groups: state.context.tool_groups.clone(),
         };
         drop(state);
         Ok((session, turn))
@@ -999,6 +1041,10 @@ async fn run_turn(
     // Seats that already failed this turn, and why (ADR-0024).
     let mut tried = vec![session.state.lock().seat()];
     let mut failures: Vec<String> = Vec::new();
+    let tools: Arc<dyn ToolExecutor> = match &turn.tool_groups {
+        Some(groups) => Arc::new(ToolFilter::new(inner.tools.clone(), groups.clone())),
+        None => inner.tools.clone(),
+    };
     let outcome: Result<TurnOutput, ProviderError> = loop {
         let descriptor = provider.descriptor();
         let ctx = TurnContext::new(
@@ -1006,7 +1052,7 @@ async fn run_turn(
             descriptor.id.clone(),
             turn.turn_id.clone(),
             turn.project_path.clone(),
-            inner.tools.clone(),
+            tools.clone(),
             Arc::new(Recorder(session.clone())),
             turn.cancel.clone(),
         );

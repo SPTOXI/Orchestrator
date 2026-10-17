@@ -3648,3 +3648,21 @@ textarea.skill-body {
 .project-answer {
   margin-top: 4px;
 }
+
+.context-bar.tool-groups {
+  flex-wrap: wrap;
+  border-radius: 0;
+}
+
+.prompt-bar {
+  min-width: 80px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-hover);
+  overflow: hidden;
+}
+
+.prompt-bar > div {
+  height: 100%;
+  background: var(--accent);
+}

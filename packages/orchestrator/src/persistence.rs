@@ -127,6 +127,7 @@ mod tests {
                 enabled: Some(true),
                 budget: Some(900),
                 handoff_id: Some(HandoffId::new()),
+                tool_groups: Some(vec!["filesystem".into(), "git".into()]),
             },
             reserves: vec![Reserve {
                 provider: "outra".into(),
