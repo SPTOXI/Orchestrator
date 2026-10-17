@@ -21,6 +21,27 @@ pub struct ContextOptions {
     pub budget: Option<u32>,
     /// A handoff this session takes over: its packet goes in the context.
     pub handoff_id: Option<HandoffId>,
+    /// Tool groups offered to the AI (`filesystem`, `git`, …); `None`:
+    /// all of them. Fewer tools, fewer tokens on every request (ADR-0018).
+    pub tool_groups: Option<Vec<String>>,
+}
+
+impl ContextOptions {
+    /// Trimmed, without repeats, in a stable order (the tool list must be
+    /// the same on every request for the prompt cache).
+    pub fn normalized(mut self) -> Self {
+        if let Some(groups) = self.tool_groups.as_mut() {
+            let mut clean: Vec<String> = groups
+                .iter()
+                .map(|g| g.trim().to_owned())
+                .filter(|g| !g.is_empty())
+                .collect();
+            clean.sort();
+            clean.dedup();
+            *groups = clean;
+        }
+        self
+    }
 }
 
 /// What the source receives.

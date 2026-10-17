@@ -39,6 +39,44 @@ pub struct TokenUsage {
     /// True when any part was estimated instead of reported by the vendor.
     #[serde(default)]
     pub estimated: bool,
+    /// What the prompts were made of (estimates; API providers only).
+    #[serde(default, skip_serializing_if = "PromptBreakdown::is_empty")]
+    pub prompt: PromptBreakdown,
+}
+
+/// Where the input tokens of the requests went, estimated at about four
+/// characters per token (ADR-0018): the parts sum to roughly
+/// `input_tokens`, so the user sees what to cut.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PromptBreakdown {
+    /// System instructions, the project context among them.
+    pub system: u64,
+    /// Tool definitions.
+    pub tools: u64,
+    /// Messages of the conversation (user, assistant, tool calls).
+    pub history: u64,
+    /// Tool results sent back.
+    pub tool_results: u64,
+}
+
+impl PromptBreakdown {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    pub fn total(&self) -> u64 {
+        self.system + self.tools + self.history + self.tool_results
+    }
+}
+
+impl AddAssign for PromptBreakdown {
+    fn add_assign(&mut self, other: Self) {
+        self.system += other.system;
+        self.tools += other.tools;
+        self.history += other.history;
+        self.tool_results += other.tool_results;
+    }
 }
 
 impl TokenUsage {
@@ -68,6 +106,7 @@ impl AddAssign for TokenUsage {
         self.cost_usd = add_optional(self.cost_usd, other.cost_usd);
         self.cache_saved_usd = add_optional(self.cache_saved_usd, other.cache_saved_usd);
         self.estimated |= other.estimated;
+        self.prompt += other.prompt;
     }
 }
 

@@ -27,6 +27,7 @@ import type {
   SpendReport,
   AppInfo,
   ContextOptions,
+  ToolGroup,
   ContextPack,
   ContextSettings,
   ContextSettingsView,
@@ -329,6 +330,8 @@ export const sessionApi = {
   context: (id: string) => callProvider<ContextOptions>("session_context_get", { id }),
   setContext: (id: string, options: ContextOptions) =>
     callProvider<ContextOptions>("session_context_set", { id, options }),
+  /** The tool groups a session can offer, with their cost (ADR-0018). */
+  toolGroups: () => callProvider<ToolGroup[]>("session_tool_groups"),
 };
 
 /** User-registered AI APIs (ADR-0010). Keys go to the OS vault, never back. */

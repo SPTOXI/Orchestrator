@@ -5,11 +5,12 @@
 import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 import type { SessionActivity } from "../lib/activity";
 import { HANDOFF_PROMPT_PREFIX, SECTION_LABELS, summaryLine } from "../lib/context";
+import { toolGroupsLabel } from "../lib/cost";
 import { formatDuration, formatTime } from "../lib/format";
 import { contextApi, errorMessage, sessionApi } from "../lib/runtime";
 import { formatUsage, type TranscriptItem } from "../lib/transcript";
 import { useSessionTranscript } from "../lib/useProviders";
-import type { ContextOptions, ContextPack, ProviderInfo, SessionInfo } from "../lib/types";
+import type { ContextOptions, ContextPack, ProviderInfo, SessionInfo, ToolGroup } from "../lib/types";
 import { askingProject } from "../lib/workspace";
 import { ActivityLine } from "./Activity";
 import type { ContextTabRequest } from "./ContextView";
@@ -275,13 +276,16 @@ function ProjectContextBar({
   const [auto, setAuto] = useState(true);
   const [pack, setPack] = useState<ContextPack | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [groups, setGroups] = useState<ToolGroup[]>([]);
+  const [toolsOpen, setToolsOpen] = useState(false);
 
   useEffect(() => {
     if (!ready) return;
-    Promise.all([sessionApi.context(session.id), contextApi.settings()])
-      .then(([o, view]) => {
+    Promise.all([sessionApi.context(session.id), contextApi.settings(), sessionApi.toolGroups()])
+      .then(([o, view, g]) => {
         setOptions(o);
         setAuto(view.settings.autoAttach);
+        setGroups(g);
       })
       .catch((e) => setError(errorMessage(e)));
   }, [ready, session.id]);
@@ -312,6 +316,21 @@ function ProjectContextBar({
     return () => clearTimeout(timer);
   }, [ready, options, enabled, draft, handoff, session.id, session.projectPath]);
 
+  const selected = options?.toolGroups ?? null;
+  /** Fewer tools, fewer tokens on every request (ADR-0018). */
+  const setToolGroups = (next: string[] | null) => {
+    if (!options) return;
+    sessionApi
+      .setContext(session.id, { ...options, toolGroups: next })
+      .then(setOptions)
+      .catch((e) => setError(errorMessage(e)));
+  };
+  const toggleGroup = (group: string) => {
+    const current = selected ?? groups.map((g) => g.group);
+    const next = current.includes(group) ? current.filter((g) => g !== group) : [...current, group];
+    setToolGroups(next.length === groups.length ? null : next);
+  };
+
   const toggle = () => {
     if (!options || handoff) return;
     sessionApi
@@ -321,29 +340,56 @@ function ProjectContextBar({
   };
 
   return (
-    <div className="context-bar row">
-      <label className="check" title="O contexto vai uma vez, com a primeira mensagem">
-        <input type="checkbox" checked={enabled} disabled={!options || handoff !== null} onChange={toggle} />
-        {handoff ? "Contexto do projeto com o HANDOFF" : "Anexar o contexto do projeto à primeira mensagem"}
-      </label>
-      <span className="meta grow ellipsis">
-        {error ?? (!enabled ? "a IA recebe só a mensagem" : pack ? summaryLine(pack) : "calculando…")}
-      </span>
-      <button
-        className="link"
-        disabled={!enabled}
-        onClick={() =>
-          onOpenContext({
-            sessionId: session.id,
-            task: draft,
-            projectPath: session.projectPath,
-            handoffId: handoff ?? undefined,
-          })
-        }
-      >
-        Ver prévia
-      </button>
-    </div>
+    <>
+      <div className="context-bar row">
+        <label className="check" title="O contexto vai uma vez, com a primeira mensagem">
+          <input type="checkbox" checked={enabled} disabled={!options || handoff !== null} onChange={toggle} />
+          {handoff ? "Contexto do projeto com o HANDOFF" : "Anexar o contexto do projeto à primeira mensagem"}
+        </label>
+        <span className="meta grow ellipsis">
+          {error ?? (!enabled ? "a IA recebe só a mensagem" : pack ? summaryLine(pack) : "calculando…")}
+        </span>
+        <button
+          className="link"
+          disabled={!enabled}
+          onClick={() =>
+            onOpenContext({
+              sessionId: session.id,
+              task: draft,
+              projectPath: session.projectPath,
+              handoffId: handoff ?? undefined,
+            })
+          }
+        >
+          Ver prévia
+        </button>
+        <button
+          className="link"
+          disabled={!options || groups.length === 0}
+          title="As definições das ferramentas vão em todo pedido à IA; oferecer menos gasta menos tokens"
+          onClick={() => setToolsOpen(!toolsOpen)}
+        >
+          Ferramentas: {toolGroupsLabel(groups, selected)}
+        </button>
+      </div>
+      {toolsOpen && (
+        <div className="context-bar row tool-groups">
+          {groups.map((g) => (
+            <label key={g.group} className="check" title={`${g.tools} ferramentas · ~${g.tokens} tokens por pedido`}>
+              <input
+                type="checkbox"
+                checked={selected === null || selected.includes(g.group)}
+                onChange={() => toggleGroup(g.group)}
+              />
+              {g.group}
+            </label>
+          ))}
+          <button className="link" disabled={selected === null} onClick={() => setToolGroups(null)}>
+            Todas
+          </button>
+        </div>
+      )}
+    </>
   );
 }
 

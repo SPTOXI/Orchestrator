@@ -1493,3 +1493,53 @@ async fn reserves_survive_a_restart() {
         ProviderId::from("echo-b")
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tool_groups_limit_what_the_session_offers_and_runs() {
+    let h = harness();
+    let groups = h.manager.tool_groups();
+    let fs = groups.iter().find(|g| g.group == "filesystem").unwrap();
+    assert!(fs.tools > 0 && fs.tokens > 0);
+
+    let info = h.start().await;
+    let options = h
+        .manager
+        .set_context_options(
+            &info.id,
+            ContextOptions {
+                tool_groups: Some(vec![" filesystem ".into(), "filesystem".into()]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(options.tool_groups, Some(vec!["filesystem".into()]));
+
+    h.send(&info.id, "/tool filesystem.list {\"path\": \".\"}")
+        .await;
+    h.idle(&info.id).await;
+    h.send(&info.id, "/tool process.list").await;
+    h.idle(&info.id).await;
+    let results: Vec<ToolResult> = h
+        .events(&info.id)
+        .into_iter()
+        .filter_map(|e| match e {
+            SessionEvent::ToolCallCompleted { result, .. } => Some(result),
+            _ => None,
+        })
+        .collect();
+    assert!(results[0].ok, "{:?}", results[0]);
+    let refused = results[1].error.as_ref().unwrap();
+    assert_eq!(refused.kind, ToolErrorKind::PermissionDenied);
+    assert!(refused.message.contains("`process`"), "{}", refused.message);
+
+    // A subagent inherits its parent's tools.
+    let child = h
+        .manager
+        .spawn(&info.id, StartRequest::default(), CallOrigin::User)
+        .await
+        .unwrap();
+    assert_eq!(
+        h.manager.context_options(&child.id).unwrap().tool_groups,
+        Some(vec!["filesystem".into()])
+    );
+}

@@ -57,6 +57,7 @@ Não são ferramentas do sistema operacional, então não passam por
 | `session_spawn` | `parentId`, `request?` | `SessionInfo` do subagente | `SESSION_STARTED` com `parentSessionId` |
 | `session_context_get` | `id` | `ContextOptions` (`{ enabled?, budget?, handoffId? }`) | — |
 | `session_context_set` | `id`, `options: ContextOptions` | `ContextOptions`; recusado depois do primeiro turno (o contexto já foi) | — |
+| `session_tool_groups` | — | `ToolGroup[]` (`group`, `tools`, `tokens` estimados por pedido), na ordem do catálogo | — |
 
 Ferramentas pedidas pelo provider passam pelo mesmo `ToolRuntime::invoke` e
 geram `TOOL_CALLED` com `origin = agent { agentId, sessionId, provider }`.

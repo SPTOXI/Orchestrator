@@ -543,6 +543,7 @@ pub fn run() {
             provider_commands::session_spawn,
             provider_commands::session_context_get,
             provider_commands::session_context_set,
+            provider_commands::session_tool_groups,
             provider_commands::connections_list,
             provider_commands::connection_save,
             provider_commands::connection_delete,

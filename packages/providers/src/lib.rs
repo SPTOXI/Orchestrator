@@ -28,11 +28,13 @@ mod provider;
 mod registry;
 mod store;
 
-pub use context::{Compaction, ToolExecutor, TurnContext, TurnObserver};
+pub use context::{Compaction, ToolExecutor, ToolFilter, TurnContext, TurnObserver};
 pub use echo::EchoProvider;
 pub use error::{ProviderError, ProviderErrorKind};
 pub use failover::Reserve;
-pub use manager::{ManagerConfig, SessionManager, SessionSnapshot, StartRequest, TurnResult};
+pub use manager::{
+    ManagerConfig, SessionManager, SessionSnapshot, StartRequest, ToolGroup, TurnResult,
+};
 pub use project_context::{AttachedContext, ContextOptions, ContextRequest, ContextSource};
 pub use provider::{
     AIProvider, CompactionPolicy, Completion, CompletionRequest, ModelInfo, NativeSession,

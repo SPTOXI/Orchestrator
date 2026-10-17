@@ -352,6 +352,7 @@ impl HandoffService {
                         enabled: Some(true),
                         budget: request.budget,
                         handoff_id: Some(handoff.id.clone()),
+                        ..Default::default()
                     },
                     reserves: Vec::new(),
                 },

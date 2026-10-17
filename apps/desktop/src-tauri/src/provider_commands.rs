@@ -12,7 +12,7 @@ use orchestrator_provider_api::{
 };
 use orchestrator_providers::{
     ContextOptions, ProviderError, ProviderInfo, ProviderStatus, SessionSnapshot, StartRequest,
-    ToolExecutor,
+    ToolExecutor, ToolGroup,
 };
 use orchestrator_runtime::ToolRuntime;
 use serde::Serialize;
@@ -169,6 +169,13 @@ pub fn session_context_set(
     state
         .sessions
         .set_context_options(&SessionId::from(id), options)
+}
+
+/// The tool groups a session can offer its AI, with their cost in tokens
+/// (ADR-0018).
+#[tauri::command]
+pub fn session_tool_groups(state: State<'_, AppState>) -> Vec<ToolGroup> {
+    state.sessions.tool_groups()
 }
 
 /// Opens a subagent session (`spawnAgent`).

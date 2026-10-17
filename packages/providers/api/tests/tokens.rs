@@ -139,6 +139,20 @@ async fn anthropic_requests_keep_a_stable_prefix_marked_for_the_cache() {
     assert!((usage.cost_usd.unwrap() - cost).abs() < 1e-9, "{usage:?}");
     let saved = per(15_800.0, 4.0) - per(10_300.0, 0.2) - per(5_500.0, 5.0);
     assert!((usage.cache_saved_usd.unwrap() - saved).abs() < 1e-9);
+
+    // What the prompts were made of: tools in all three requests, the
+    // file read sent back in the last two.
+    let prompt = usage.prompt;
+    assert!(
+        prompt.tools > 0 && prompt.system > 0 && prompt.history > 0,
+        "{prompt:?}"
+    );
+    assert!(prompt.tool_results > 0, "{prompt:?}");
+    let tools_once = serde_json::to_string(&calls[0].body["tools"])
+        .unwrap()
+        .len() as u64
+        / 4;
+    assert!(prompt.tools > tools_once, "tools counted on every request");
 }
 
 #[tokio::test(flavor = "multi_thread")]

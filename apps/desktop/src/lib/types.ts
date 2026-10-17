@@ -498,6 +498,23 @@ export interface TokenUsage {
   /** What the cache saved (negative: a write never read back). */
   cacheSavedUsd?: number | null;
   estimated: boolean;
+  /** What the prompts were made of (estimates; API providers only). */
+  prompt?: PromptBreakdown;
+}
+
+/** Estimated tokens by part of the prompt (ADR-0018). */
+export interface PromptBreakdown {
+  system: number;
+  tools: number;
+  history: number;
+  toolResults: number;
+}
+
+/** A group of tools the AI can be offered, and its cost on every request. */
+export interface ToolGroup {
+  group: string;
+  tools: number;
+  tokens: number;
 }
 
 export type SessionStatus = "idle" | "running" | "closed";
@@ -1143,6 +1160,8 @@ export interface ContextOptions {
   enabled?: boolean | null;
   budget?: number | null;
   handoffId?: string | null;
+  /** Tool groups offered to the AI; null/omitted: all of them. */
+  toolGroups?: string[] | null;
 }
 
 export interface ContextSectionSummary {
@@ -1439,6 +1458,9 @@ export interface SpendReport {
   calls: number;
   unpriced: number;
   compactions: number;
+  /** Estimated composition of the prompts of `promptCalls` turns. */
+  prompt: PromptBreakdown;
+  promptCalls: number;
   rows: SpendRow[];
 }
 

@@ -48,7 +48,8 @@ pub use project::{
     DockerInfo, GitRemote, GitSummary, ProjectCandidate, ProjectProfile, RuntimeRequirement,
 };
 pub use session::{
-    NoticeLevel, SessionEvent, SessionInfo, SessionLogEntry, SessionStatus, TokenUsage, TurnStatus,
+    NoticeLevel, PromptBreakdown, SessionEvent, SessionInfo, SessionLogEntry, SessionStatus,
+    TokenUsage, TurnStatus,
 };
 pub use task::{Task, TaskInput, TaskPriority, TaskStatus};
 pub use tool::{

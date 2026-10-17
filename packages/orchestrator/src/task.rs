@@ -423,7 +423,7 @@ impl TaskService {
                     context: orchestrator_providers::ContextOptions {
                         enabled: Some(true),
                         budget: request.budget,
-                        handoff_id: None,
+                        ..Default::default()
                     },
                     reserves: Vec::new(),
                 },
