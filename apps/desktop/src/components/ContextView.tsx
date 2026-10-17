@@ -102,7 +102,8 @@ export function ContextView({ ready, active, request, nonce }: Props) {
       settings.budgetTokens !== view.settings.budgetTokens ||
       settings.compaction.auto !== view.settings.compaction.auto ||
       settings.compaction.thresholdTokens !== view.settings.compaction.thresholdTokens ||
-      settings.compaction.thresholdPercent !== view.settings.compaction.thresholdPercent);
+      settings.compaction.thresholdPercent !== view.settings.compaction.thresholdPercent ||
+      settings.compaction.clearToolResults !== view.settings.compaction.clearToolResults);
   const compaction = settings?.compaction;
   const setCompaction = (change: Partial<ContextSettings["compaction"]>) =>
     settings && setSettings({ ...settings, compaction: { ...settings.compaction, ...change } });
@@ -190,6 +191,18 @@ export function ContextView({ ready, active, request, nonce }: Props) {
                   onChange={(e) => setCompaction({ thresholdPercent: Number(e.target.value) })}
                 />
                 % da janela do modelo (o que vier primeiro)
+              </label>
+              <label
+                className="check"
+                title="Na metade do limite, resultados grandes de ferramentas de rodadas antigas viram uma nota de uma linha; os das 3 últimas rodadas ficam"
+              >
+                <input
+                  type="checkbox"
+                  checked={compaction.clearToolResults}
+                  disabled={!compaction.auto}
+                  onChange={(e) => setCompaction({ clearToolResults: e.target.checked })}
+                />
+                Antes, tirar da conversa resultados antigos de ferramentas (a IA pode pedir de novo)
               </label>
               <span className="meta">
                 A própria IA resume a conversa e o resumo passa a ir no lugar dela; a tela continua com tudo. Cada sessão

@@ -524,6 +524,7 @@ impl ApiProvider {
         // message passed the limit. Only between turns or tool rounds.
         let size = compaction::prompt_size(&conv, system.as_deref(), native_tools)
             + compaction::estimate(&input.text);
+        let size = compaction::clear_if_due(&mut conv, &input.compaction, &model, size, ctx);
         if input.compact || compaction::due(&input.compaction, &model, &conv, size) {
             if conv.messages.is_empty() {
                 ctx.notice(NoticeLevel::Info, "a conversa já está compactada");
@@ -660,7 +661,8 @@ impl ApiProvider {
                     rejected(call, "missing tool name")
                 } else {
                     let result = ctx.call_tool(&call.name, call.args.clone()).await;
-                    let (content, is_error) = result_content(&result);
+                    let (content, is_error) =
+                        result_content(&result, self.conn.tool_result_limit(&model));
                     ToolResultPart {
                         id: call.id.clone(),
                         name: call.name.clone(),
@@ -688,6 +690,7 @@ impl ApiProvider {
             // The round is complete (every call has its result): the
             // conversation may be compacted before the next one.
             let size = compaction::prompt_size(&conv, system.as_deref(), native_tools);
+            let size = compaction::clear_if_due(&mut conv, &input.compaction, &model, size, ctx);
             if compaction::due(&input.compaction, &model, &conv, size) {
                 let how = Compact {
                     reference: &native.reference,

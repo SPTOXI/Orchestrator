@@ -298,6 +298,10 @@ fn default_rounds() -> u32 {
     DEFAULT_MAX_TOOL_ROUNDS
 }
 
+/// Range of `maxToolResultChars`.
+pub const MIN_TOOL_RESULT_CHARS: usize = 1_000;
+pub const MAX_TOOL_RESULT_CHARS: usize = 1_000_000;
+
 /// One registered API.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -328,6 +332,10 @@ pub struct Connection {
     /// Output cap per request (Anthropic requires one; default 64000).
     #[serde(default)]
     pub max_output_tokens: Option<u32>,
+    /// Characters of one tool result sent to the model; `None`: 10% of
+    /// the model's context window, at most 40 000 (ADR-0018).
+    #[serde(default)]
+    pub max_tool_result_chars: Option<u32>,
     #[serde(default)]
     pub options: ProtocolOptions,
     #[serde(default)]
@@ -365,6 +373,20 @@ pub struct Fallback {
 pub const DEFAULT_FIRST_RESPONSE_SECS: u32 = 120;
 
 impl Connection {
+    /// Characters of one tool result sent to `model`: the connection's
+    /// setting, else about 10% of the context window (4 characters per
+    /// token), between 4 000 and the old fixed 40 000.
+    pub fn tool_result_limit(&self, model: &ModelEntry) -> usize {
+        if let Some(chars) = self.max_tool_result_chars {
+            return chars as usize;
+        }
+        let default = crate::tools::MAX_RESULT_CHARS;
+        match model.context_window {
+            Some(window) if window > 0 => (window as usize * 4 / 10).clamp(4_000, default),
+            _ => default,
+        }
+    }
+
     /// How long a streamed request waits for the first data.
     pub fn first_response(&self) -> Option<std::time::Duration> {
         match self
@@ -481,6 +503,13 @@ impl Connection {
         if self.max_tool_rounds == 0 {
             return Err(ProviderError::invalid("maxToolRounds must be at least 1"));
         }
+        if let Some(chars) = self.max_tool_result_chars {
+            if !(MIN_TOOL_RESULT_CHARS..=MAX_TOOL_RESULT_CHARS).contains(&(chars as usize)) {
+                return Err(ProviderError::invalid(format!(
+                    "maxToolResultChars vai de {MIN_TOOL_RESULT_CHARS} a {MAX_TOOL_RESULT_CHARS}"
+                )));
+            }
+        }
         if self
             .fallback
             .as_ref()
@@ -498,6 +527,24 @@ impl Connection {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn tool_results_fit_the_context_window() {
+        let mut conn = openai();
+        let model = |window| ModelEntry {
+            context_window: window,
+            ..ModelEntry::new("m")
+        };
+        assert_eq!(conn.tool_result_limit(&model(None)), 40_000);
+        assert_eq!(conn.tool_result_limit(&model(Some(200_000))), 40_000);
+        assert_eq!(conn.tool_result_limit(&model(Some(32_000))), 12_800);
+        assert_eq!(conn.tool_result_limit(&model(Some(4_096))), 4_000);
+        conn.max_tool_result_chars = Some(2_500);
+        assert_eq!(conn.tool_result_limit(&model(Some(200_000))), 2_500);
+        assert!(conn.validate().is_ok());
+        conn.max_tool_result_chars = Some(10);
+        assert!(conn.validate().is_err());
+    }
 
     fn openai() -> Connection {
         serde_json::from_value(json!({

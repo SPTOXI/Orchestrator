@@ -813,6 +813,7 @@ pub fn local_connection(models: &[LocalModel], existing: Option<&Connection>) ->
         tool_mode: Some(ToolMode::Native),
         max_tool_rounds: orchestrator_provider_api::DEFAULT_MAX_TOOL_ROUNDS,
         max_output_tokens: None,
+        max_tool_result_chars: None,
         options: Default::default(),
         generic: None,
         enabled: true,

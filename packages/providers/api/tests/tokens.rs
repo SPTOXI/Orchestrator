@@ -411,6 +411,8 @@ async fn openai(h: &Harness, api: &FakeApi, context_window: u32) {
     // The smallest limit: 8 000 tokens (or 80% of the window).
     h.sessions.set_compaction(CompactionPolicy {
         threshold_tokens: CompactionPolicy::MIN_TOKENS,
+        // These tests are about compacting; clearing has its own.
+        clear_tool_results: false,
         ..Default::default()
     });
 }
@@ -620,4 +622,61 @@ async fn a_turn_compacts_between_tool_rounds_and_carries_on() {
     assert!(opened.contains("diz olá do projeto") && opened.ends_with("summary leaves off."));
     assert_eq!(h.text(&session.id), "Terminei.");
     assert_eq!(compactions(&h, &session.id).len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn old_tool_results_leave_the_context_in_blocks() {
+    // Window 20 000, limit 8 000: old results go from 4 000 on, when that
+    // takes out at least 2 000 tokens. Each read is ~2 600 tokens.
+    let api = FakeApi::start(|_, index| match index {
+        0..=4 => openai_tool_call(4_500),
+        _ => openai_reply("Li tudo.", 4_000),
+    })
+    .await;
+    let h = Harness::new();
+    std::fs::write(
+        h.dir.path().join("hello.txt"),
+        "linha do arquivo\n".repeat(600),
+    )
+    .unwrap();
+    openai(&h, &api, 20_000).await;
+    h.sessions.set_compaction(CompactionPolicy {
+        threshold_tokens: CompactionPolicy::MIN_TOKENS,
+        ..Default::default()
+    });
+    let session = h.start("o").await;
+    h.turn(&session.id, "leia hello.txt cinco vezes").await;
+    assert_eq!(h.last_turn(&session.id), (TurnStatus::Completed, None));
+    assert!(
+        compactions(&h, &session.id).is_empty(),
+        "cleared, not compacted"
+    );
+
+    let calls = api.calls("/v1/chat");
+    let tool_contents = |i: usize| -> Vec<String> {
+        calls[i].body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|m| m["role"] == "tool")
+            .map(|m| m["content"].as_str().unwrap_or_default().to_owned())
+            .collect()
+    };
+    let last = tool_contents(calls.len() - 1);
+    assert_eq!(last.len(), 5);
+    let cleared = last
+        .iter()
+        .filter(|c| c.starts_with("[result of filesystem.read cleared"))
+        .count();
+    assert_eq!(cleared, 2, "{last:?}");
+    assert!(
+        last[2..].iter().all(|c| c.contains("linha do arquivo")),
+        "the last 3 rounds stay"
+    );
+    let notices = h
+        .events(&session.id)
+        .into_iter()
+        .filter(|e| matches!(e, SessionEvent::Notice { message, .. } if message.contains("saíram do contexto")))
+        .count();
+    assert!(notices >= 1);
 }

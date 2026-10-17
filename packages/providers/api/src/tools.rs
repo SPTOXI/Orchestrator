@@ -6,7 +6,8 @@ use orchestrator_core::{render_for_model, truncate_for_model, ToolDefinition, To
 use serde_json::{json, Map, Value};
 
 /// Tool results longer than this are truncated before going back to the
-/// model (the full result stays in the transcript and the history).
+/// model (the full result stays in the transcript and the history); the
+/// default limit for large context windows (`Connection::tool_result_limit`).
 pub const MAX_RESULT_CHARS: usize = 40_000;
 
 /// Orchestrator name → API name (`filesystem.read` → `filesystem__read`):
@@ -21,11 +22,11 @@ pub fn orchestrator_name(name: &str) -> String {
 }
 
 /// Text sent back to the model for a tool result.
-pub fn result_content(result: &ToolResult) -> (String, bool) {
+pub fn result_content(result: &ToolResult, max_chars: usize) -> (String, bool) {
     match (&result.error, result.ok) {
         (None, true) => {
             let text = render_for_model(&result.output);
-            (truncate_for_model(text, MAX_RESULT_CHARS), false)
+            (truncate_for_model(text, max_chars), false)
         }
         (Some(error), _) => {
             let kind = serde_json::to_value(error.kind)
@@ -432,12 +433,20 @@ mod tests {
             finished_at: now,
             duration_ms: 1,
         };
-        assert_eq!(result_content(&result), ("{\"a\":1}".into(), false));
+        assert_eq!(
+            result_content(&result, MAX_RESULT_CHARS),
+            ("{\"a\":1}".into(), false)
+        );
         result.output = json!("x".repeat(MAX_RESULT_CHARS + 10));
-        assert!(result_content(&result).0.contains("[truncated"));
+        assert!(result_content(&result, MAX_RESULT_CHARS)
+            .0
+            .contains("[truncated"));
         result.ok = false;
         result.error = Some(ToolError::new(ToolErrorKind::NotFound, "nope"));
-        assert_eq!(result_content(&result), ("NOT_FOUND: nope".into(), true));
+        assert_eq!(
+            result_content(&result, MAX_RESULT_CHARS),
+            ("NOT_FOUND: nope".into(), true)
+        );
     }
 
     #[test]
