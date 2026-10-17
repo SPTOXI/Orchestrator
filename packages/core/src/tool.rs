@@ -194,6 +194,69 @@ impl ToolResult {
     }
 }
 
+/// String fields at least this long and spanning lines are sent to models
+/// as raw text instead of a JSON string (see [`render_for_model`]).
+const RAW_FIELD_MIN_CHARS: usize = 200;
+
+/// A tool's output as text for a model, in as few tokens as possible: a
+/// string goes as is; an object's long multi-line strings (file contents,
+/// command output) go as raw blocks after the compact JSON of the rest, so
+/// newlines and quotes are not escaped; anything else is compact JSON.
+pub fn render_for_model(output: &Value) -> String {
+    match output {
+        Value::String(s) => s.clone(),
+        Value::Object(map) => {
+            let is_raw = |v: &Value| {
+                v.as_str()
+                    .is_some_and(|s| s.contains('\n') && s.chars().count() >= RAW_FIELD_MIN_CHARS)
+            };
+            if !map.values().any(is_raw) {
+                return serde_json::to_string(output).unwrap_or_else(|_| "null".into());
+            }
+            let mut rest = serde_json::Map::new();
+            let mut blocks = Vec::new();
+            for (key, value) in map {
+                match value.as_str() {
+                    Some(text) if is_raw(value) => blocks.push((key, text)),
+                    _ => {
+                        rest.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+            let mut text = if rest.is_empty() {
+                String::new()
+            } else {
+                serde_json::to_string(&rest).unwrap_or_default()
+            };
+            for (key, block) in blocks {
+                if !text.is_empty() {
+                    text.push('\n');
+                }
+                text.push_str(&format!("[{key}]\n{block}"));
+            }
+            text
+        }
+        other => serde_json::to_string(other).unwrap_or_else(|_| "null".into()),
+    }
+}
+
+/// Cuts `text` to about `max` characters for a model, keeping the start
+/// and the end (where errors and summaries of command output usually are).
+pub fn truncate_for_model(text: String, max: usize) -> String {
+    let total = text.chars().count();
+    if total <= max {
+        return text;
+    }
+    let head_len = max * 3 / 4;
+    let tail_len = max - head_len;
+    let head: String = text.chars().take(head_len).collect();
+    let tail: String = text.chars().skip(total - tail_len).collect();
+    format!(
+        "{head}\n… [truncated: {} of {total} characters omitted; ask for less, e.g. maxBytes or a narrower path] …\n{tail}",
+        total - max
+    )
+}
+
 /// Catalog entry describing one tool.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -219,6 +282,32 @@ pub struct ToolDefinition {
     pub read_only: bool,
     /// JSON Schema (draft 7, no `$ref`) of the `args` object.
     pub parameters: Value,
+}
+
+#[cfg(test)]
+mod render_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn strings_and_long_text_fields_go_raw() {
+        assert_eq!(render_for_model(&json!("a\n\"b\"")), "a\n\"b\"");
+        assert_eq!(render_for_model(&json!({"a": 1})), "{\"a\":1}");
+        let body = "line \"quoted\"\n".repeat(20);
+        let text = render_for_model(&json!({"path": "x.rs", "content": body}));
+        assert_eq!(text, format!("{{\"path\":\"x.rs\"}}\n[content]\n{body}"));
+        assert!(!text.contains("\\n"));
+    }
+
+    #[test]
+    fn truncation_keeps_head_and_tail() {
+        let text = format!("{}{}", "a".repeat(100), "z".repeat(100));
+        let cut = truncate_for_model(text, 40);
+        assert!(cut.starts_with(&"a".repeat(30)));
+        assert!(cut.ends_with(&"z".repeat(10)));
+        assert!(cut.contains("160 of 200"));
+        assert_eq!(truncate_for_model("short".into(), 40), "short");
+    }
 }
 
 #[cfg(test)]

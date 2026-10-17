@@ -77,6 +77,20 @@ Não existe cache de respostas de sessão: a mesma pergunta num momento
 diferente do projeto merece outra resposta. O cache de deliberações do
 Conselho (Fase 5) continua.
 
+## Resultados de ferramentas
+
+O resultado de uma ferramenta volta para a IA (API ou CLI, por MCP) no
+formato que gasta menos tokens:
+
+- texto vai como texto, sem aspas nem escapes;
+- campos de texto longos com várias linhas (conteúdo de arquivo, saída de
+  comando) vão como blocos crus (`[content]` seguido do texto) depois do
+  JSON compacto do resto, em vez de uma string JSON com `\n` e `\"`;
+- o resto vai em JSON compacto (antes, pelo MCP, ia indentado);
+- acima de 40.000 caracteres, o resultado é cortado nos dois lados: fica o
+  começo e o fim (onde costumam estar erros e resumos), com o aviso de
+  quanto saiu. O resultado inteiro continua no transcript e no histórico.
+
 ## Compactação de contexto
 
 Conversas longas são **resumidas pela própria IA**, igual nos quatro

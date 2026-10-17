@@ -8,6 +8,7 @@
 //! Streamable HTTP, answering with JSON (no server-initiated stream). Only
 //! loopback, and only with the turn's random token.
 
+use orchestrator_core::{render_for_model, truncate_for_model};
 use orchestrator_providers::TurnContext;
 use parking_lot::Mutex;
 use serde_json::{json, Value};
@@ -19,6 +20,9 @@ use tokio::net::{TcpListener, TcpStream};
 
 /// Largest request body read (bytes).
 const MAX_BODY: usize = 16 * 1024 * 1024;
+/// Tool results longer than this are cut before going to the CLI (as for
+/// the API providers; the full result stays in the history).
+const MAX_RESULT_CHARS: usize = 40_000;
 
 /// The tool name a CLI sees: `.` is not allowed everywhere, `__` is.
 pub fn wire_name(name: &str) -> String {
@@ -227,10 +231,7 @@ async fn handle(ctx: &TurnContext, message: Value) -> Option<Value> {
             let result = ctx.call_tool(&tool_name(name), args).await;
             let (text, is_error) = match (&result.ok, &result.error) {
                 (true, _) => (
-                    match &result.output {
-                        Value::String(s) => s.clone(),
-                        other => serde_json::to_string_pretty(other).unwrap_or_default(),
-                    },
+                    truncate_for_model(render_for_model(&result.output), MAX_RESULT_CHARS),
                     false,
                 ),
                 (false, Some(err)) => (

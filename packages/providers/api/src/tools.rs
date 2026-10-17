@@ -2,7 +2,7 @@
 //! without function calling, and schema dialects (ADR-0010).
 
 use crate::conversation::{ToolCallPart, ToolResultPart};
-use orchestrator_core::{ToolDefinition, ToolResult};
+use orchestrator_core::{render_for_model, truncate_for_model, ToolDefinition, ToolResult};
 use serde_json::{json, Map, Value};
 
 /// Tool results longer than this are truncated before going back to the
@@ -24,8 +24,8 @@ pub fn orchestrator_name(name: &str) -> String {
 pub fn result_content(result: &ToolResult) -> (String, bool) {
     match (&result.error, result.ok) {
         (None, true) => {
-            let text = serde_json::to_string(&result.output).unwrap_or_else(|_| "null".into());
-            (truncate_result(text), false)
+            let text = render_for_model(&result.output);
+            (truncate_for_model(text, MAX_RESULT_CHARS), false)
         }
         (Some(error), _) => {
             let kind = serde_json::to_value(error.kind)
@@ -36,14 +36,6 @@ pub fn result_content(result: &ToolResult) -> (String, bool) {
         }
         (None, false) => ("INTERNAL: tool failed without details".into(), true),
     }
-}
-
-fn truncate_result(text: String) -> String {
-    if text.chars().count() <= MAX_RESULT_CHARS {
-        return text;
-    }
-    let cut: String = text.chars().take(MAX_RESULT_CHARS).collect();
-    format!("{cut}\n… [truncated: result longer than {MAX_RESULT_CHARS} characters; ask for less, e.g. maxBytes or a narrower path]")
 }
 
 /// Result for a call that was not executed (invalid or truncated arguments).
