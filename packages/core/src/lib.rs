@@ -52,5 +52,6 @@ pub use session::{
 };
 pub use task::{Task, TaskInput, TaskPriority, TaskStatus};
 pub use tool::{
-    CallOrigin, ToolCall, ToolDefinition, ToolError, ToolErrorKind, ToolResult, ToolSpec,
+    render_for_model, truncate_for_model, CallOrigin, ToolCall, ToolDefinition, ToolError,
+    ToolErrorKind, ToolResult, ToolSpec,
 };
