@@ -201,6 +201,9 @@ pub struct CompletionRequest {
     pub model: Option<String>,
     pub system: Option<String>,
     pub prompt: String,
+    /// The most the answer needs (ADR-0018); a lower limit of the
+    /// connection or the model still wins. `None`: theirs.
+    pub max_output_tokens: Option<u32>,
 }
 
 /// Answer to a [`CompletionRequest`].

@@ -2,7 +2,7 @@
 //! the prompt on stdin and the Orchestrator's tools at a local MCP URL; its
 //! output becomes the turn's text, reasoning and usage.
 
-use crate::kind::{invocation, parse, CliKind, Event, RunPlan};
+use crate::kind::{invocation, parse, CliKind, Event, RunPlan, SKILLS_OFF_FLAG};
 use crate::settings::CliSettings;
 use async_trait::async_trait;
 use chrono::Utc;
@@ -44,6 +44,8 @@ pub struct CliProvider {
     server: ToolServer,
     scratch: PathBuf,
     states: Mutex<HashMap<String, State>>,
+    /// Whether each Claude Code program has `--disable-slash-commands`.
+    skills_flag: Mutex<HashMap<PathBuf, bool>>,
 }
 
 impl CliProvider {
@@ -54,6 +56,7 @@ impl CliProvider {
             server,
             scratch,
             states: Mutex::new(HashMap::new()),
+            skills_flag: Mutex::new(HashMap::new()),
         }
     }
 
@@ -88,6 +91,26 @@ impl CliProvider {
                 .and_then(Value::as_str)
                 .map(str::to_owned),
         }
+    }
+
+    /// Whether this run leaves the user's skills out (Claude Code with only
+    /// the Orchestrator's tools, and a version that has the flag; asked once
+    /// per program, from its `--help`).
+    async fn skills_off(&self, own_tools: bool) -> bool {
+        if self.kind != CliKind::ClaudeCode || own_tools {
+            return false;
+        }
+        let Some(program) = self.program() else {
+            return false;
+        };
+        if let Some(known) = self.skills_flag.lock().get(&program).copied() {
+            return known;
+        }
+        let has = crate::output(&program, &["--help"])
+            .await
+            .is_some_and(|(_, help)| help.contains(SKILLS_OFF_FLAG));
+        self.skills_flag.lock().insert(program, has);
+        has
     }
 
     /// Runs the CLI once. `on` hears every event; returns the final text.
@@ -361,6 +384,7 @@ impl AIProvider for CliProvider {
             ),
             _ => input.text.clone(),
         };
+        let skills_off = self.skills_off(self.settings.own_tools).await;
         let plan = RunPlan {
             kind: self.kind,
             model: native.model.as_deref(),
@@ -376,6 +400,7 @@ impl AIProvider for CliProvider {
                 .as_deref()
                 .filter(|_| self.kind == CliKind::ClaudeCode),
             ephemeral: false,
+            skills_off,
             extra_args: &self.settings.extra_args,
         };
         let mut session_seen: Option<String> = None;
@@ -454,6 +479,7 @@ impl AIProvider for CliProvider {
             _ => request.prompt.clone(),
         };
         let project = std::env::temp_dir();
+        let skills_off = self.skills_off(false).await;
         let plan = RunPlan {
             kind: self.kind,
             model: model.as_deref(),
@@ -469,6 +495,7 @@ impl AIProvider for CliProvider {
                 .as_deref()
                 .filter(|_| self.kind == CliKind::ClaudeCode),
             ephemeral: true,
+            skills_off,
             extra_args: &self.settings.extra_args,
         };
         let mut usage = TokenUsage::default();

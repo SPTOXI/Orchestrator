@@ -484,6 +484,7 @@ mod tests {
                     model: None,
                     system: Some("instruções".into()),
                     prompt: " qual modelo? ".into(),
+                    ..Default::default()
                 },
                 &cancel,
             )

@@ -295,6 +295,7 @@ async fn no_login_cancel_council_and_settings() {
                 model: None,
                 system: Some("Responda JSON.".into()),
                 prompt: "olá".into(),
+                ..Default::default()
             },
             &CancellationToken::new(),
         )
