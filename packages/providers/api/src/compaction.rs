@@ -36,6 +36,10 @@ much further, to what they concluded or produced - as long as nothing in the six
 is dropped. Write the summary in the language the user writes in. Do not call any tools while \
 writing this summary; respond with text only.";
 
+/// Output asked for the summary: long enough to keep everything the
+/// instruction lists, far below the 64 000 a turn may use.
+const SUMMARY_MAX_OUTPUT: u32 = 16_000;
+
 /// Opens the first user message after a compaction.
 const INTRO: &str = "[The Orchestrator compacted the earlier part of this conversation to save \
 context. This is the summary you wrote of it:]";
@@ -306,6 +310,7 @@ impl ApiProvider {
                     tools: how.tools,
                     cache_key: Some(how.reference),
                     fallback: true,
+                    max_output: Some(SUMMARY_MAX_OUTPUT),
                 },
                 &quiet,
                 &|retry| retry_notice(ctx, retry),

@@ -121,6 +121,9 @@ impl CliKind {
     }
 }
 
+/// Claude Code without the user's skills (and their text in the prompt).
+pub const SKILLS_OFF_FLAG: &str = "--disable-slash-commands";
+
 /// Everything one run needs.
 pub struct RunPlan<'a> {
     pub kind: CliKind,
@@ -142,6 +145,10 @@ pub struct RunPlan<'a> {
     pub system: Option<&'a str>,
     /// One-off request: nothing kept.
     pub ephemeral: bool,
+    /// Claude Code leaves the user's skills out of its system prompt
+    /// (`--disable-slash-commands`): they need its own tools, and they cost
+    /// tokens on every request (ADR-0018). Only when the CLI has the flag.
+    pub skills_off: bool,
     pub extra_args: &'a [String],
 }
 
@@ -187,6 +194,9 @@ pub fn invocation(plan: &RunPlan<'_>) -> std::io::Result<Invocation> {
                 args.extend(["--resume".into(), plan.session.into()]);
             } else {
                 args.extend(["--session-id".into(), plan.session.into()]);
+            }
+            if plan.skills_off {
+                args.push(SKILLS_OFF_FLAG.into());
             }
             if let Some(system) = plan.system.filter(|s| !s.trim().is_empty()) {
                 let file = plan.scratch.join("system.md");
@@ -530,6 +540,7 @@ mod tests {
             scratch: dir.path(),
             system: Some("regras"),
             ephemeral: false,
+            skills_off: true,
             extra_args: &[],
         };
         let claude = invocation(&plan(CliKind::ClaudeCode, false)).unwrap().args;
@@ -538,6 +549,7 @@ mod tests {
             joined.contains("--session-id 0190-uuid") && joined.contains("--strict-mcp-config")
         );
         assert!(joined.contains("--allowedTools mcp__orchestrator"));
+        assert!(joined.contains("--disable-slash-commands"));
         assert!(claude
             .windows(2)
             .any(|w| w[0] == "--tools" && w[1].is_empty()));

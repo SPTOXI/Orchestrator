@@ -39,6 +39,9 @@ const HISTORY: usize = 50;
 const AUDIT_TASK_CHARS: usize = 500;
 /// Longest session title taken from a task.
 const TITLE_CHARS: usize = 60;
+/// Output asked of each Council member: an analysis or a vote, not a
+/// whole implementation (ADR-0018).
+const COUNCIL_MAX_OUTPUT: u32 = 8_000;
 
 /// A deliberation request.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
@@ -138,6 +141,7 @@ async fn ask(
         model: member.model.clone(),
         system: Some(system.into()),
         prompt,
+        max_output_tokens: Some(COUNCIL_MAX_OUTPUT),
     };
     let cancel = CancellationToken::new();
     match tokio::time::timeout(timeout, provider.complete(&request, &cancel)).await {

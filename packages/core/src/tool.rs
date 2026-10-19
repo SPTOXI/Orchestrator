@@ -198,46 +198,96 @@ impl ToolResult {
 /// as raw text instead of a JSON string (see [`render_for_model`]).
 const RAW_FIELD_MIN_CHARS: usize = 200;
 
+/// Lists of at least this many rows of flat objects go as tables.
+const TABLE_MIN_ROWS: usize = 3;
+
 /// A tool's output as text for a model, in as few tokens as possible: a
 /// string goes as is; an object's long multi-line strings (file contents,
-/// command output) go as raw blocks after the compact JSON of the rest, so
-/// newlines and quotes are not escaped; anything else is compact JSON.
+/// command output) go as raw blocks, and its lists of flat objects
+/// (directory entries, commits, search hits) as tables with one row per
+/// item, after the compact JSON of the rest, so newlines and quotes are not
+/// escaped and keys are not repeated; anything else is compact JSON.
 pub fn render_for_model(output: &Value) -> String {
     match output {
         Value::String(s) => s.clone(),
+        Value::Array(_) => match table(output) {
+            Some(rows) => rows,
+            None => compact(output),
+        },
         Value::Object(map) => {
             let is_raw = |v: &Value| {
                 v.as_str()
                     .is_some_and(|s| s.contains('\n') && s.chars().count() >= RAW_FIELD_MIN_CHARS)
             };
-            if !map.values().any(is_raw) {
-                return serde_json::to_string(output).unwrap_or_else(|_| "null".into());
-            }
             let mut rest = serde_json::Map::new();
             let mut blocks = Vec::new();
             for (key, value) in map {
                 match value.as_str() {
-                    Some(text) if is_raw(value) => blocks.push((key, text)),
-                    _ => {
-                        rest.insert(key.clone(), value.clone());
-                    }
+                    Some(text) if is_raw(value) => blocks.push(format!("[{key}]\n{text}")),
+                    _ => match table(value) {
+                        Some(rows) => blocks.push(format!("[{key}: {rows}")),
+                        None => {
+                            rest.insert(key.clone(), value.clone());
+                        }
+                    },
                 }
+            }
+            if blocks.is_empty() {
+                return compact(output);
             }
             let mut text = if rest.is_empty() {
                 String::new()
             } else {
-                serde_json::to_string(&rest).unwrap_or_default()
+                compact(&Value::Object(rest))
             };
-            for (key, block) in blocks {
+            for block in blocks {
                 if !text.is_empty() {
                     text.push('\n');
                 }
-                text.push_str(&format!("[{key}]\n{block}"));
+                text.push_str(&block);
             }
             text
         }
-        other => serde_json::to_string(other).unwrap_or_else(|_| "null".into()),
+        other => compact(other),
     }
+}
+
+fn compact(value: &Value) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "null".into())
+}
+
+/// A list of flat objects as `col|col]` plus one `value|value` line per
+/// item (`|`, `\` and newlines escaped; null and missing are empty), or
+/// `None` when it is not one: too short, or with nested values.
+fn table(value: &Value) -> Option<String> {
+    let rows = value.as_array().filter(|a| a.len() >= TABLE_MIN_ROWS)?;
+    let mut columns: Vec<&str> = Vec::new();
+    for row in rows {
+        let row = row.as_object().filter(|r| !r.is_empty())?;
+        for (key, cell) in row {
+            if cell.is_array() || cell.is_object() {
+                return None;
+            }
+            if !columns.contains(&key.as_str()) {
+                columns.push(key);
+            }
+        }
+    }
+    let cell = |value: Option<&Value>| match value {
+        None | Some(Value::Null) => String::new(),
+        Some(Value::String(s)) => s
+            .replace('\\', "\\\\")
+            .replace('|', "\\|")
+            .replace('\n', "\\n"),
+        Some(other) => other.to_string(),
+    };
+    let mut text = format!("{}]", columns.join("|"));
+    for row in rows {
+        text.push('\n');
+        let line: Vec<String> = columns.iter().map(|c| cell(row.get(*c))).collect();
+        text.push_str(&line.join("|"));
+    }
+    Some(text)
 }
 
 /// Cuts `text` to about `max` characters for a model, keeping the start
@@ -297,6 +347,23 @@ mod render_tests {
         let text = render_for_model(&json!({"path": "x.rs", "content": body}));
         assert_eq!(text, format!("{{\"path\":\"x.rs\"}}\n[content]\n{body}"));
         assert!(!text.contains("\\n"));
+    }
+
+    #[test]
+    fn lists_of_flat_objects_go_as_tables() {
+        let entries = json!([
+            {"name": "a.rs", "kind": "file", "size": 12},
+            {"name": "src", "kind": "dir", "size": null},
+            {"name": "x|y\nz", "kind": "file"},
+        ]);
+        let table = "kind|name|size]\nfile|a.rs|12\ndir|src|\nfile|x\\|y\\nz|";
+        assert_eq!(render_for_model(&entries), table);
+        let text = render_for_model(&json!({"path": ".", "entries": entries}));
+        assert_eq!(text, format!("{{\"path\":\".\"}}\n[entries: {table}"));
+        // Short or nested lists stay JSON.
+        assert_eq!(render_for_model(&json!([{"a": 1}])), "[{\"a\":1}]");
+        let nested = json!([{"a": [1]}, {"a": [2]}, {"a": [3]}]);
+        assert_eq!(render_for_model(&nested), compact(&nested));
     }
 
     #[test]

@@ -950,6 +950,7 @@ async fn complete_answers_once_without_tools_or_history() {
         model: None,
         system: Some("Você é o gerenciador.".into()),
         prompt: "Qual candidato?".into(),
+        max_output_tokens: Some(8_000),
     };
     let answer = claude.complete(&request, &cancel).await.unwrap();
     assert_eq!(answer.text, "{\"choice\":\"c1\"}");
@@ -965,6 +966,7 @@ async fn complete_answers_once_without_tools_or_history() {
     assert_eq!(sent["system"], "Você é o gerenciador.");
     assert_eq!(sent["messages"].as_array().unwrap().len(), 1);
     assert!(sent.get("tools").is_none(), "no tools on a completion");
+    assert_eq!(sent["max_tokens"], 8_000, "the request's limit, not 64 000");
 
     // Model override, and nothing is kept between completions.
     let local = h.registry.get(&"local".into()).unwrap();
@@ -975,6 +977,7 @@ async fn complete_answers_once_without_tools_or_history() {
                     model: Some("large".into()),
                     system: None,
                     prompt: "oi".into(),
+                    ..Default::default()
                 },
                 &cancel,
             )

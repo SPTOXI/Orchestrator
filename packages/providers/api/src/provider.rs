@@ -36,6 +36,9 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(90);
 const LOCAL_TEST_TIMEOUT: Duration = Duration::from_secs(660);
 /// Below this, a reply cut to what the credit pays is not worth asking for.
 const MIN_AFFORDABLE_OUTPUT: u32 = 1024;
+/// Output asked of a connection test: a word and a tool call (and room
+/// for models that reason first).
+const TEST_MAX_OUTPUT: u32 = 1_024;
 /// How long a limit learned from a 402 holds: the credit may have changed.
 const OUTPUT_CAP_TTL: Duration = Duration::from_secs(30 * 60);
 
@@ -341,6 +344,10 @@ impl ApiProvider {
         let protocol = protocol(conn.kind);
         let stream = protocol.streams(conn);
         let mut model = self.capped(call.model);
+        if let Some(cap) = call.max_output {
+            let asked = model.max_output_tokens.or(conn.max_output_tokens);
+            model.max_output_tokens = Some(asked.map_or(cap, |a| a.min(cap)));
+        }
         let request = |model: &ModelEntry| {
             protocol.request(&Request {
                 conn,
@@ -589,6 +596,7 @@ impl ApiProvider {
                         tools: native_tools,
                         cache_key: Some(&native.reference),
                         fallback: true,
+                        max_output: None,
                     },
                     &on_delta,
                     &|retry| retry_notice(ctx, retry),
@@ -809,6 +817,7 @@ impl ApiProvider {
                     tools: &[],
                     cache_key: None,
                     fallback: false,
+                    max_output: Some(TEST_MAX_OUTPUT),
                 },
                 &quiet,
                 &|_| {},
@@ -845,6 +854,7 @@ impl ApiProvider {
                     tools,
                     cache_key: None,
                     fallback: false,
+                    max_output: Some(TEST_MAX_OUTPUT),
                 },
                 &quiet,
                 &|_| {},
@@ -916,6 +926,9 @@ pub(crate) struct ModelCall<'a> {
     pub cache_key: Option<&'a str>,
     /// Whether the connection's fallback may answer instead.
     pub fallback: bool,
+    /// The most this request needs, below the configured limit (a summary,
+    /// a test); `None`: the connection's or the model's limit.
+    pub max_output: Option<u32>,
 }
 
 /// `error` explained: whose server is overloaded and what to do.
@@ -1202,6 +1215,7 @@ impl AIProvider for ApiProvider {
                     tools: &[],
                     cache_key: None,
                     fallback: true,
+                    max_output: request.max_output_tokens,
                 },
                 &quiet,
                 &|_| {},

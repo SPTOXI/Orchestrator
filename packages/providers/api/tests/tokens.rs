@@ -613,6 +613,14 @@ async fn a_turn_compacts_between_tool_rounds_and_carries_on() {
     let calls = api.calls("/v1/chat");
     assert_eq!(calls.len(), 3, "tool round, summary, next round");
     let summary = &calls[1].body;
+    assert_eq!(
+        summary["max_completion_tokens"], 16_000,
+        "a summary, not a whole turn"
+    );
+    assert!(
+        calls[0].body.get("max_completion_tokens").is_none(),
+        "turns keep the API's limit"
+    );
     let messages = summary["messages"].as_array().unwrap();
     // The round was complete: the call and its result, then the request.
     assert_eq!(messages[messages.len() - 2]["role"], "tool");

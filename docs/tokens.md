@@ -86,6 +86,11 @@ formato que gasta menos tokens:
 - campos de texto longos com várias linhas (conteúdo de arquivo, saída de
   comando) vão como blocos crus (`[content]` seguido do texto) depois do
   JSON compacto do resto, em vez de uma string JSON com `\n` e `\"`;
+- listas de 3 ou mais objetos simples (entradas de diretório, commits,
+  resultados de busca) vão como tabela, uma linha por item e as colunas uma
+  vez só: `[entries: kind|name|size]` e depois `file|a.rs|12`; `|`, `\` e
+  quebras de linha nos valores são escapados, e vazio é nulo ou ausente.
+  Listas curtas ou com valores aninhados continuam em JSON;
 - o resto vai em JSON compacto (antes, pelo MCP, ia indentado);
 - acima do limite, o resultado é cortado nos dois lados: fica o começo e o
   fim (onde costumam estar erros e resumos), com o aviso de quanto saiu. O
@@ -148,6 +153,33 @@ ferramentas). Os pedidos de um turno se somam, como na cobrança. A aba
 no período (`SpendReport.prompt` e `promptCalls`, os turnos que têm a
 medida). As CLIs não mostram o prompt que montam; para elas não há
 composição.
+
+## Limite de saída dos pedidos auxiliares
+
+Pedidos que não são turnos pedem só a saída de que precisam, abaixo do
+limite da conexão ou do modelo (um limite configurado menor continua
+valendo). Assim a resposta não se alonga e, no OpenRouter, o crédito não
+precisa pagar a resposta mais longa que o modelo permite:
+
+| Pedido | Saída máxima |
+| ------ | ------------ |
+| Resumo da compactação | 16.000 tokens |
+| Resposta de cada membro do Conselho | 8.000 tokens |
+| "Testar conexão" | 1.024 tokens |
+
+Os turnos das sessões continuam com o limite da conexão (`maxOutputTokens`)
+ou do modelo. As CLIs não têm esse ajuste.
+
+## Claude Code sem os skills do usuário
+
+Pela assinatura, o Claude Code roda com `--disable-slash-commands` quando a
+sessão usa só as ferramentas do Orchestrator (a opção "ferramentas próprias"
+da CLI desligada): os skills e plugins instalados pelo usuário saem do prompt
+de sistema, que vai em todo pedido. Eles dependem das ferramentas próprias
+do Claude Code, que estão desligadas. O Orchestrator confere uma vez, no
+`--help` do programa, se a versão instalada tem a opção; nas antigas, nada
+muda. O login da assinatura continua (o `--bare` não serve: ele não lê o
+login).
 
 ## Compactação de contexto
 
