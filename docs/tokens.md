@@ -144,8 +144,11 @@ ferramentas e quantos tokens cada um custa.
 
 Os schemas dos argumentos também vão enxutos: campos opcionais perdem a
 alternativa `null` (`["string", "null"]` vira `"string"`), e saem
-`"default": null` e os formatos de inteiro (`uint32`…). O sentido para a IA
-é o mesmo, com cerca de 10% a menos nas definições das ferramentas.
+`"default": null`, os formatos de inteiro (`uint32`…) e as anotações
+`title`/`$schema`. O sentido para a IA é o mesmo, com cerca de 10% a menos
+nas definições das ferramentas. Vale também para as ferramentas dos
+servidores MCP que o usuário conecta, cujos schemas costumam repetir um
+`title` em cada campo.
 
 ## Do que a entrada é feita
 
