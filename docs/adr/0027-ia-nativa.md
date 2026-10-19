@@ -166,8 +166,8 @@ Um modelo de fábrica com núcleo + ~10 especialistas (~250 M no total,
   com esse mesmo pipeline, em notebooks comuns ou em qualquer máquina que
   o projeto tiver; vem pronta no instalador. Uma GPU alugada **acelera**,
   mas não é requisito.
-- Depois, a **Colmeia** (§2c) treina as versões seguintes com o
-  processamento de todos os Orchestrators instalados que participam.
+- No futuro, a **Colmeia** (§2c, adiada) poderá treinar as versões
+  seguintes com o processamento dos Orchestrators instalados.
 
 ### 2b. Biblioteca: o conhecimento no disco do computador
 
@@ -194,7 +194,12 @@ livro:
 - A Biblioteca alimenta também o treino: os textos dos pacotes de uma
   língua servem para treinar o especialista dela (§2a) sem baixar de novo.
 
-### 2c. Colmeia: treino distribuído entre os Orchestrators instalados
+### 2c. Colmeia: treino distribuído entre os Orchestrators instalados (adiada)
+
+> **Pendência para uma fase futura**, quando o projeto amadurecer. Fica
+> registrada aqui como direção; nada dela entra nas fases desta ADR. O
+> motor, o formato `.nativa` e o treino bloco a bloco já são desenhados
+> para que ela possa ser ligada depois sem refazer nada.
 
 Como o SETI@home (e o BOINC, que veio dele), mas para treinar a Nativa:
 cada Orchestrator instalado que participa empresta processamento ocioso,
@@ -374,8 +379,8 @@ chamada, Parar/Pausar com atalho global, e pontos de restauração
   arquivos ou desligar o computador. O usuário escolhe isso
   conscientemente, e a tela de ativação diz isso claramente.
 - Trilhas, Biblioteca local e adaptador pessoal ficam só no computador.
-- A Colmeia exige um serviço do projeto sempre no ar (coordenador), com
+- Quando vier (fase futura), a Colmeia exigirá um serviço do projeto sempre no ar (coordenador), com
   custo de servidor e de banda, e a confiança dos participantes: o código
-  do cliente da Colmeia é aberto e auditável.
+  do cliente da Colmeia deverá ser aberto e auditável.
 
 Plano de implementação em [`docs/native-ai.md`](../native-ai.md).

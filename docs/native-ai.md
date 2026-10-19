@@ -40,8 +40,6 @@ módulos, contratos, fases e critérios de aceite.
 | `packages/native` (novo) | `NativeAgent`, roteador de grupo, recuperação de habilidades, agendamento do treino LoRA |
 | `packages/system` (novo) | ferramentas `system.*` por SO (`cfg(target_os)`), com fallback para shell |
 | `packages/library` (novo) | Biblioteca no disco: pacotes de conhecimento, índice BM25 + vetores por `mmap`, atualização, citações |
-| `packages/hive` (novo) | cliente da Colmeia: recebe unidades, treina no ocioso, devolve diferenças assinadas, painel e limites |
-| `services/hive` (novo) | coordenador da Colmeia: divide unidades, confere por redundância, junta, publica versões assinadas |
 | `packages/memory` | tabelas `traces`, `skills`, `routines`, `routine_runs`, `preferences`, `embeddings`, `adapters` |
 | `packages/orchestrator` | ferramentas `orchestrator.*` sobre o gateway; agendador de rotinas |
 | `packages/core` | contratos `Routine`, `RoutineStep`, `Trigger`, `Skill`, `Trace`; eventos `routine.*`, `native.*` |
@@ -124,15 +122,6 @@ enquanto os especialistas são treinados.
 - **Aceite:** com 20 GB de Biblioteca, uma busca responde em < 200 ms
   usando < 300 MB de RAM; respostas com fatos citam a fonte.
 
-### H1 — Colmeia
-- Coordenador, unidades de trabalho, treino de baixa comunicação,
-  redundância e conjunto secreto, reputação, limites de ociosidade,
-  temperatura e horário, painel e créditos.
-- **Aceite:** com 50 participantes simulados (alguns sabotadores), um
-  especialista treinado pela Colmeia empata com o treinado num só
-  computador e os sabotadores são descartados; um participante nunca
-  envia nada além da diferença de pesos da unidade.
-
 ### N1 — Agente e ferramentas
 - `NativeAgent` com roteamento; `system.*` nos três SOs; `orchestrator.*`
   com o interruptor de administração.
@@ -164,10 +153,23 @@ enquanto os especialistas são treinados.
 | Bugs numéricos no motor | testes de equivalência kernel a kernel e contra a referência PyTorch |
 | Modelo pequeno erra | treino focado nas ferramentas reais, gramática, roteamento, exemplos recuperados, LoRA pessoal |
 | Técnicas de treino eficiente não renderem | cada uma entra só depois de medida contra o treino denso clássico (T1); se uma falhar, troca-se por outra sem mudar o resto |
-| Treino lento demais no notebook | peças pequenas (1 noite cada), dados sintéticos verificáveis, crescimento progressivo, Colmeia |
-| Sabotagem ou erro na Colmeia | redundância, conjunto secreto, reputação, só o coordenador publica, versões assinadas |
+| Treino lento demais no notebook | peças pequenas (1 noite cada), dados sintéticos verificáveis, crescimento progressivo |
 | Biblioteca ocupa muito disco | pacotes escolhidos pelo usuário, com tamanho à vista; texto comprimido |
 | Licença dos dados | só corpora que permitem treinar e redistribuir; origem marcada em cada exemplo |
 | Ação destrutiva por engano | o usuário escolhe o modo; Pause/Parar; auditoria; ponto de restauração; exemplos negativos no treino contra ações destrutivas não pedidas |
 | Adaptador pessoal piora a IA | só troca se passar na avaliação; volta ao anterior ou ao de fábrica a qualquer momento |
 | Privacidade | trilhas e adaptador só locais, apagáveis, nunca enviados sem pedido |
+
+## Pendências para fases futuras
+
+### Colmeia (treino distribuído, estilo SETI@home)
+- Adiada até o projeto amadurecer ([ADR-0027 §2c](./adr/0027-ia-nativa.md)).
+- Módulos previstos: `packages/hive` (cliente) e `services/hive`
+  (coordenador).
+- Coordenador, unidades de trabalho, treino de baixa comunicação,
+  redundância e conjunto secreto, reputação, limites de ociosidade,
+  temperatura e horário, painel e créditos.
+- **Aceite:** com 50 participantes simulados (alguns sabotadores), um
+  especialista treinado pela Colmeia empata com o treinado num só
+  computador e os sabotadores são descartados; um participante nunca
+  envia nada além da diferença de pesos da unidade.
