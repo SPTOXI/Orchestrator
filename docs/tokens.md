@@ -186,6 +186,16 @@ do Claude Code, que estão desligadas. O Orchestrator confere uma vez, no
 muda. O login da assinatura continua (o `--bare` não serve: ele não lê o
 login).
 
+## Regras do projeto sem repetição
+
+Os arquivos de regras do projeto (`AGENTS.md`, `CLAUDE.md`,
+`.orchestrator/rules.md`) vão inteiros nas instruções da sessão, mas:
+
+- o arquivo que a CLI já lê sozinha da pasta do projeto não vai de novo: o
+  `CLAUDE.md` no Claude Code e o `AGENTS.md` no Codex;
+- um arquivo que outro repete inteiro (um `AGENTS.md` copiado dentro do
+  `CLAUDE.md`) vai uma vez só, no maior.
+
 ## Compactação de contexto
 
 Conversas longas são **resumidas pela própria IA**, igual nos quatro

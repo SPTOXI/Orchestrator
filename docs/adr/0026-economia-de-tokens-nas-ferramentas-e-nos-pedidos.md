@@ -47,6 +47,9 @@ necessidade:
 8. **Composição do prompt** (`TokenUsage.prompt`, `SpendReport.prompt`):
    estimativa de instruções, ferramentas, conversa e resultados por pedido,
    na aba "Tokens e custo".
+9. **Regras do projeto sem repetição:** o `CLAUDE.md` não vai ao Claude
+   Code nem o `AGENTS.md` ao Codex (as CLIs já os leem da pasta do
+   projeto), e um arquivo de regras repetido inteiro em outro vai uma vez.
 
 Detalhes em [`docs/tokens.md`](../tokens.md).
 
