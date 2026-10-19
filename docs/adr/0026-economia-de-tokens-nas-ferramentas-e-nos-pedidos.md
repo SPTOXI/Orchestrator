@@ -35,7 +35,8 @@ necessidade:
    recusadas sem executar; subagentes herdam os grupos do pai; a escolha
    só muda antes do primeiro turno.
 4. **Schemas enxutos** (`slim_schema`): opcionais sem a alternativa `null`,
-   sem `"default": null` e sem formatos de inteiro.
+   sem `"default": null`, sem formatos de inteiro e sem `title`/`$schema`;
+   também nas ferramentas dos servidores MCP conectados.
 5. **Resultados antigos saem da conversa** (`clearToolResults`, ligado por
    padrão): na metade do limite da compactação, resultados grandes de
    rodadas anteriores às 3 últimas viram uma nota de uma linha, só quando

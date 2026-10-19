@@ -343,7 +343,7 @@ impl McpManager {
                         }
                     ),
                     read_only: view.read_only,
-                    parameters: remote.input_schema.clone(),
+                    parameters: orchestrator_core::slim_schema(remote.input_schema.clone()),
                 });
             }
         }

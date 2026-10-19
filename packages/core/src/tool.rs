@@ -201,8 +201,9 @@ const RAW_FIELD_MIN_CHARS: usize = 200;
 /// A tool's argument schema in fewer tokens, for every request that
 /// carries it (ADR-0018), with the same meaning for a model: optional
 /// fields lose their `null` alternative (`["string", "null"]` becomes
-/// `"string"`, `anyOf [X, null]` becomes X), `"default": null` and
-/// integer `format`s (`uint32`…) go, the rest stays.
+/// `"string"`, `anyOf [X, null]` becomes X), `"default": null`, integer
+/// `format`s (`uint32`…) and the `title`/`$schema` annotations (generators
+/// such as pydantic title every field) go, the rest stays.
 pub fn slim_schema(mut schema: Value) -> Value {
     slim(&mut schema);
     schema
@@ -213,6 +214,13 @@ fn slim(value: &mut Value) {
         Value::Object(map) => {
             if map.get("default").is_some_and(Value::is_null) {
                 map.remove("default");
+            }
+            // Only as annotations (strings): a property named `title` is
+            // an object and stays.
+            for key in ["title", "$schema"] {
+                if map.get(key).is_some_and(Value::is_string) {
+                    map.remove(key);
+                }
             }
             if map
                 .get("format")
@@ -412,8 +420,11 @@ mod render_tests {
                 "limit": {"type": ["integer", "null"], "format": "uint32", "minimum": 0},
                 "mode": {"anyOf": [{"type": "string", "enum": ["a", "b"]}, {"type": "null"}],
                          "description": "m"},
-                "ratio": {"type": "number", "format": "double"}
-            }
+                "ratio": {"type": "number", "format": "double"},
+                "title": {"type": "string", "title": "Title"}
+            },
+            "title": "Args",
+            "$schema": "http://json-schema.org/draft-07/schema#"
         });
         assert_eq!(
             slim_schema(schema),
@@ -423,7 +434,8 @@ mod render_tests {
                     "path": {"type": "string", "description": "d"},
                     "limit": {"type": "integer", "minimum": 0},
                     "mode": {"type": "string", "enum": ["a", "b"], "description": "m"},
-                    "ratio": {"type": "number", "format": "double"}
+                    "ratio": {"type": "number", "format": "double"},
+                    "title": {"type": "string"}
                 }
             })
         );
