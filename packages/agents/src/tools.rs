@@ -63,7 +63,8 @@ fn schema<T: JsonSchema>() -> Value {
             settings.meta_schema = None;
         })
         .into_generator();
-    let mut value = generator.into_root_schema_for::<T>().to_value();
+    let mut value =
+        orchestrator_core::slim_schema(generator.into_root_schema_for::<T>().to_value());
     if let Some(object) = value.as_object_mut() {
         object.remove("title");
         object.remove("description");

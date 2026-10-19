@@ -142,6 +142,11 @@ ferramentas e quantos tokens cada um custa.
   mesmo modelo **com o mesmo conjunto** de grupos: conjuntos diferentes
   gravam caches diferentes.
 
+Os schemas dos argumentos também vão enxutos: campos opcionais perdem a
+alternativa `null` (`["string", "null"]` vira `"string"`), e saem
+`"default": null` e os formatos de inteiro (`uint32`…). O sentido para a IA
+é o mesmo, com cerca de 10% a menos nas definições das ferramentas.
+
 ## Do que a entrada é feita
 
 Cada pedido das conexões de API registra, em `TokenUsage.prompt`, uma

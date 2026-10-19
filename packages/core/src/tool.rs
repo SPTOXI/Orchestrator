@@ -198,6 +198,60 @@ impl ToolResult {
 /// as raw text instead of a JSON string (see [`render_for_model`]).
 const RAW_FIELD_MIN_CHARS: usize = 200;
 
+/// A tool's argument schema in fewer tokens, for every request that
+/// carries it (ADR-0018), with the same meaning for a model: optional
+/// fields lose their `null` alternative (`["string", "null"]` becomes
+/// `"string"`, `anyOf [X, null]` becomes X), `"default": null` and
+/// integer `format`s (`uint32`…) go, the rest stays.
+pub fn slim_schema(mut schema: Value) -> Value {
+    slim(&mut schema);
+    schema
+}
+
+fn slim(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            if map.get("default").is_some_and(Value::is_null) {
+                map.remove("default");
+            }
+            if map
+                .get("format")
+                .and_then(Value::as_str)
+                .is_some_and(|f| f.starts_with("int") || f.starts_with("uint"))
+            {
+                map.remove("format");
+            }
+            if let Some(Value::Array(types)) = map.get_mut("type") {
+                types.retain(|t| t != "null");
+                if types.len() == 1 {
+                    let only = types.remove(0);
+                    map.insert("type".into(), only);
+                }
+            }
+            for key in ["anyOf", "oneOf"] {
+                let Some(Value::Array(options)) = map.get_mut(key) else {
+                    continue;
+                };
+                options.retain(|o| o.get("type").and_then(Value::as_str) != Some("null"));
+                if options.len() == 1 {
+                    let Value::Object(only) = options.remove(0) else {
+                        continue;
+                    };
+                    map.remove(key);
+                    for (k, v) in only {
+                        map.entry(k).or_insert(v);
+                    }
+                }
+            }
+            for child in map.values_mut() {
+                slim(child);
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(slim),
+        _ => {}
+    }
+}
+
 /// Lists of at least this many rows of flat objects go as tables.
 const TABLE_MIN_ROWS: usize = 3;
 
@@ -347,6 +401,32 @@ mod render_tests {
         let text = render_for_model(&json!({"path": "x.rs", "content": body}));
         assert_eq!(text, format!("{{\"path\":\"x.rs\"}}\n[content]\n{body}"));
         assert!(!text.contains("\\n"));
+    }
+
+    #[test]
+    fn schemas_lose_what_says_nothing() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": ["string", "null"], "default": null, "description": "d"},
+                "limit": {"type": ["integer", "null"], "format": "uint32", "minimum": 0},
+                "mode": {"anyOf": [{"type": "string", "enum": ["a", "b"]}, {"type": "null"}],
+                         "description": "m"},
+                "ratio": {"type": "number", "format": "double"}
+            }
+        });
+        assert_eq!(
+            slim_schema(schema),
+            json!({
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "d"},
+                    "limit": {"type": "integer", "minimum": 0},
+                    "mode": {"type": "string", "enum": ["a", "b"], "description": "m"},
+                    "ratio": {"type": "number", "format": "double"}
+                }
+            })
+        );
     }
 
     #[test]
