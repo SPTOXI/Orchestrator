@@ -1,86 +1,137 @@
-# ADR-0027 — IA Nativa: uma IA local que opera o Orchestrator e o computador
+# ADR-0027 — IA Nativa: motor próprio, modelo próprio, operando o Orchestrator e o computador
 
 - **Estado:** Proposta
 - **Fase:** depois da 12 (pedido do usuário)
 - **Depende de:** [ADR-0016](./0016-autonomia-e-pause.md) (autonomia),
   [ADR-0020](./0020-acesso-total-da-ia.md) (acesso total),
-  [ADR-0025](./0025-motor-local-proprio.md) (motor local),
   [ADR-0026](./0026-economia-de-tokens-nas-ferramentas-e-nos-pedidos.md)
   (economia de tokens)
+- **Relação com a [ADR-0025](./0025-motor-local-proprio.md):** o llama.cpp
+  continua servindo modelos de terceiros; a IA Nativa **não** depende dele
 
 ## Contexto
 
-O usuário pediu uma **IA própria do Orchestrator**, que:
+O usuário pediu uma **IA própria do Orchestrator**. A base do pedido é:
 
-1. rode em notebooks e computadores com **até 8 GB de RAM**, sem API paga
-   nem internet;
-2. **gerencie o Orchestrator** (projetos, tasks, agentes, providers,
+- **motor próprio**: o código que executa o modelo é do Orchestrator, não
+  um programa de terceiros baixado (llama.cpp, Ollama, ONNX Runtime);
+- **modelo próprio**: arquitetura, tokenizador, pesos e treino do
+  Orchestrator, não um modelo de terceiros escolhido num catálogo.
+
+E a IA precisa:
+
+1. rodar em notebooks e computadores com **até 8 GB de RAM**, offline;
+2. **gerenciar o Orchestrator** (projetos, tasks, agentes, providers,
    autonomia, backups, atualizações);
-3. **gerencie o computador** onde ele está instalado, podendo fazer tudo o
-   que o usuário pode fazer, sem restrição;
-4. tenha uma **lista de funções** a executar (rotinas);
-5. **aprenda** o que o usuário faz e o que ele quer que ela faça.
+3. **gerenciar o computador**, podendo fazer tudo o que o usuário pode
+   fazer, sem restrição;
+4. ter uma **lista de funções** a executar (rotinas);
+5. **aprender** o que o usuário faz e o que ele quer que ela faça.
 
-O que já existe e será reaproveitado:
+O que já existe e será reaproveitado: o leitor de GGUF de
+`packages/local` (ADR-0025), o Tool Runtime auditado com arquivos, shell,
+processos, git, web e segredos (ADR-0020), o modo Acesso Irrestrito
+(ADR-0016), Task Manager, agentes e memória em SQLite (ADRs 0012–0015).
 
-- o motor `llama-server` gerenciado pelo Orchestrator (ADR-0025);
-- o Tool Runtime com arquivos, shell, terminais, processos, git, web e
-  segredos (ADR-0020), auditado;
-- o modo **Acesso Irrestrito** (ADR-0016), que não avalia nada;
-- Task Manager, agentes, memória L1/L2/L3 em SQLite (ADRs 0012–0015);
-- grupos de ferramentas por sessão e schemas enxutos (ADR-0026).
+Limites reais, que guiam as decisões abaixo:
 
-O problema real é que um modelo que cabe em 8 GB (3–4 bilhões de
-parâmetros, quantizado) **erra chamadas de ferramenta** e se perde com 10
-mil tokens de definições. A IA Nativa só funciona se o Orchestrator fizer
-o trabalho pesado em volta do modelo.
+- treinar do zero um modelo do tamanho dos de API custa milhões de dólares;
+  um modelo **pequeno e especializado** (≤ 1,5 bilhão de parâmetros) custa
+  milhares e cabe em 8 GB;
+- um modelo pequeno não sabe "tudo", mas pode saber **muito bem** o que a
+  Nativa faz: chamar as ferramentas do Orchestrator e do sistema, seguir
+  rotinas, conversar em português;
+- com motor próprio, o **aprendizado pode mudar os pesos** no próprio
+  computador (adaptadores LoRA treinados no CPU), não só a memória.
 
 ## Decisão
 
-### 1. A "Nativa" é um provider local com perfil fixo
+### 1. Motor próprio: `orchestrator-engine` (Rust, sem dependências de inferência)
 
-Um provider novo, `native`, sobre o motor da ADR-0025, com o modelo
-escolhido pela RAM detectada:
+Um crate novo, `packages/engine`, escrito pelo projeto:
 
-| RAM total | Modelo padrão (GGUF) | Contexto | RAM usada (aprox.) |
-| --------- | -------------------- | -------- | ------------------ |
-| ≤ 4 GB | 1,5B Q4_K_M | 4.096 | ~1,3 GB |
-| 6–8 GB | 3B–4B Q4_K_M | 8.192 | ~2,8–3,5 GB |
-| ≥ 12 GB | 7B–8B Q4_K_M | 16.384 | ~5,5 GB |
+| Parte | O que faz |
+| ----- | --------- |
+| Formato | `.nativa` (cabeçalho + tensores, mapeado em memória com `mmap`); importa GGUF só para testes de equivalência |
+| Quantização | pesos em 4 bits por grupo (estilo Q4) e 8 bits; ativações em f32/bf16 |
+| Kernels | multiplicação matriz-vetor e matriz-matriz quantizadas com SIMD: AVX2/AVX-512 (x86), NEON (ARM, Apple M); caminho escalar de referência para testes |
+| Execução | transformer decoder (RMSNorm, RoPE, atenção com grupos de KV, SwiGLU), cache KV quantizado em 8 bits, lotes para o prompt, multithread por núcleos físicos |
+| Decodificação | amostragem (temperatura, top-p, min-p), **decodificação com gramática** (JSON Schema → autômato) para que toda chamada de ferramenta saia válida |
+| Embeddings | o mesmo modelo, pela média da última camada, para a busca na memória |
+| Treino local | retropropagação só nos adaptadores **LoRA** (pesos base congelados e quantizados), para o aprendizado da §5 |
+| GPU (depois) | backend opcional por `wgpu` (Vulkan/Metal/DX12), mesmo formato e mesmos testes |
 
-- O catálogo lista modelos **com suporte a tool calling** (famílias Qwen,
-  Llama 3.x, Phi); o usuário pode trocar.
-- Cache KV em `q8_0`, `--mlock` desligado, `--threads` = núcleos físicos;
-  o motor desliga sozinho depois de N minutos ocioso (configurável) e o
-  modelo sai da memória.
-- Um segundo modelo pequeno de **embeddings** (~30–130 MB) roda no mesmo
-  motor (`--embedding`) para a busca na memória e nas habilidades.
-- Teto de memória: se a RAM livre ficar abaixo de 1 GB, a Nativa reduz o
-  contexto ou pausa e avisa, em vez de travar o computador.
+- Roda **dentro do processo** do Orchestrator (sem servidor HTTP, sem
+  porta), com uma fila de pedidos e cancelamento imediato pelo botão Parar.
+- Teto de memória: o motor sabe quanto vai usar antes de carregar
+  (pesos + cache KV + ativações) e recusa ou reduz o contexto em vez de
+  levar o computador a trocar para o disco.
+- Corretude garantida por testes de equivalência: cada kernel contra o
+  caminho escalar; o modelo inteiro contra uma implementação de referência
+  em PyTorch no pipeline de treino (logits iguais até a tolerância).
 
-### 2. Chamadas de ferramenta com gramática
+### 2. Modelo próprio: família **Nativa**
 
-O modelo não escolhe ferramentas em texto livre:
+Arquitetura, tokenizador e pesos do projeto, treinados pelo pipeline em
+`training/` (Python + PyTorch, fora do app; roda em GPUs alugadas).
 
-- as chamadas saem pelo `json_schema`/GBNF do `llama-server`, então a
-  saída **sempre** é uma chamada válida ou uma resposta;
-- **roteamento em dois passos**: primeiro o modelo escolhe um **grupo**
-  (`orchestrator`, `system`, `files`, `shell`, `web`, `routine`), depois só
-  as ferramentas desse grupo vão ao prompt (≤ ~1.500 tokens);
-- argumentos validados antes de executar; em erro, uma nova tentativa com
-  a mensagem do erro (até 2).
+| Modelo | Parâmetros | Arquivo (4 bits) | Papel |
+| ------ | ---------- | ---------------- | ----- |
+| **Nativa-Mini** | ~150 M | ~100 MB | prova do motor e do pipeline; roteador de grupos e embeddings em máquinas de 4 GB |
+| **Nativa-1** | ~1,2 B | ~750 MB | o modelo principal para 8 GB |
+| **Nativa-2** (depois) | ~3 B | ~1,8 GB | para máquinas de 12 GB ou mais |
 
-### 3. Ferramentas novas
+- **Arquitetura:** decoder-only, 24–28 camadas, atenção com grupos de KV,
+  RoPE com contexto de 8 K (16 K na Nativa-2), vocabulário de ~48 mil
+  tokens.
+- **Tokenizador próprio:** BPE treinado com peso alto em português, código,
+  comandos de shell e JSON (menos tokens por pedido = mais rápido no CPU).
+- **Tokens especiais** para o protocolo da Nativa: `<|ferramenta|>`,
+  `<|resultado|>`, `<|rotina|>`, `<|memória|>`; o formato de chamada é
+  parte do modelo, não um template colado depois.
+- **Treino em três etapas:**
+  1. **pré-treino** do zero em corpus com licença aberta (texto em
+     português e inglês, código, documentação de sistemas operacionais e
+     ferramentas), ~40–60 bilhões de tokens para a Nativa-1;
+  2. **ajuste supervisionado** em trilhas de uso de ferramentas: as
+     ferramentas reais do Orchestrator e de `system.*`, geradas num
+     ambiente simulado (VMs Windows, macOS, Linux) e validadas executando;
+  3. **ajuste por preferência** (DPO) em pares bom/ruim das mesmas trilhas
+     (chamada certa × errada, ação segura × destrutiva sem pedido).
+- **Custo estimado da Nativa-1:** ~3×10²⁰ FLOPs de pré-treino, da ordem de
+  alguns dias em 8 GPUs H100 alugadas (alguns milhares de dólares); a
+  Nativa-Mini roda numa única GPU em horas.
+- **Dados de terceiros:** só corpora com licença que permita treinar e
+  redistribuir pesos. Saídas de modelos de API só onde os termos do
+  fornecedor permitem usá-las para treinar outro modelo; o pipeline marca
+  a origem de cada exemplo.
+- **Distribuição:** os pesos `.nativa` vêm como download do próprio
+  release do Orchestrator, com SHA-256 conferido, como o resto da
+  atualização (ADR-0019).
 
-**`orchestrator.*`** — expõe à Nativa os comandos do gateway IPC
-(ADR-0003) que o usuário já usa na interface: abrir/fechar projetos,
-criar/mover tasks, pôr agentes para trabalhar, trocar provider, mudar o
-modo de autonomia, fazer backup, buscar atualização. Diferença da
-ADR-0016: **só a Nativa** recebe as ferramentas que mudam a autonomia, e
-só quando o usuário liga "A Nativa administra o Orchestrator".
+O que a Nativa-1 **não** será: um substituto dos modelos de API para
+tarefas longas de código. Para isso ela delega (handoff, ADR-0013) aos
+providers que o usuário tiver; sem nenhum, ela faz o que der e diz isso.
 
-**`system.*`** — o computador, por sistema operacional (Windows, macOS,
-Linux), com implementação em Rust e fallback para o shell:
+### 3. O agente: roteamento em dois passos, sempre com gramática
+
+- Primeiro o modelo escolhe um **grupo** (`orchestrator`, `system`,
+  `files`, `shell`, `web`, `routine`); depois só as ferramentas desse grupo
+  vão ao prompt (≤ ~1.500 tokens).
+- A saída é presa à gramática do JSON Schema da ferramenta: não existe
+  chamada malformada.
+- Argumentos validados antes de executar; em erro, nova tentativa com a
+  mensagem do erro (até 2).
+
+### 4. Ferramentas novas
+
+**`orchestrator.*`** — os comandos do gateway IPC (ADR-0003) que o usuário
+já usa: abrir/fechar projetos, criar/mover tasks, pôr agentes para
+trabalhar, trocar provider, mudar a autonomia, fazer backup, buscar
+atualização. Só a Nativa recebe as que mudam a autonomia, e só com o
+interruptor "A Nativa administra o Orchestrator" ligado.
+
+**`system.*`** — o computador, por sistema operacional:
 
 | Ferramenta | Faz |
 | ---------- | --- |
@@ -96,12 +147,12 @@ Linux), com implementação em Rust e fallback para o shell:
 | `system.clipboard` / `system.notify` | área de transferência e notificações |
 | `system.elevate` | roda um comando como administrador (UAC/sudo/polkit) |
 
-"Sem restrição" significa: tudo o que **a conta do usuário** pode fazer.
-Ações de administrador passam pela elevação do próprio sistema; o usuário
-pode guardar a senha de sudo no cofre (ADR-0020) para que a Nativa não
-pergunte. O Orchestrator não contorna as proteções do SO.
+"Sem restrição" = tudo o que **a conta do usuário** pode fazer. Ações de
+administrador passam pela elevação do próprio sistema; o usuário pode
+guardar a senha de sudo no cofre (ADR-0020) para não ser perguntado. O
+Orchestrator não contorna as proteções do SO.
 
-### 4. Rotinas: a lista de funções
+### 5. Rotinas: a lista de funções
 
 Uma **rotina** é uma lista ordenada de passos guardada no SQLite:
 
@@ -115,61 +166,53 @@ passos:
   - system.power: { acao: suspender, se_ocioso_min: 30 }
 ```
 
-- Passos podem ser chamadas diretas de ferramenta (não gastam modelo) ou
-  pedidos em linguagem natural (a Nativa decide).
+- Passos diretos (chamada de ferramenta, sem modelo) ou pedidos em
+  linguagem natural (a Nativa decide).
 - Gatilhos de evento: projeto aberto, task concluída, bateria baixa,
   arquivo mudou, CI falhou, horário.
-- Painel **ROTINAS**: criar, editar, ligar/desligar, rodar agora, ver o
-  histórico de cada execução.
-- A fila de funções aceita também pedidos avulsos: "quando terminar isso,
-  faça aquilo".
+- Painel **ROTINAS**: criar, editar, ligar/desligar, rodar agora,
+  histórico. A fila aceita também pedidos avulsos ("quando terminar isso,
+  faça aquilo").
 
-### 5. Aprendizado sem treinar pesos
+### 6. Aprendizado: memória **e** pesos
 
-Em 8 GB não dá para treinar o modelo. A Nativa aprende por **memória e
-habilidades**:
+1. **Observação.** As ações do usuário (`CallOrigin::User` e os comandos
+   da interface) viram **trilhas** locais, por projeto, apagáveis.
+2. **Mineração.** Sequências repetidas (≥ 3 vezes) viram propostas de
+   rotina com os valores que mudam como parâmetros.
+3. **Ensinar mostrando.** Botão "Gravar": a trilha vira uma **habilidade**
+   nomeada e editável.
+4. **Preferências.** Correções e negações viram regras na memória L3
+   ("usar pnpm, não npm").
+5. **Recuperação.** A cada pedido, as habilidades e preferências mais
+   próximas (embeddings do próprio motor) entram no prompt como exemplos.
+6. **Treino no computador.** Com o computador ocioso e na tomada, o motor
+   treina um **adaptador LoRA pessoal** (alguns MB) nas trilhas aprovadas
+   e nas correções. O adaptador só substitui o anterior se passar no
+   conjunto de testes fixo da Nativa sem piorar; senão é descartado.
+   Sempre é possível voltar ao adaptador anterior ou ao modelo de fábrica.
 
-1. **Observação.** As ações do usuário (`CallOrigin::User` no runtime e os
-   comandos da interface) são gravadas como **trilhas** com horário e
-   projeto. Liga/desliga por projeto; trilhas apagáveis.
-2. **Mineração.** Um trabalho em segundo plano acha sequências repetidas
-   (mesmos passos, ≥ 3 vezes) e propõe: "Notei que toda segunda você faz
-   X, Y e Z. Quer que eu vire isso uma rotina?" — com os valores que
-   mudam viram parâmetros.
-3. **Ensinar mostrando.** Botão "Gravar": o usuário faz a tarefa; ao parar,
-   a trilha vira uma **habilidade** nomeada, editável, que a Nativa pode
-   chamar.
-4. **Correções e preferências.** Quando o usuário corrige ou nega algo, a
-   Nativa grava a preferência na memória L3 ("usar pnpm, não npm";
-   "nunca desligar o PC com download rodando").
-5. **Recuperação.** A cada pedido, as 3–5 habilidades e preferências mais
-   próximas (por embeddings) entram no prompt como exemplos. É isso que
-   faz um modelo pequeno acertar.
-6. **Opcional, depois:** exportar as trilhas como dataset para um ajuste
-   LoRA feito em outra máquina e importar o adaptador no motor.
+Nada disso sai do computador sem pedido explícito do usuário.
 
-### 6. Autonomia
+### 7. Autonomia
 
-A Nativa segue os modos da ADR-0016 como qualquer agente. No **Acesso
-Irrestrito**, nada é perguntado. O que **sempre** fica, porque não é
-restrição:
-
-- auditoria de toda chamada no histórico;
-- os botões Parar/Pausar e um atalho global de parada;
-- os pontos de restauração (ADR-0022) antes de rotinas que mudam o
-  Orchestrator.
+A Nativa segue os modos da ADR-0016. No **Acesso Irrestrito**, nada é
+perguntado. Sempre ficam, porque não são restrição: a auditoria de toda
+chamada, Parar/Pausar com atalho global, e pontos de restauração
+(ADR-0022) antes de rotinas que mudam o Orchestrator.
 
 ## Consequências
 
-- O Orchestrator passa a ter uma IA que funciona offline, de graça, num
-  notebook comum, e que pode cuidar dele e do computador.
-- Modelos de 3–4B são mais fracos que os de API: tarefas longas de código
-  continuam melhores com os providers grandes, e a Nativa pode delegá-las
-  (handoff, ADR-0013).
+- O Orchestrator passa a ter IA e motor 100% próprios, offline, sem custo
+  por uso, num notebook comum.
+- O projeto ganha duas frentes novas e grandes: manter um motor de
+  inferência (kernels por arquitetura de CPU) e um pipeline de treino com
+  custo de GPU a cada versão do modelo.
+- A Nativa-1 é forte no que foi treinada para fazer e fraca fora disso;
+  tarefas longas de código vão aos providers grandes por handoff.
 - Com Acesso Irrestrito e `system.*`, um erro do modelo pode apagar
-  arquivos ou desligar o computador. O usuário escolhe isso conscientemente;
-  a tela de ativação diz isso claramente.
-- As trilhas guardam o que o usuário faz: ficam só no computador, nunca
-  vão a providers externos sem pedido explícito.
+  arquivos ou desligar o computador. O usuário escolhe isso
+  conscientemente, e a tela de ativação diz isso claramente.
+- Trilhas e adaptador pessoal ficam só no computador.
 
 Plano de implementação em [`docs/native-ai.md`](../native-ai.md).

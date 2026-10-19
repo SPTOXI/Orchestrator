@@ -3,105 +3,139 @@
 Decisão em [ADR-0027](./adr/0027-ia-nativa.md). Este documento é o plano:
 módulos, contratos, fases e critérios de aceite.
 
-> Uma IA local, de 8 GB para baixo, que opera o Orchestrator e o
-> computador, executa rotinas e aprende com o usuário.
+> Motor próprio, modelo próprio. Uma IA de 8 GB para baixo que opera o
+> Orchestrator e o computador, executa rotinas e aprende com o usuário.
 
 ## Visão geral
 
 ```text
-          ┌──────────────── interface (painel NATIVA, ROTINAS, Gravar) ───────────────┐
-          │                                                                           │
-pedido ──▶│ NativeAgent ─▶ Roteador de grupo ─▶ ferramentas do grupo + habilidades    │
-          │      │              (gramática)        recuperadas (embeddings)           │
-          │      ▼                                                                    │
-          │ llama-server (ADR-0025)  ◀── perfil por RAM, desliga ocioso               │
-          │      │                                                                    │
-          │      ▼                                                                    │
-          │ AutonomyGate ─▶ AgentTools ─▶ EngineTools ─▶ RuntimeTools                 │
-          │                                    ├─ orchestrator.* (gateway IPC)        │
-          │                                    ├─ system.*       (novo)               │
-          │                                    └─ filesystem/shell/git/web            │
-          │                                                                           │
-          │ Observador ─▶ trilhas (SQLite) ─▶ Minerador ─▶ propostas de rotina        │
-          │ Agendador  ─▶ rotinas (cron/evento) ─▶ NativeAgent                        │
-          └───────────────────────────────────────────────────────────────────────────┘
+                        ┌──────── training/ (fora do app, GPUs alugadas) ────────┐
+                        │ tokenizador BPE → pré-treino → SFT ferramentas → DPO   │
+                        │            └──▶ exporta pesos .nativa + testes         │
+                        └───────────────────────────┬────────────────────────────┘
+                                                    ▼ release (SHA-256)
+┌──────────────────────────── app (Tauri) ───────────────────────────────────────┐
+│ painéis NATIVA · ROTINAS · Gravar · propostas de aprendizado · Parar global    │
+│                                                                                │
+│ NativeAgent ─▶ roteador de grupo ─▶ ferramentas do grupo + habilidades         │
+│      │                                                                         │
+│      ▼                                                                         │
+│ orchestrator-engine (Rust, no processo)                                        │
+│   .nativa mmap · kernels Q4/Q8 SIMD · cache KV q8 · gramática · embeddings     │
+│   LoRA pessoal (treino ocioso, validado antes de trocar)                       │
+│      │                                                                         │
+│      ▼                                                                         │
+│ AutonomyGate ─▶ AgentTools ─▶ EngineTools ─▶ RuntimeTools                      │
+│                                   ├─ orchestrator.*   ├─ system.*              │
+│                                   └─ filesystem / shell / git / web            │
+│                                                                                │
+│ Observador ─▶ trilhas ─▶ Minerador ─▶ propostas │ Agendador ─▶ rotinas         │
+└────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Módulos
 
 | Onde | O quê |
 | ---- | ----- |
-| `packages/native` (novo crate) | `NativeAgent`, roteador de grupo, perfis por RAM, recuperação de habilidades |
-| `packages/system` (novo crate) | ferramentas `system.*` por SO (`cfg(target_os)`), com fallback para shell |
-| `packages/local` | perfil `native`: escolha do modelo pela RAM, embeddings, desligar ocioso, teto de memória |
-| `packages/memory` | tabelas `traces`, `skills`, `routines`, `routine_runs`, `preferences`, `embeddings` |
-| `packages/orchestrator` | ferramentas `orchestrator.*` sobre os comandos do gateway; agendador de rotinas |
+| `packages/engine` (novo) | motor: formato `.nativa`, quantização, kernels SIMD, transformer, cache KV, amostragem, gramática, embeddings, LoRA |
+| `training/` (novo, Python) | tokenizador, dados, pré-treino, SFT, DPO, avaliação, exportação `.nativa`, implementação de referência para os testes de equivalência |
+| `packages/native` (novo) | `NativeAgent`, roteador de grupo, recuperação de habilidades, agendamento do treino LoRA |
+| `packages/system` (novo) | ferramentas `system.*` por SO (`cfg(target_os)`), com fallback para shell |
+| `packages/memory` | tabelas `traces`, `skills`, `routines`, `routine_runs`, `preferences`, `embeddings`, `adapters` |
+| `packages/orchestrator` | ferramentas `orchestrator.*` sobre o gateway; agendador de rotinas |
 | `packages/core` | contratos `Routine`, `RoutineStep`, `Trigger`, `Skill`, `Trace`; eventos `routine.*`, `native.*` |
-| `apps/desktop` | painéis NATIVA e ROTINAS, botão Gravar, propostas de aprendizado, atalho global de parada |
+| `apps/desktop` | painéis, botão Gravar, propostas, atalho global de parada |
 
 ## Contratos (rascunho)
 
 ```rust
-pub enum Trigger { Manual, Cron(String), Event(EventFilter), OnStartup }
-
-pub enum RoutineStep {
-    Tool { name: String, args: serde_json::Value }, // sem modelo
-    Ask { prompt: String },                         // a Nativa decide
+// motor
+pub struct Engine { /* pesos mmap, pool de threads, orçamento de memória */ }
+impl Engine {
+    pub fn load(path: &Path, budget: MemoryBudget) -> Result<Self>;
+    pub fn generate(&self, req: GenerateRequest, cancel: CancelToken)
+        -> impl Stream<Item = Token>;               // com Grammar opcional
+    pub fn embed(&self, text: &str) -> Vec<f32>;
+    pub fn train_lora(&self, data: &[Example], cfg: LoraConfig,
+        cancel: CancelToken) -> Result<Adapter>;
 }
 
+// rotinas e aprendizado
+pub enum Trigger { Manual, Cron(String), Event(EventFilter), OnStartup }
+pub enum RoutineStep { Tool { name: String, args: Value }, Ask { prompt: String } }
 pub struct Routine { id, name, trigger: Trigger, steps: Vec<RoutineStep>,
                      autonomy: Option<AutonomyMode>, enabled: bool }
-
 pub struct Trace { id, at, project: Option<ProjectId>, origin: CallOrigin,
                    tool: String, args: Value, ok: bool }
-
 pub struct Skill { id, name, description, params: Vec<Param>,
-                   steps: Vec<RoutineStep>, source: SkillSource /* gravada | minerada | escrita */ }
+                   steps: Vec<RoutineStep>, source: SkillSource }
 ```
 
 ## Fases
 
-### N1 — Motor e perfil para 8 GB
-- Detectar RAM/CPU/GPU; escolher e baixar o modelo do perfil.
-- `llama-server` com `json_schema`, KV `q8_0`, desligar ocioso, teto de RAM.
-- **Aceite:** num computador de 8 GB, a Nativa responde em < 3 s ao
-  primeiro token com o motor quente e o sistema não troca para o disco.
+Motor e modelo andam em paralelo; o agente usa a Nativa-Mini até a
+Nativa-1 ficar pronta.
 
-### N2 — Agente com gramática e roteamento
-- `NativeAgent` com roteamento em dois passos e validação de argumentos.
-- **Aceite:** conjunto de 100 pedidos de referência com ≥ 90% de chamadas
-  corretas no modelo 3–4B (teste automatizado em `packages/native/tests`).
+### M1 — Motor: base
+- Formato `.nativa`, `mmap`, transformer em f32 no caminho escalar,
+  amostragem, tokenizador.
+- **Aceite:** logits iguais aos da referência PyTorch (tolerância 1e-4)
+  num modelo de teste aleatório.
 
-### N3 — `system.*` e `orchestrator.*`
-- Ferramentas da ADR-0027 §3 para Windows, macOS e Linux; elevação pelo SO
-  com senha opcional no cofre.
-- Interruptor "A Nativa administra o Orchestrator".
+### M2 — Motor: velocidade e memória
+- Quantização Q4/Q8, kernels AVX2/NEON, multithread, cache KV q8,
+  orçamento de memória, cancelamento.
+- **Aceite:** com a Nativa-1 em 4 bits num notebook de 8 GB (CPU de 4
+  núcleos), ≥ 15 tokens/s na geração e uso total < 2 GB.
+
+### M3 — Motor: gramática, embeddings, LoRA
+- JSON Schema → autômato; embeddings; treino LoRA no CPU.
+- **Aceite:** 0 chamadas malformadas em 1.000 gerações com gramática; um
+  LoRA de teste aprende uma tarefa sintética em < 1 h num CPU de 4 núcleos.
+
+### T1 — Modelo: Nativa-Mini
+- Tokenizador BPE, pipeline de dados com licença rastreada, pré-treino de
+  ~150 M, exportação `.nativa`.
+- **Aceite:** roda no motor (M1–M2) com as mesmas saídas da referência.
+
+### T2 — Modelo: Nativa-1
+- Ambiente simulado (VMs) para gerar e validar trilhas de ferramentas;
+  pré-treino ~1,2 B, SFT, DPO; conjunto de avaliação fixo.
+- **Aceite:** ≥ 90% de chamadas corretas no conjunto de 500 pedidos de
+  referência do Orchestrator e de `system.*`, em português e inglês.
+
+### N1 — Agente e ferramentas
+- `NativeAgent` com roteamento; `system.*` nos três SOs; `orchestrator.*`
+  com o interruptor de administração.
 - **Aceite:** "instale o VLC", "o que está usando a memória?", "abra o
-  projeto X e crie uma task" funcionam nos três SOs (CI multiplataforma,
-  ADR-0006, com testes que não mudam a máquina do CI).
+  projeto X e crie uma task" funcionam nos três SOs (CI da ADR-0006 com
+  testes que não mudam a máquina).
 
-### N4 — Rotinas
+### N2 — Rotinas
 - Tabelas, agendador (cron + eventos), painel ROTINAS, histórico.
-- **Aceite:** uma rotina com cron roda no horário com o app aberto,
-  registra cada passo e pode ser pausada no meio.
+- **Aceite:** uma rotina com cron roda no horário, registra cada passo e
+  pode ser pausada no meio.
 
-### N5 — Aprendizado
-- Observador de trilhas, botão Gravar, minerador de sequências, preferências
-  a partir de correções, recuperação por embeddings.
-- **Aceite:** depois de o usuário repetir a mesma sequência 3 vezes, a
-  Nativa propõe a rotina com os parâmetros certos; uma preferência gravada
-  muda a próxima resposta.
+### N3 — Aprendizado
+- Trilhas, Gravar, minerador, preferências, recuperação, LoRA pessoal com
+  validação e volta ao anterior.
+- **Aceite:** depois de 3 repetições a Nativa propõe a rotina com os
+  parâmetros certos; um adaptador que piora a avaliação é descartado
+  sozinho.
 
-### N6 — Polimento
-- Atalho global de parada, delegação para providers grandes (handoff),
-  exportação opcional de trilhas para LoRA, documentação de usuário.
+### N4 — Polimento
+- Backend GPU por `wgpu`, Nativa-2, atalho global de parada, delegação
+  para providers grandes, documentação de usuário.
 
 ## Riscos
 
 | Risco | Mitigação |
 | ----- | --------- |
-| Modelo pequeno erra ferramentas | gramática, roteamento por grupo, exemplos recuperados, nova tentativa com o erro |
-| Falta de RAM trava o computador | perfil por RAM, teto de memória, motor desliga ocioso |
-| Ação destrutiva por engano | o usuário escolhe o modo; Pause/Parar; auditoria; ponto de restauração antes de rotinas que mudam o Orchestrator |
-| Privacidade das trilhas | só locais, por projeto, apagáveis, nunca enviadas sem pedido |
-| Diferenças entre SOs | `packages/system` com implementação por SO e testes no CI dos três |
+| Motor lento no CPU | kernels SIMD por arquitetura, tokenizador econômico, modelo de 1,2 B, testes de desempenho no CI |
+| Bugs numéricos no motor | testes de equivalência kernel a kernel e contra a referência PyTorch |
+| Modelo pequeno erra | treino focado nas ferramentas reais, gramática, roteamento, exemplos recuperados, LoRA pessoal |
+| Custo e tempo do treino | começar pela Nativa-Mini; pipeline reproduzível; só treinar a próxima versão com o ganho medido |
+| Licença dos dados | só corpora que permitem treinar e redistribuir; origem marcada em cada exemplo |
+| Ação destrutiva por engano | o usuário escolhe o modo; Pause/Parar; auditoria; ponto de restauração; DPO contra ações destrutivas não pedidas |
+| Adaptador pessoal piora a IA | só troca se passar na avaliação; volta ao anterior ou ao de fábrica a qualquer momento |
+| Privacidade | trilhas e adaptador só locais, apagáveis, nunca enviados sem pedido |
