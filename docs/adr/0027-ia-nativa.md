@@ -116,8 +116,8 @@ uma treinável numa noite dentro de 8 GB de RAM e 1 GB de vídeo.
  │ idioma:es │ │ shell  │ │ rotinas   │ │ (pessoal)  │  cada, treinados um por vez
  └───────────┘ └────────┘ └───────────┘ └────────────┘
                          │
-                memória externa (SQLite + embeddings) e web: o conhecimento
-                fica fora dos pesos, como anotações
+          Biblioteca no disco (HD/SSD): conhecimento indexado, offline;
+          memória do usuário (SQLite + embeddings); web só se faltar
 ```
 
 **Princípios (do cérebro para a Nativa):**
@@ -128,7 +128,7 @@ uma treinável numa noite dentro de 8 GB de RAM e 1 GB de vídeo.
 | áreas especializadas | **especialistas por função e por língua**, carregados sob demanda; só o que está em uso ocupa memória |
 | aprendizado local | **treino bloco a bloco**: só o especialista (ou o bloco) em treino recebe gradiente; o resto fica congelado e quantizado, sem guardar ativações dele |
 | hipocampo + sono | **memória rápida** (trilhas e notas, na hora) + **consolidação noturna** nos pesos, com repetição de exemplos antigos para não esquecer |
-| consultar em vez de decorar | **conhecimento fora dos pesos**: memória, documentação do SO e web por busca; os pesos guardam *como fazer*, não *todos os fatos* |
+| consultar em vez de decorar | **conhecimento fora dos pesos**, na **Biblioteca** do próprio disco (§2b); os pesos guardam *como fazer*, não *todos os fatos* |
 | crescer e podar | **crescimento progressivo**: começa pequeno, ganha camadas/especialistas quando estabiliza; especialistas pouco usados são podados |
 | aprender a vida toda | **treino contínuo**: um pouco por noite, sempre validado |
 
@@ -166,10 +166,83 @@ Um modelo de fábrica com núcleo + ~10 especialistas (~250 M no total,
   com esse mesmo pipeline, em notebooks comuns ou em qualquer máquina que
   o projeto tiver; vem pronta no instalador. Uma GPU alugada **acelera**,
   mas não é requisito.
-- **Colmeia (opcional, desligada por padrão):** quem quiser doa noites de
-  treino; cada computador treina um especialista em dados públicos e
-  devolve só os pesos, que o projeto valida e junta. Dados do usuário
-  nunca participam.
+- Depois, a **Colmeia** (§2c) treina as versões seguintes com o
+  processamento de todos os Orchestrators instalados que participam.
+
+### 2b. Biblioteca: o conhecimento no disco do computador
+
+O disco é barato e grande; a RAM e os pesos, não. Os fatos ficam no HD
+ou SSD, em `<dados>/biblioteca/`, e a Nativa os consulta como quem abre um
+livro:
+
+- **Pacotes de conhecimento** baixáveis e escolhidos pelo usuário, cada
+  um com tamanho e língua: documentação dos sistemas operacionais e dos
+  programas comuns, manuais de comandos (`man`, ajuda do PowerShell),
+  Wikipédia por língua, documentação de linguagens e bibliotecas. De
+  algumas centenas de MB a dezenas de GB, à escolha.
+- **Conhecimento local:** os documentos, projetos e pastas que o usuário
+  indicar, e tudo o que a Nativa aprender na conversa ("o servidor da
+  empresa é tal").
+- **Índice próprio** no disco: texto comprimido (zstd) em blocos, índice
+  de palavras (BM25) e vetores de embeddings do próprio motor, quantizados
+  em 8 bits e lidos por `mmap` — buscar não carrega a Biblioteca na RAM.
+- **Atualização:** pacotes com versão e SHA-256; a Nativa atualiza no
+  ocioso e guarda a data de cada fato, para dizer "segundo a
+  documentação de 2026…".
+- **Ordem de consulta:** memória do usuário → Biblioteca → web (só se
+  faltar e houver internet). Cada resposta com fatos cita de onde veio.
+- A Biblioteca alimenta também o treino: os textos dos pacotes de uma
+  língua servem para treinar o especialista dela (§2a) sem baixar de novo.
+
+### 2c. Colmeia: treino distribuído entre os Orchestrators instalados
+
+Como o SETI@home (e o BOINC, que veio dele), mas para treinar a Nativa:
+cada Orchestrator instalado que participa empresta processamento ocioso,
+e juntos formam um supercomputador.
+
+**Como funciona:**
+
+```text
+ Coordenador da Colmeia (servidor do projeto)
+   │ 1. divide o treino em UNIDADES: "treine o especialista X, bloco Y,
+   │    por N passos, a partir dos pesos v12, no lote público Z"
+   ▼
+ Orchestrators participantes (ociosos, na tomada)
+   │ 2. baixam a unidade (pesos ternários comprimidos + dados públicos)
+   │ 3. treinam localmente com o motor próprio (CPU + GPU de 1 GB)
+   │ 4. devolvem só a DIFERENÇA dos pesos, comprimida e assinada
+   ▼
+ Coordenador
+   5. confere: a mesma unidade vai a 2–3 computadores; as respostas têm
+      de bater, e o resultado é testado num conjunto que ninguém vê
+   6. junta as diferenças aprovadas (média ponderada por qualidade)
+   7. publica a nova versão da Nativa para todos, assinada
+```
+
+- **Pouca comunicação:** cada participante treina por horas antes de
+  devolver (treino distribuído de baixa comunicação, estilo DiLoCo), e a
+  diferença de pesos ternários comprimida tem poucos MB — funciona em
+  internet doméstica.
+- **Trabalho sob medida:** a unidade é escolhida pela máquina (RAM, GPU,
+  velocidade); um notebook de 8 GB recebe blocos pequenos, um desktop com
+  GPU recebe maiores.
+- **Respeito ao computador:** só quando ocioso e na tomada (bateria nunca),
+  com limite de CPU, de temperatura e de horário escolhidos pelo usuário;
+  para na hora em que o usuário volta a usar. Painel com o que foi feito,
+  horas doadas e energia estimada.
+- **Participação:** perguntada no primeiro uso, com explicação clara do
+  que é usado (processamento, energia, alguns MB de rede); pode ser
+  desligada a qualquer momento. Créditos e ranking de contribuição, como
+  no SETI@home.
+- **Só dados públicos:** os lotes de treino vêm do coordenador. Trilhas,
+  Biblioteca local, memória e adaptador pessoal do usuário **nunca** entram
+  na Colmeia.
+- **Contra sabotagem:** redundância (a mesma unidade em vários
+  computadores), teste em conjunto secreto, reputação por participante,
+  descarte de quem diverge, e só o coordenador publica versões, assinadas.
+- **O que a Colmeia treina:** novas versões do núcleo, especialistas novos
+  (línguas, programas) e versões maiores para quem tem mais memória — o
+  que um notebook sozinho levaria meses, a Colmeia faz em dias.
 
 ### 2a. Qualquer língua que o usuário quiser
 
@@ -294,12 +367,15 @@ chamada, Parar/Pausar com atalho global, e pontos de restauração
   inferência e treino (kernels por arquitetura de CPU e GPU) e um
   pipeline de dados verificáveis.
 - A Nativa é forte no que foi treinada para fazer (operar o Orchestrator
-  e o computador, conversar na língua do usuário) e consulta memória e web
-  para fatos; tarefas longas de código vão aos providers grandes por
+  e o computador, conversar na língua do usuário) e consulta a Biblioteca
+  no disco para fatos; tarefas longas de código vão aos providers grandes por
   handoff.
 - Com Acesso Irrestrito e `system.*`, um erro do modelo pode apagar
   arquivos ou desligar o computador. O usuário escolhe isso
   conscientemente, e a tela de ativação diz isso claramente.
-- Trilhas e adaptador pessoal ficam só no computador.
+- Trilhas, Biblioteca local e adaptador pessoal ficam só no computador.
+- A Colmeia exige um serviço do projeto sempre no ar (coordenador), com
+  custo de servidor e de banda, e a confiança dos participantes: o código
+  do cliente da Colmeia é aberto e auditável.
 
 Plano de implementação em [`docs/native-ai.md`](../native-ai.md).
