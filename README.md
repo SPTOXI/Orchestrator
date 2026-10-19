@@ -45,7 +45,7 @@ cada fase em [`docs/phases/`](./docs/phases).
 | — | Configurações, regras e skills, servidores MCP, assinaturas por CLI e modelos offline ([ADR-0021](./docs/adr/0021-configuracoes-assinaturas-offline-e-mcp.md), [docs/settings.md](./docs/settings.md)) | ✅ concluída |
 | — | Dados preservados nas atualizações: backups automáticos, restauração e gravação segura ([ADR-0022](./docs/adr/0022-dados-preservados-nas-atualizacoes.md)) | ✅ concluída |
 | — | Vários projetos abertos na barra lateral e projetos relacionados, cujas IAs se consultam ([ADR-0023](./docs/adr/0023-varios-projetos-e-projetos-relacionados.md)) | ✅ concluída |
-| — | IA Nativa: motor e modelo próprios para até 8 GB de RAM, que operam o Orchestrator e o computador, com rotinas e aprendizado ([ADR-0027](./docs/adr/0027-ia-nativa.md), [docs/native-ai.md](./docs/native-ai.md)) | 📝 proposta |
+| — | IA Nativa: motor e modelo próprios, treinados e usados num notebook de 8 GB, em qualquer língua, que operam o Orchestrator e o computador, com rotinas e aprendizado ([ADR-0027](./docs/adr/0027-ia-nativa.md), [docs/native-ai.md](./docs/native-ai.md)) | 📝 proposta |
 
 A ordem das Fases 4–5 foi redefinida na
 [ADR-0010](./docs/adr/0010-providers-por-api-com-cadastro-livre.md):

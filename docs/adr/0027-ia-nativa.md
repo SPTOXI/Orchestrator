@@ -20,29 +20,50 @@ O usuário pediu uma **IA própria do Orchestrator**. A base do pedido é:
 
 E a IA precisa:
 
-1. rodar em notebooks e computadores com **até 8 GB de RAM**, offline;
-2. **gerenciar o Orchestrator** (projetos, tasks, agentes, providers,
+1. rodar **e ser treinada** em notebooks com **8 GB de RAM e 1 GB de
+   vídeo**, offline;
+2. falar e aprender **a língua que o usuário quiser**;
+3. **gerenciar o Orchestrator** (projetos, tasks, agentes, providers,
    autonomia, backups, atualizações);
-3. **gerenciar o computador**, podendo fazer tudo o que o usuário pode
+4. **gerenciar o computador**, podendo fazer tudo o que o usuário pode
    fazer, sem restrição;
-4. ter uma **lista de funções** a executar (rotinas);
-5. **aprender** o que o usuário faz e o que ele quer que ela faça.
+5. ter uma **lista de funções** a executar (rotinas);
+6. **aprender** o que o usuário faz e o que ele quer que ela faça.
 
 O que já existe e será reaproveitado: o leitor de GGUF de
 `packages/local` (ADR-0025), o Tool Runtime auditado com arquivos, shell,
 processos, git, web e segredos (ADR-0020), o modo Acesso Irrestrito
 (ADR-0016), Task Manager, agentes e memória em SQLite (ADRs 0012–0015).
 
-Limites reais, que guiam as decisões abaixo:
+Limites reais, que guiam as decisões abaixo. O alvo de **treino** é o
+mesmo do uso: **notebook com 8 GB de RAM e 1 GB de vídeo**.
 
-- treinar do zero um modelo do tamanho dos de API custa milhões de dólares;
-  um modelo **pequeno e especializado** (≤ 1,5 bilhão de parâmetros) custa
-  milhares e cabe em 8 GB;
-- um modelo pequeno não sabe "tudo", mas pode saber **muito bem** o que a
-  Nativa faz: chamar as ferramentas do Orchestrator e do sistema, seguir
-  rotinas, conversar em português;
-- com motor próprio, o **aprendizado pode mudar os pesos** no próprio
-  computador (adaptadores LoRA treinados no CPU), não só a memória.
+- Um notebook desses faz, com CPU e GPU integrada juntos, da ordem de
+  10¹¹ a 10¹² operações por segundo úteis em treino. Numa noite de 8 h,
+  isso é **~3×10¹⁵ a 3×10¹⁶ operações**.
+- Treinar um modelo custa ~6 × parâmetros × tokens operações. Um modelo
+  denso de 1,2 bilhão em 50 bilhões de tokens (3,6×10²⁰) levaria
+  **décadas** num notebook. Copiar a receita dos grandes laboratórios em
+  escala menor não funciona: é preciso outra receita.
+- Um modelo de **~50 milhões** de parâmetros em **100 milhões** de tokens
+  custa 3×10¹⁶: **uma noite**. Modelos desse tamanho já escrevem texto
+  coerente quando o domínio é estreito e os dados são bons.
+- **O cérebro humano como referência:** ~20 W (menos que o notebook), ~86
+  bilhões de neurônios e ~10¹⁴–10¹⁵ sinapses. Ele não é eficiente por ser
+  pequeno, mas porque:
+  1. **ativa pouco**: só ~1–2% dos neurônios disparam ao mesmo tempo;
+  2. **é modular**: áreas especializadas, trocadas por um roteamento;
+  3. **aprende localmente**: cada sinapse muda com o que acontece perto
+     dela, sem um cálculo global sobre tudo;
+  4. **separa memória rápida e lenta**: o hipocampo grava o dia; o sono
+     consolida no córtex, repassando o que importa, sem apagar o antigo;
+  5. **não decora o mundo**: consulta o ambiente, anotações, outras
+     pessoas;
+  6. **cresce e poda**: começa com conexões demais e elimina as inúteis;
+  7. **aprende continuamente**, pouco por dia, a vida toda.
+  A Nativa copia esses princípios, não o tamanho.
+- Com motor próprio, o aprendizado pode mudar os pesos no próprio
+  computador, não só a memória.
 
 ## Decisão
 
@@ -53,13 +74,13 @@ Um crate novo, `packages/engine`, escrito pelo projeto:
 | Parte | O que faz |
 | ----- | --------- |
 | Formato | `.nativa` (cabeçalho + tensores, mapeado em memória com `mmap`); importa GGUF só para testes de equivalência |
-| Quantização | pesos em 4 bits por grupo (estilo Q4) e 8 bits; ativações em f32/bf16 |
+| Quantização | pesos ternários (−1, 0, +1) com escala, 4 e 8 bits; ativações em f32/bf16 |
 | Kernels | multiplicação matriz-vetor e matriz-matriz quantizadas com SIMD: AVX2/AVX-512 (x86), NEON (ARM, Apple M); caminho escalar de referência para testes |
-| Execução | transformer decoder (RMSNorm, RoPE, atenção com grupos de KV, SwiGLU), cache KV quantizado em 8 bits, lotes para o prompt, multithread por núcleos físicos |
+| Execução | núcleo + especialistas carregados sob demanda com roteador esparso; transformer decoder (RMSNorm, RoPE, atenção com grupos de KV, SwiGLU), cache KV quantizado em 8 bits, lotes para o prompt, multithread por núcleos físicos |
 | Decodificação | amostragem (temperatura, top-p, min-p), **decodificação com gramática** (JSON Schema → autômato) para que toda chamada de ferramenta saia válida |
 | Embeddings | o mesmo modelo, pela média da última camada, para a busca na memória |
-| Treino local | retropropagação só nos adaptadores **LoRA** (pesos base congelados e quantizados), para o aprendizado da §5 |
-| GPU (depois) | backend opcional por `wgpu` (Vulkan/Metal/DX12), mesmo formato e mesmos testes |
+| Treino local | treino bloco a bloco (núcleo, especialistas, LoRA) com o resto congelado; gradientes em 8 bits, *checkpointing*, CPU + GPU de 1 GB por blocos — é o pipeline de treino da Nativa, no próprio app |
+| GPU | backend por `wgpu` (Vulkan/Metal/DX12) que funciona com 1 GB de vídeo, por blocos; mesmos testes |
 
 - Roda **dentro do processo** do Orchestrator (sem servidor HTTP, sem
   porta), com uma fila de pedidos e cancelamento imediato pelo botão Parar.
@@ -68,50 +89,107 @@ Um crate novo, `packages/engine`, escrito pelo projeto:
   levar o computador a trocar para o disco.
 - Corretude garantida por testes de equivalência: cada kernel contra o
   caminho escalar; o modelo inteiro contra uma implementação de referência
-  em PyTorch no pipeline de treino (logits iguais até a tolerância).
+  em PyTorch, usada só como gabarito nos testes (logits iguais até a
+  tolerância).
 
-### 2. Modelo próprio: família **Nativa**
+### 2. Modelo próprio: a Nativa como um cérebro modular
 
-Arquitetura, tokenizador e pesos do projeto, treinados pelo pipeline em
-`training/` (Python + PyTorch, fora do app; roda em GPUs alugadas).
+Arquitetura, tokenizador e pesos do projeto. A ideia central: **nunca
+treinar o modelo inteiro de uma vez**. Ele é feito de peças pequenas, cada
+uma treinável numa noite dentro de 8 GB de RAM e 1 GB de vídeo.
 
-| Modelo | Parâmetros | Arquivo (4 bits) | Papel |
-| ------ | ---------- | ---------------- | ----- |
-| **Nativa-Mini** | ~150 M | ~100 MB | prova do motor e do pipeline; roteador de grupos e embeddings em máquinas de 4 GB |
-| **Nativa-1** | ~1,2 B | ~750 MB | o modelo principal para 8 GB |
-| **Nativa-2** (depois) | ~3 B | ~1,8 GB | para máquinas de 12 GB ou mais |
+```text
+           texto do usuário (qualquer língua)
+                         │
+                ┌────────▼────────┐
+                │ tokenizador     │  bytes UTF-8 + BPE: cobre toda língua e escrita
+                └────────┬────────┘
+                ┌────────▼────────┐
+                │ NÚCLEO (~40 M)  │  raciocínio curto, protocolo de ferramentas
+                └────────┬────────┘
+                ┌────────▼────────┐
+                │ ROTEADOR        │  escolhe 1–2 especialistas por token (~5% ativo)
+                └─┬────┬────┬───┬─┘
+       ┌──────────┘    │    │   └──────────┐
+ ┌─────▼─────┐ ┌───────▼┐ ┌─▼─────────┐ ┌──▼─────────┐
+ │ idioma:pt │ │ system │ │orchestr.  │ │ usuário    │  especialistas de ~10–30 M
+ │ idioma:es │ │ shell  │ │ rotinas   │ │ (pessoal)  │  cada, treinados um por vez
+ └───────────┘ └────────┘ └───────────┘ └────────────┘
+                         │
+                memória externa (SQLite + embeddings) e web: o conhecimento
+                fica fora dos pesos, como anotações
+```
 
-- **Arquitetura:** decoder-only, 24–28 camadas, atenção com grupos de KV,
-  RoPE com contexto de 8 K (16 K na Nativa-2), vocabulário de ~48 mil
-  tokens.
-- **Tokenizador próprio:** BPE treinado com peso alto em português, código,
-  comandos de shell e JSON (menos tokens por pedido = mais rápido no CPU).
-- **Tokens especiais** para o protocolo da Nativa: `<|ferramenta|>`,
-  `<|resultado|>`, `<|rotina|>`, `<|memória|>`; o formato de chamada é
-  parte do modelo, não um template colado depois.
-- **Treino em três etapas:**
-  1. **pré-treino** do zero em corpus com licença aberta (texto em
-     português e inglês, código, documentação de sistemas operacionais e
-     ferramentas), ~40–60 bilhões de tokens para a Nativa-1;
-  2. **ajuste supervisionado** em trilhas de uso de ferramentas: as
-     ferramentas reais do Orchestrator e de `system.*`, geradas num
-     ambiente simulado (VMs Windows, macOS, Linux) e validadas executando;
-  3. **ajuste por preferência** (DPO) em pares bom/ruim das mesmas trilhas
-     (chamada certa × errada, ação segura × destrutiva sem pedido).
-- **Custo estimado da Nativa-1:** ~3×10²⁰ FLOPs de pré-treino, da ordem de
-  alguns dias em 8 GPUs H100 alugadas (alguns milhares de dólares); a
-  Nativa-Mini roda numa única GPU em horas.
-- **Dados de terceiros:** só corpora com licença que permita treinar e
-  redistribuir pesos. Saídas de modelos de API só onde os termos do
-  fornecedor permitem usá-las para treinar outro modelo; o pipeline marca
-  a origem de cada exemplo.
-- **Distribuição:** os pesos `.nativa` vêm como download do próprio
-  release do Orchestrator, com SHA-256 conferido, como o resto da
-  atualização (ADR-0019).
+**Princípios (do cérebro para a Nativa):**
 
-O que a Nativa-1 **não** será: um substituto dos modelos de API para
-tarefas longas de código. Para isso ela delega (handoff, ADR-0013) aos
-providers que o usuário tiver; sem nenhum, ela faz o que der e diz isso.
+| Cérebro | Nativa |
+| ------- | ------ |
+| poucos neurônios ativos | **mistura de especialistas esparsa**: ~5% dos pesos por token; o total cresce sem o custo por token crescer |
+| áreas especializadas | **especialistas por função e por língua**, carregados sob demanda; só o que está em uso ocupa memória |
+| aprendizado local | **treino bloco a bloco**: só o especialista (ou o bloco) em treino recebe gradiente; o resto fica congelado e quantizado, sem guardar ativações dele |
+| hipocampo + sono | **memória rápida** (trilhas e notas, na hora) + **consolidação noturna** nos pesos, com repetição de exemplos antigos para não esquecer |
+| consultar em vez de decorar | **conhecimento fora dos pesos**: memória, documentação do SO e web por busca; os pesos guardam *como fazer*, não *todos os fatos* |
+| crescer e podar | **crescimento progressivo**: começa pequeno, ganha camadas/especialistas quando estabiliza; especialistas pouco usados são podados |
+| aprender a vida toda | **treino contínuo**: um pouco por noite, sempre validado |
+
+**Técnicas que cabem no notebook:**
+
+- **Pesos ternários (−1, 0, +1) com escala**, treinados assim desde o
+  início (estilo BitNet b1.58): ~1,6 bit por peso, multiplicações viram
+  somas — mais rápido no CPU, 10× menos memória.
+- **Gradientes em 8 bits, otimizador com estado comprimido**, e
+  *checkpointing* de ativações: um bloco de 30 M treina em < 1 GB.
+- **GPU de 1 GB** usada por blocos (via `wgpu`): o bloco em treino vai à
+  GPU, o resto fica na RAM.
+- **Currículo e dados densos**: textos curtos e limpos primeiro, depois
+  trilhas de ferramentas; poucos tokens muito bons valem mais que muitos
+  ruins.
+- **Dados sintéticos verificáveis**: o próprio Orchestrator gera tarefas
+  (ex.: "liste os processos que usam mais RAM"), executa em sandbox e
+  guarda só o que deu certo — dado de treino que se confere sozinho.
+
+**Orçamento (notebook de 8 GB, ~1,5×10¹⁶ operações por noite):**
+
+| Peça | Parâmetros | Tokens | Noites |
+| ---- | ---------- | ------ | ------ |
+| Núcleo (Semente) | ~40 M | ~200 M | 3–5 |
+| Especialista de função | ~20 M | ~50 M | 1 |
+| Especialista de língua | ~20 M | ~50–100 M | 1–2 |
+| Adaptador pessoal (LoRA) | ~1–4 M | trilhas do usuário | minutos–1 h |
+
+Um modelo de fábrica com núcleo + ~10 especialistas (~250 M no total,
+~50 M ativos) fica em **< 100 MB** em ternário e roda bem em 8 GB.
+
+**Como a Nativa nasce:**
+
+- A **Semente** (núcleo + especialistas básicos) é treinada pelo projeto
+  com esse mesmo pipeline, em notebooks comuns ou em qualquer máquina que
+  o projeto tiver; vem pronta no instalador. Uma GPU alugada **acelera**,
+  mas não é requisito.
+- **Colmeia (opcional, desligada por padrão):** quem quiser doa noites de
+  treino; cada computador treina um especialista em dados públicos e
+  devolve só os pesos, que o projeto valida e junta. Dados do usuário
+  nunca participam.
+
+### 2a. Qualquer língua que o usuário quiser
+
+- **Tokenizador com base em bytes UTF-8**: nenhum texto vira "desconhecido";
+  qualquer língua e escrita é representável desde o primeiro dia.
+- **Especialistas de língua**: a Semente vem com português, inglês e
+  espanhol. Para outra língua, o usuário escolhe em Configurações e a
+  Nativa:
+  1. baixa um corpus público daquela língua (ex.: Wikipédia, textos de
+     domínio público), uns poucos GB;
+  2. treina um especialista de língua novo em 1–2 noites;
+  3. traduz as descrições das ferramentas e as rotinas, e gera trilhas de
+     ferramentas na língua nova a partir das que já existem;
+  4. só ativa o especialista se passar no teste de compreensão daquela
+     língua.
+- **Troca a qualquer momento**: a língua da conversa é detectada por
+  mensagem, e o roteador usa o especialista dela. As ferramentas,
+  nomes internos e o protocolo continuam iguais em todas as línguas.
+- O adaptador pessoal aprende também o jeito de escrever do usuário
+  (gírias, termos do trabalho).
 
 ### 3. O agente: roteamento em dois passos, sempre com gramática
 
@@ -186,11 +264,14 @@ passos:
    ("usar pnpm, não npm").
 5. **Recuperação.** A cada pedido, as habilidades e preferências mais
    próximas (embeddings do próprio motor) entram no prompt como exemplos.
-6. **Treino no computador.** Com o computador ocioso e na tomada, o motor
-   treina um **adaptador LoRA pessoal** (alguns MB) nas trilhas aprovadas
-   e nas correções. O adaptador só substitui o anterior se passar no
+6. **Sono: consolidação noturna.** Com o computador ocioso e na tomada,
+   o motor treina o **especialista pessoal** (LoRA de alguns MB) nas
+   trilhas aprovadas e nas correções do dia, misturadas com uma amostra de
+   exemplos antigos (repetição, para não esquecer). Também pode treinar um
+   especialista novo (língua, programa que o usuário passou a usar).
+7. **Validação.** Um peso novo só substitui o anterior se passar no
    conjunto de testes fixo da Nativa sem piorar; senão é descartado.
-   Sempre é possível voltar ao adaptador anterior ou ao modelo de fábrica.
+   Sempre é possível voltar ao anterior ou ao modelo de fábrica.
 
 Nada disso sai do computador sem pedido explícito do usuário.
 
@@ -205,11 +286,17 @@ chamada, Parar/Pausar com atalho global, e pontos de restauração
 
 - O Orchestrator passa a ter IA e motor 100% próprios, offline, sem custo
   por uso, num notebook comum.
+- O treino cabe no hardware alvo: nenhuma versão da Nativa exige GPU
+  alugada. O preço é que a arquitetura modular, os pesos ternários e o
+  treino bloco a bloco são menos testados que o treino denso clássico:
+  cada técnica entra só depois de medida contra um gabarito (fases T).
 - O projeto ganha duas frentes novas e grandes: manter um motor de
-  inferência (kernels por arquitetura de CPU) e um pipeline de treino com
-  custo de GPU a cada versão do modelo.
-- A Nativa-1 é forte no que foi treinada para fazer e fraca fora disso;
-  tarefas longas de código vão aos providers grandes por handoff.
+  inferência e treino (kernels por arquitetura de CPU e GPU) e um
+  pipeline de dados verificáveis.
+- A Nativa é forte no que foi treinada para fazer (operar o Orchestrator
+  e o computador, conversar na língua do usuário) e consulta memória e web
+  para fatos; tarefas longas de código vão aos providers grandes por
+  handoff.
 - Com Acesso Irrestrito e `system.*`, um erro do modelo pode apagar
   arquivos ou desligar o computador. O usuário escolhe isso
   conscientemente, e a tela de ativação diz isso claramente.

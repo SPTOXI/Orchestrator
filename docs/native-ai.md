@@ -9,11 +9,6 @@ módulos, contratos, fases e critérios de aceite.
 ## Visão geral
 
 ```text
-                        ┌──────── training/ (fora do app, GPUs alugadas) ────────┐
-                        │ tokenizador BPE → pré-treino → SFT ferramentas → DPO   │
-                        │            └──▶ exporta pesos .nativa + testes         │
-                        └───────────────────────────┬────────────────────────────┘
-                                                    ▼ release (SHA-256)
 ┌──────────────────────────── app (Tauri) ───────────────────────────────────────┐
 │ painéis NATIVA · ROTINAS · Gravar · propostas de aprendizado · Parar global    │
 │                                                                                │
@@ -21,8 +16,10 @@ módulos, contratos, fases e critérios de aceite.
 │      │                                                                         │
 │      ▼                                                                         │
 │ orchestrator-engine (Rust, no processo)                                        │
-│   .nativa mmap · kernels Q4/Q8 SIMD · cache KV q8 · gramática · embeddings     │
-│   LoRA pessoal (treino ocioso, validado antes de trocar)                       │
+│   .nativa mmap · núcleo + especialistas sob demanda · ternário/Q4/Q8 SIMD     │
+│   cache KV q8 · gramática · embeddings                                         │
+│ trainer (no app): treino bloco a bloco · CPU + GPU 1 GB · sono noturno         │
+│   especialistas de língua e pessoal · validado antes de trocar                 │
 │      │                                                                         │
 │      ▼                                                                         │
 │ AutonomyGate ─▶ AgentTools ─▶ EngineTools ─▶ RuntimeTools                      │
@@ -38,7 +35,8 @@ módulos, contratos, fases e critérios de aceite.
 | Onde | O quê |
 | ---- | ----- |
 | `packages/engine` (novo) | motor: formato `.nativa`, quantização, kernels SIMD, transformer, cache KV, amostragem, gramática, embeddings, LoRA |
-| `training/` (novo, Python) | tokenizador, dados, pré-treino, SFT, DPO, avaliação, exportação `.nativa`, implementação de referência para os testes de equivalência |
+| `packages/trainer` (novo) | treino no próprio app: dados, currículo, treino bloco a bloco, especialistas, consolidação noturna, avaliação, exportação `.nativa` |
+| `training/reference` (Python) | só o gabarito em PyTorch para os testes de equivalência; não é necessário para treinar |
 | `packages/native` (novo) | `NativeAgent`, roteador de grupo, recuperação de habilidades, agendamento do treino LoRA |
 | `packages/system` (novo) | ferramentas `system.*` por SO (`cfg(target_os)`), com fallback para shell |
 | `packages/memory` | tabelas `traces`, `skills`, `routines`, `routine_runs`, `preferences`, `embeddings`, `adapters` |
@@ -73,8 +71,8 @@ pub struct Skill { id, name, description, params: Vec<Param>,
 
 ## Fases
 
-Motor e modelo andam em paralelo; o agente usa a Nativa-Mini até a
-Nativa-1 ficar pronta.
+Motor e modelo andam em paralelo; o agente usa a núcleo da Semente
+enquanto os especialistas são treinados.
 
 ### M1 — Motor: base
 - Formato `.nativa`, `mmap`, transformer em f32 no caminho escalar,
@@ -85,24 +83,36 @@ Nativa-1 ficar pronta.
 ### M2 — Motor: velocidade e memória
 - Quantização Q4/Q8, kernels AVX2/NEON, multithread, cache KV q8,
   orçamento de memória, cancelamento.
-- **Aceite:** com a Nativa-1 em 4 bits num notebook de 8 GB (CPU de 4
-  núcleos), ≥ 15 tokens/s na geração e uso total < 2 GB.
+- **Aceite:** com a Semente (~50 M ativos, ternária) num notebook de
+  8 GB (CPU de 4 núcleos), ≥ 30 tokens/s na geração e uso total < 1 GB.
 
 ### M3 — Motor: gramática, embeddings, LoRA
 - JSON Schema → autômato; embeddings; treino LoRA no CPU.
 - **Aceite:** 0 chamadas malformadas em 1.000 gerações com gramática; um
   LoRA de teste aprende uma tarefa sintética em < 1 h num CPU de 4 núcleos.
 
-### T1 — Modelo: Nativa-Mini
-- Tokenizador BPE, pipeline de dados com licença rastreada, pré-treino de
-  ~150 M, exportação `.nativa`.
-- **Aceite:** roda no motor (M1–M2) com as mesmas saídas da referência.
+### T1 — Treino no notebook: base
+- Tokenizador com base em bytes, treino bloco a bloco com pesos ternários,
+  gradientes em 8 bits, *checkpointing*, GPU de 1 GB por blocos.
+- **Aceite:** num notebook de 8 GB / 1 GB de vídeo, um modelo de ~40 M
+  processa ≥ 300 milhões de tokens por semana de noites, sem passar de
+  6 GB de RAM; a perda empata (± 5%) com o mesmo modelo treinado de forma
+  densa clássica, como gabarito.
 
-### T2 — Modelo: Nativa-1
-- Ambiente simulado (VMs) para gerar e validar trilhas de ferramentas;
-  pré-treino ~1,2 B, SFT, DPO; conjunto de avaliação fixo.
-- **Aceite:** ≥ 90% de chamadas corretas no conjunto de 500 pedidos de
-  referência do Orchestrator e de `system.*`, em português e inglês.
+### T2 — Semente: núcleo + especialistas
+- Núcleo ~40 M, roteador esparso, especialistas de função (`system`,
+  `orchestrator`, shell, rotinas) e de língua (pt, en, es); dados
+  sintéticos verificáveis gerados e conferidos em sandbox; crescimento
+  progressivo e poda.
+- **Aceite:** ≥ 85% de chamadas corretas no conjunto de 500 pedidos de
+  referência do Orchestrator e de `system.*`, nas três línguas; modelo de
+  fábrica < 100 MB.
+
+### T3 — Línguas novas pelo usuário
+- Escolher a língua, baixar corpus público, treinar o especialista em 1–2
+  noites, traduzir ferramentas e rotinas, testar antes de ativar.
+- **Aceite:** uma língua fora das três de fábrica (ex.: italiano) chega a
+  ≥ 75% de chamadas corretas depois de 2 noites.
 
 ### N1 — Agente e ferramentas
 - `NativeAgent` com roteamento; `system.*` nos três SOs; `orchestrator.*`
@@ -124,7 +134,7 @@ Nativa-1 ficar pronta.
   sozinho.
 
 ### N4 — Polimento
-- Backend GPU por `wgpu`, Nativa-2, atalho global de parada, delegação
+- Colmeia opcional (doação de noites de treino), atalho global de parada, delegação
   para providers grandes, documentação de usuário.
 
 ## Riscos
@@ -134,8 +144,9 @@ Nativa-1 ficar pronta.
 | Motor lento no CPU | kernels SIMD por arquitetura, tokenizador econômico, modelo de 1,2 B, testes de desempenho no CI |
 | Bugs numéricos no motor | testes de equivalência kernel a kernel e contra a referência PyTorch |
 | Modelo pequeno erra | treino focado nas ferramentas reais, gramática, roteamento, exemplos recuperados, LoRA pessoal |
-| Custo e tempo do treino | começar pela Nativa-Mini; pipeline reproduzível; só treinar a próxima versão com o ganho medido |
+| Técnicas de treino eficiente não renderem | cada uma entra só depois de medida contra o treino denso clássico (T1); se uma falhar, troca-se por outra sem mudar o resto |
+| Treino lento demais no notebook | peças pequenas (1 noite cada), dados sintéticos verificáveis, crescimento progressivo, Colmeia opcional |
 | Licença dos dados | só corpora que permitem treinar e redistribuir; origem marcada em cada exemplo |
-| Ação destrutiva por engano | o usuário escolhe o modo; Pause/Parar; auditoria; ponto de restauração; DPO contra ações destrutivas não pedidas |
+| Ação destrutiva por engano | o usuário escolhe o modo; Pause/Parar; auditoria; ponto de restauração; exemplos negativos no treino contra ações destrutivas não pedidas |
 | Adaptador pessoal piora a IA | só troca se passar na avaliação; volta ao anterior ou ao de fábrica a qualquer momento |
 | Privacidade | trilhas e adaptador só locais, apagáveis, nunca enviados sem pedido |
