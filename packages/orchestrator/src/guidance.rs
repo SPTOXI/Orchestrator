@@ -43,6 +43,16 @@ const MAX_SKILL_FILES: usize = 50;
 /// Project files with instructions for AIs, in this order.
 pub const PROJECT_RULE_FILES: [&str; 3] = ["AGENTS.md", "CLAUDE.md", ".orchestrator/rules.md"];
 
+/// The project instruction file a CLI already reads on its own from the
+/// project folder: sending it again would pay for it twice (ADR-0026).
+fn read_by_provider(provider: &str) -> Option<&'static str> {
+    match provider {
+        "claude-code" => Some("CLAUDE.md"),
+        "codex" => Some("AGENTS.md"),
+        _ => None,
+    }
+}
+
 /// What the user chose (`guidance.json`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -357,11 +367,13 @@ impl GuidanceService {
     }
 
     /// The text that goes into a session's instructions, with what it
-    /// carries. `tools`: the session can call `skill.read`.
+    /// carries. `tools`: the session can call `skill.read`. `provider`:
+    /// the session's, to leave out the project file its CLI reads itself.
     pub fn instructions(
         &self,
         project: Option<&Path>,
         tools: bool,
+        provider: Option<&str>,
     ) -> Option<(String, Vec<ContextSectionSummary>)> {
         let settings = self.settings();
         let mut text = String::new();
@@ -378,14 +390,28 @@ impl GuidanceService {
             }
             if settings.project_rule_files {
                 if let Some(project) = project {
-                    for file in project_rule_files(project) {
-                        let Ok(content) = std::fs::read_to_string(&file.path) else {
-                            continue;
-                        };
-                        if content.trim().is_empty() {
+                    let skip = provider.and_then(read_by_provider);
+                    let files: Vec<(RuleFile, String)> = project_rule_files(project)
+                        .into_iter()
+                        .filter(|file| skip != Some(file.name.as_str()))
+                        .filter_map(|file| {
+                            let content = std::fs::read_to_string(&file.path).ok()?;
+                            let content = content.trim().to_owned();
+                            (!content.is_empty()).then_some((file, content))
+                        })
+                        .collect();
+                    for (i, (file, content)) in files.iter().enumerate() {
+                        // A file another one repeats whole (an AGENTS.md
+                        // copied into CLAUDE.md) goes once, in the larger.
+                        let repeated = files.iter().enumerate().any(|(j, (_, other))| {
+                            j != i
+                                && other.contains(content.as_str())
+                                && (other.len() > content.len() || j < i)
+                        });
+                        if repeated {
                             continue;
                         }
-                        let mut body = clip(content.trim(), MAX_RULE_FILE);
+                        let mut body = clip(content, MAX_RULE_FILE);
                         if file.truncated {
                             body.push_str("\n[… cut: read the file for the rest]");
                         }
@@ -459,12 +485,14 @@ impl GuidedContext {
 impl ContextSource for GuidedContext {
     async fn build(&self, request: ContextRequest) -> Result<Option<AttachedContext>, String> {
         let project = request.session.project_path.clone();
+        let provider = request.session.provider.to_string();
         let tools = request.tools;
         let guidance = self.guidance.clone();
-        let extra =
-            tokio::task::spawn_blocking(move || guidance.instructions(Some(&project), tools))
-                .await
-                .map_err(|e| format!("rules task failed: {e}"))?;
+        let extra = tokio::task::spawn_blocking(move || {
+            guidance.instructions(Some(&project), tools, Some(&provider))
+        })
+        .await
+        .map_err(|e| format!("rules task failed: {e}"))?;
         let context = self.inner.build(request).await?;
         let Some((text, sections)) = extra else {
             return Ok(context);
@@ -891,7 +919,9 @@ mod tests {
         let (service, warning) = GuidanceService::new(data.path());
         assert!(warning.is_none());
         let service = service.with_home(Some(home.path().to_path_buf()));
-        assert!(service.instructions(Some(project.path()), true).is_none());
+        assert!(service
+            .instructions(Some(project.path()), true, None)
+            .is_none());
 
         service.save_user_rules("Sempre escreva testes.").unwrap();
         write(&project.path().join("AGENTS.md"), "Use pnpm, nunca npm.");
@@ -916,7 +946,9 @@ mod tests {
             "---\nname: notas\ndescription: Notas pessoais\n---\n",
         );
 
-        let (text, sections) = service.instructions(Some(project.path()), true).unwrap();
+        let (text, sections) = service
+            .instructions(Some(project.path()), true, None)
+            .unwrap();
         assert!(text.contains("Sempre escreva testes."));
         assert!(text.contains("### AGENTS.md (project)\nUse pnpm, nunca npm."));
         assert!(text.contains("- revisao: Revisar código antes do commit"));
@@ -924,8 +956,38 @@ mod tests {
         assert!(text.contains("- notas: Notas pessoais"));
         assert!(!text.contains("outra"), "the project's revisao is shadowed");
         assert_eq!(sections.len(), 2);
+        // A CLAUDE.md that repeats AGENTS.md goes once; Claude Code reads
+        // its CLAUDE.md itself, Codex its AGENTS.md.
+        write(
+            &project.path().join("CLAUDE.md"),
+            "Use pnpm, nunca npm.\nRegra 2.",
+        );
+        let (text, _) = service
+            .instructions(Some(project.path()), true, None)
+            .unwrap();
+        assert!(
+            text.contains("### CLAUDE.md") && !text.contains("### AGENTS.md"),
+            "{text}"
+        );
+        let (text, _) = service
+            .instructions(Some(project.path()), true, Some("claude-code"))
+            .unwrap();
+        assert!(
+            text.contains("### AGENTS.md") && !text.contains("### CLAUDE.md"),
+            "{text}"
+        );
+        let (text, _) = service
+            .instructions(Some(project.path()), true, Some("codex"))
+            .unwrap();
+        assert!(
+            text.contains("### CLAUDE.md") && !text.contains("### AGENTS.md"),
+            "{text}"
+        );
+        std::fs::remove_file(project.path().join("CLAUDE.md")).unwrap();
         // Without tools, no skills (they could not be read).
-        let (text, _) = service.instructions(Some(project.path()), false).unwrap();
+        let (text, _) = service
+            .instructions(Some(project.path()), false, None)
+            .unwrap();
         assert!(!text.contains("SKILLS"));
 
         // Turned off: one skill, the project's files, the Claude Code ones.
@@ -934,7 +996,9 @@ mod tests {
         settings.project_rule_files = false;
         settings.claude_user_skills = false;
         service.save_settings(settings).unwrap();
-        let (text, _) = service.instructions(Some(project.path()), true).unwrap();
+        let (text, _) = service
+            .instructions(Some(project.path()), true, None)
+            .unwrap();
         assert!(!text.contains("deploy") && !text.contains("pnpm") && !text.contains("notas"));
         assert!(text.contains("revisao"));
 
