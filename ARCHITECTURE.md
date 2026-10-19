@@ -93,7 +93,7 @@ apenas apresentação.
 | Dados preservados nas atualizações | `apps/desktop/src-tauri` (`backup_commands.rs`, `files.rs`) + `packages/memory` (`VACUUM INTO`) | Rust | — | ✅ backup antes de instalar, ao abrir versão nova e antes de migrar o banco; restauração na abertura; gravação atômica; arquivos ilegíveis guardados (ADR-0022) |
 | Modelos locais (motor próprio) | `packages/local` (`orchestrator-local`) + `packages/providers/api` (`LocalEndpoint`, conexão `local`) | Rust | — | ✅ llama.cpp baixado e conferido para o computador, modelos GGUF do catálogo, do Hugging Face, do Ollama ou de um arquivo, contexto controlado, um modelo por vez, desligado quando ocioso (ADR-0025) |
 | Vários projetos e projetos relacionados | `packages/runtime` (`ToolCall.workspace`) + `packages/memory` (migração 5) + `packages/orchestrator` (`projects.rs`, seção RELATED PROJECTS) + painel PROJECT | Rust + TS | — | ✅ sessões presas ao seu projeto; projetos abertos lado a lado com abas por projeto; `projects.related`, `projects.ask` e `projects.request` entre projetos relacionados (ADR-0023) |
-| Otimização de tokens, cache, compactação, scheduling | `packages/providers/api` (custo, cache, compactação, retentativas) + `packages/agents` (fila e tetos) + `packages/memory` (gasto) + `packages/runtime` (supervisão) | Rust | 11 | ✅ custo real com cache, cache de prompt por protocolo, compactação pela própria IA, fila por prioridade com limite por provider, teto de custo por agente e orçamento diário, Job Object e órfãos (ADR-0018) |
+| Otimização de tokens, cache, compactação, scheduling | `packages/providers/api` (custo, cache, compactação, retentativas) + `packages/agents` (fila e tetos) + `packages/memory` (gasto) + `packages/runtime` (supervisão) | Rust | 11 | ✅ custo real com cache, cache de prompt por protocolo, compactação pela própria IA, fila por prioridade com limite por provider, teto de custo por agente e orçamento diário, Job Object e órfãos (ADR-0018); resultados e schemas enxutos, ferramentas por sessão, limpeza de resultados antigos e composição do prompt (ADR-0026) |
 
 Alterações à estrutura original:
 
@@ -445,6 +445,11 @@ em [`docs/agents.md`](./docs/agents.md)):
 [ADR-0018](./docs/adr/0018-tokens-cache-compactacao-e-escalonamento.md),
 referência em [`docs/tokens.md`](./docs/tokens.md). Nenhuma solução depende
 de um fornecedor; o que é de um fornecedor é otimização a mais.
+
+A [ADR-0026](./docs/adr/0026-economia-de-tokens-nas-ferramentas-e-nos-pedidos.md)
+completa esta seção: resultados de ferramentas e schemas em menos tokens,
+ferramentas por sessão, limpeza de resultados antigos, saída limitada nos
+pedidos auxiliares, Claude Code sem skills e a composição do prompt.
 
 - **Custo real:** `TokenUsage` com `cacheWriteTokens` e `cacheSavedUsd`;
   preço do cache por modelo (`cachedInputPrice`); o custo é o que o
