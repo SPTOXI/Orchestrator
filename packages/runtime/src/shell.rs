@@ -378,7 +378,7 @@ pub struct ExecuteArgs {
     /// Text written to the command's stdin (stdin is empty otherwise).
     #[serde(default)]
     pub stdin: Option<String>,
-    /// Cap per output stream in bytes (default: 4 MiB, see [`DEFAULT_MAX_OUTPUT_BYTES`]).
+    /// Cap per output stream in bytes (default: 4 MiB).
     #[serde(default)]
     pub max_output_bytes: Option<usize>,
 }
