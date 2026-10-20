@@ -38,6 +38,35 @@ pub struct Generation {
     pub stop: StopReason,
 }
 
+/// Prompt tokens fed in one batch; cancellation is checked between batches.
+const PROMPT_CHUNK: usize = 64;
+
+/// Feeds the prompt in batches ([`Session::prefill`]), leaving the logits
+/// for the next token in `logits`. Returns why it stopped early, if it did.
+fn feed_prompt(
+    session: &mut Session<'_>,
+    prompt: &[u32],
+    cancel: &AtomicBool,
+    logits: &mut Vec<f32>,
+) -> Result<Option<StopReason>> {
+    for chunk in prompt.chunks(PROMPT_CHUNK) {
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(Some(StopReason::Cancelled));
+        }
+        let room = session.context() - session.position();
+        if room == 0 {
+            return Ok(Some(StopReason::ContextFull));
+        }
+        let fits = &chunk[..chunk.len().min(room)];
+        logits.clear();
+        logits.extend_from_slice(session.prefill(fits)?);
+        if fits.len() < chunk.len() {
+            return Ok(Some(StopReason::ContextFull));
+        }
+    }
+    Ok(None)
+}
+
 /// Feeds `prompt` into `session` and generates. `on_token` sees every
 /// generated token as it comes and returns `false` to stop.
 pub fn generate(
@@ -50,15 +79,8 @@ pub fn generate(
     let finish = |tokens, stop| Ok(Generation { tokens, stop });
     let mut tokens = Vec::new();
     let mut logits = Vec::new();
-    for &t in prompt {
-        if cancel.load(Ordering::Relaxed) {
-            return finish(tokens, StopReason::Cancelled);
-        }
-        if session.is_full() {
-            return finish(tokens, StopReason::ContextFull);
-        }
-        logits.clear();
-        logits.extend_from_slice(session.step(t)?);
+    if let Some(stop) = feed_prompt(session, prompt, cancel, &mut logits)? {
+        return finish(tokens, stop);
     }
     let mut sampler = Sampler::new(params.sampling);
     loop {
@@ -116,15 +138,8 @@ pub fn generate_json(
     let finish = |tokens, stop| Ok(Generation { tokens, stop });
     let mut tokens = Vec::new();
     let mut logits = Vec::new();
-    for &t in prompt {
-        if cancel.load(Ordering::Relaxed) {
-            return finish(tokens, StopReason::Cancelled);
-        }
-        if session.is_full() {
-            return finish(tokens, StopReason::ContextFull);
-        }
-        logits.clear();
-        logits.extend_from_slice(session.step(t)?);
+    if let Some(stop) = feed_prompt(session, prompt, cancel, &mut logits)? {
+        return finish(tokens, stop);
     }
     let mut sampler = Sampler::new(params.sampling);
     let mut matcher = Matcher::new(schema);

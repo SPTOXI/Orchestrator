@@ -197,8 +197,9 @@ impl Adapter {
             *uj = crate::simd::dot_f32(&a[j * slot.cols..(j + 1) * slot.cols], x);
         }
         let s = self.scale();
-        for (i, o) in out.iter_mut().enumerate() {
-            *o += s * crate::simd::dot_f32(&b[i * r..(i + 1) * r], &u[..r]);
+        // Rows of B are only `rank` long: a plain loop beats a kernel call.
+        for (o, brow) in out.iter_mut().zip(b.chunks_exact(r)) {
+            *o += s * brow.iter().zip(&u[..r]).map(|(x, y)| x * y).sum::<f32>();
         }
     }
 

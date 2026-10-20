@@ -28,6 +28,8 @@ struct Args {
     vocab: usize,
     /// Training steps to time (0 = none).
     train: usize,
+    /// Prompt tokens.
+    prompt: usize,
 }
 
 fn parse() -> Args {
@@ -40,6 +42,7 @@ fn parse() -> Args {
         hidden: 1408,
         vocab: 32_000,
         train: 0,
+        prompt: 32,
     };
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut it = argv.chunks(2);
@@ -62,6 +65,7 @@ fn parse() -> Args {
             "--hidden" => a.hidden = n(),
             "--vocab" => a.vocab = n(),
             "--train" => a.train = n(),
+            "--prompt" => a.prompt = n(),
             _ => panic!("unknown option {k}"),
         }
     }
@@ -162,7 +166,7 @@ fn main() {
     };
     let report = model.memory(&opts).unwrap();
     let mut session = model.session_with(&opts).unwrap();
-    let prompt: Vec<u32> = (0..32).map(|i| 300 + i).collect();
+    let prompt: Vec<u32> = (0..a.prompt as u32).map(|i| 300 + i).collect();
     let params_gen = GenerateParams {
         max_tokens: a.tokens,
         sampling: SamplingParams {
@@ -196,9 +200,10 @@ fn main() {
         model.threads()
     );
     println!(
-        "prompt       {} tokens in {:.1} ms",
+        "prompt       {} tokens in {:.1} ms ({:.0} tokens/s)",
         prompt.len(),
-        prefill.as_secs_f64() * 1e3
+        prefill.as_secs_f64() * 1e3,
+        prompt.len() as f64 / prefill.as_secs_f64()
     );
     println!(
         "generation   {} tokens, {tok_s:.1} tokens/s",
@@ -229,6 +234,15 @@ fn main() {
                 .expect("train step");
         }
         let per = t.elapsed().as_secs_f64() / a.train as f64;
+        let tf = Instant::now();
+        for _ in 0..a.train {
+            orchestrator_nativa::train::loss(&model, Some(&adapter), &ex).expect("forward");
+        }
+        let fwd = tf.elapsed().as_secs_f64() / a.train as f64;
+        println!(
+            "training     forward pass alone: {fwd:.2} s ({:.0}% of a step)",
+            fwd / per * 100.0
+        );
         println!(
             "training     LoRA rank 8 on all matrices ({:.2} M values), 128-token sequence: {per:.2} s per step, {:.0} tokens/s",
             adapter.len() as f64 / 1e6,

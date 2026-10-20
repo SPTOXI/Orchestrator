@@ -21,8 +21,9 @@ use crate::error::{Error, Result};
 use crate::lora::{Adapter, Slot, Target};
 use crate::model::{Matrix, Model};
 use crate::ops::{rope, silu, softmax};
+use crate::pool::SendPtr;
 use crate::quant::QuantizedVec;
-use crate::simd::dot_f32;
+use crate::simd::{axpy, dot_f32};
 
 /// One training sequence. The loss covers predicting `tokens[i]` for every
 /// `i >= loss_from` (at least 1): the prompt part is context, the rest is
@@ -150,19 +151,32 @@ impl Ctx<'_> {
         m: &Matrix,
         slot: Option<&Slot>,
         x: &[f32],
-        qx: &mut QuantizedVec,
+        qx: &mut Vec<QuantizedVec>,
     ) -> (Vec<f32>, Vec<f32>) {
         let t_len = x.len() / m.cols;
         let mut y = vec![0.0; t_len * m.rows];
         let r = self.adapter.map_or(0, |a| a.config.rank);
         let mut u = vec![0.0; if slot.is_some() { t_len * r } else { 0 }];
-        for t in 0..t_len {
-            let xt = &x[t * m.cols..(t + 1) * m.cols];
-            let yt = &mut y[t * m.rows..(t + 1) * m.rows];
-            self.model.matvec(yt, m, xt, qx);
-            if let (Some(s), Some(a)) = (slot, self.adapter) {
-                a.apply(s, xt, &mut u[t * r..(t + 1) * r], yt);
-            }
+        self.model.matmul(&mut y, m, x, qx);
+        if let (Some(s), Some(a)) = (slot, self.adapter) {
+            // Positions split across the threads; each writes its own rows.
+            let threads = self.model.threads().min(t_len);
+            let chunk = t_len.div_ceil(threads);
+            let (yp, up) = (SendPtr(y.as_mut_ptr()), SendPtr(u.as_mut_ptr()));
+            self.model.parallel(threads, &|i| {
+                let (y_ptr, u_ptr) = (yp, up);
+                for t in (i * chunk).min(t_len)..((i + 1) * chunk).min(t_len) {
+                    let xt = &x[t * m.cols..(t + 1) * m.cols];
+                    // SAFETY: position `t` belongs to this task only.
+                    let (yt, ut) = unsafe {
+                        (
+                            std::slice::from_raw_parts_mut(y_ptr.0.add(t * m.rows), m.rows),
+                            std::slice::from_raw_parts_mut(u_ptr.0.add(t * r), r),
+                        )
+                    };
+                    a.apply(s, xt, ut, yt);
+                }
+            });
         }
         (y, u)
     }
@@ -181,41 +195,63 @@ impl Ctx<'_> {
         grads: &mut [f32],
     ) {
         let t_len = x.len() / m.cols;
-        for t in 0..t_len {
-            let dyt = &dy[t * m.rows..(t + 1) * m.rows];
-            let xt = &x[t * m.cols..(t + 1) * m.cols];
-            let dxt = &mut dx[t * m.cols..(t + 1) * m.cols];
-            self.model.matvec_t_add(dxt, m, dyt);
-            let (Some(s), Some(a)) = (slot, self.adapter) else {
-                continue;
-            };
-            let r = a.config.rank;
-            let sc = a.scale();
-            let ut = &u[t * r..(t + 1) * r];
-            let av = &a.params[s.a..s.b];
-            let bv = &a.params[s.b..s.b + s.rows * r];
+        self.model.matmul_t_add(dx, m, dy);
+        let (Some(s), Some(a)) = (slot, self.adapter) else {
+            return;
+        };
+        let r = a.config.rank;
+        let sc = a.scale();
+        let av = &a.params[s.a..s.b];
+        let bv = &a.params[s.b..s.b + s.rows * r];
+        // Positions split across the threads: each writes its own rows of
+        // `dx` and sums this slot's gradients in its own buffer.
+        let threads = self.model.threads().min(t_len);
+        let chunk = t_len.div_ceil(threads);
+        let (ga_len, gb_len) = (s.b - s.a, s.rows * r);
+        let partial: Vec<std::sync::Mutex<(Vec<f32>, Vec<f32>)>> = (0..threads)
+            .map(|_| std::sync::Mutex::new((Vec::new(), Vec::new())))
+            .collect();
+        let dxp = SendPtr(dx.as_mut_ptr());
+        self.model.parallel(threads, &|i| {
+            // The whole wrapper is captured (it is Send), not its pointer.
+            let dx_ptr = dxp;
+            let (mut ga, mut gb) = (vec![0.0f32; ga_len], vec![0.0f32; gb_len]);
             let mut e = vec![0.0f32; r];
-            for (i, &g) in dyt.iter().enumerate() {
-                if g == 0.0 {
-                    continue;
+            for t in (i * chunk).min(t_len)..((i + 1) * chunk).min(t_len) {
+                let dyt = &dy[t * m.rows..(t + 1) * m.rows];
+                let xt = &x[t * m.cols..(t + 1) * m.cols];
+                // SAFETY: position `t` belongs to this task only.
+                let dxt =
+                    unsafe { std::slice::from_raw_parts_mut(dx_ptr.0.add(t * m.cols), m.cols) };
+                let ut = &u[t * r..(t + 1) * r];
+                e.fill(0.0);
+                for (i, &g) in dyt.iter().enumerate() {
+                    if g == 0.0 {
+                        continue;
+                    }
+                    let brow = &bv[i * r..(i + 1) * r];
+                    let gbr = &mut gb[i * r..(i + 1) * r];
+                    for j in 0..r {
+                        e[j] += brow[j] * g;
+                        gbr[j] += sc * g * ut[j];
+                    }
                 }
-                let brow = &bv[i * r..(i + 1) * r];
-                let gb = &mut grads[s.b + i * r..s.b + (i + 1) * r];
-                for j in 0..r {
-                    e[j] += brow[j] * g;
-                    gb[j] += sc * g * ut[j];
+                for (j, &ej) in e.iter().enumerate() {
+                    if ej == 0.0 {
+                        continue;
+                    }
+                    axpy(&mut ga[j * s.cols..(j + 1) * s.cols], sc * ej, xt);
+                    axpy(dxt, sc * ej, &av[j * s.cols..(j + 1) * s.cols]);
                 }
             }
-            for (j, &ej) in e.iter().enumerate() {
-                if ej == 0.0 {
-                    continue;
-                }
-                let arow = &av[j * s.cols..(j + 1) * s.cols];
-                let ga = &mut grads[s.a + j * s.cols..s.a + (j + 1) * s.cols];
-                for c in 0..s.cols {
-                    ga[c] += sc * ej * xt[c];
-                    dxt[c] += sc * arow[c] * ej;
-                }
+            *partial[i].lock().unwrap() = (ga, gb);
+        });
+        // Summed in a fixed order: the result does not depend on timing.
+        for p in partial {
+            let (ga, gb) = p.into_inner().unwrap();
+            if !ga.is_empty() {
+                axpy(&mut grads[s.a..s.b], 1.0, &ga);
+                axpy(&mut grads[s.b..s.b + gb_len], 1.0, &gb);
             }
         }
     }
@@ -233,7 +269,7 @@ impl Ctx<'_> {
         let (dim, kv_dim, hd, nh) = (c.dim, c.kv_dim(), c.head_dim(), c.n_heads);
         let group = nh / c.n_kv_heads;
         let scale = 1.0 / (hd as f32).sqrt();
-        let mut qx = QuantizedVec::default();
+        let mut qx = Vec::new();
         let mut x = vec![0.0; t_len * dim];
         for (t, &tok) in tokens.iter().enumerate() {
             if tok as usize >= c.vocab_size {
@@ -393,13 +429,7 @@ pub fn loss_and_grad(
     }
     let out = model.output.as_ref().unwrap_or(&model.tok_embeddings);
     let mut dxnf = vec![0.0; t_len * dim];
-    for t in 0..t_len {
-        model.matvec_t_add(
-            &mut dxnf[t * dim..(t + 1) * dim],
-            out,
-            &dlogits[t * v..(t + 1) * v],
-        );
-    }
+    model.matmul_t_add(&mut dxnf, out, &dlogits);
     let mut dx = vec![0.0; t_len * dim];
     rmsnorm_back_rows(&f.xf, &model.norm, &f.invf, &dxnf, &mut dx);
 

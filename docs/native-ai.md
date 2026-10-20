@@ -177,11 +177,45 @@ enquanto os especialistas são treinados.
   pessoal de 500 exemplos × 128 tokens dá uma época em ~36 min: cabe numa
   noite.
 - **Pendência que bloqueia a T1:** treinar o núcleo do zero precisa de
-  ~1.500 tokens/s (meta: 300 milhões por semana de noites). Hoje cada
-  posição relê os pesos e o caminho de volta é escalar. Antes da T1:
-  multiplicação em lote (matriz × matriz: os pesos lidos uma vez para
-  todas as posições), caminho de volta com SIMD e em paralelo, e kernels de
-  treino para pesos ternários.
+  ~1.500 tokens/s (meta: 300 milhões por semana de noites). Ver a etapa
+  seguinte.
+
+### Lote — antes da T1 ✅
+- **Multiplicação em lote** (`Model::matmul`): cada linha de pesos é lida
+  e desempacotada uma vez para todas as posições; as linhas `q4`/`t2` viram
+  blocos `q8` (mesmos inteiros, mesma escala) e um kernel faz 4 linhas por
+  carga de ativação (`dot_q8_x4`, AVX2 e NEON).
+- **Caminho de volta em lote** (`Model::matmul_t_add`): linhas em grupos
+  de 8, somadas em registradores (`axpy_x8`), threads com buffers próprios
+  somados em ordem fixa.
+- **Kernel inteiro mais rápido:** as somas de cada bloco ficam em vetores
+  e são somadas uma vez por linha (antes: a cada bloco de 32). Os inteiros
+  de cada bloco continuam exatos; só a ordem da soma final em ponto
+  flutuante mudou (o teste passou a ter tolerância de arredondamento).
+- **LoRA dividido entre as threads**, no caminho de ida e no de volta.
+- **Prompt em lote** (`Session::prefill`), usado por `generate` e
+  `generate_json` em pedaços de 64 tokens (o botão Parar continua
+  respondendo entre pedaços).
+- **Aceite:** o prompt em lote dá **exatamente** os mesmos números que um
+  token por vez, com pesos f32, `q8`, `q4` e `t2`, cache KV f32 e 8 bits, com
+  e sem adaptador (`tests/batch.rs`); derivadas continuam conferidas por
+  diferenças finitas.
+- **Medido** (`nativa-bench`, 68 M parâmetros, `t2`, VM de 4 núcleos):
+
+  | | Antes | Depois |
+  | - | ----- | ------ |
+  | Treino LoRA (128 tokens por passo) | 4,2 s/passo, ~31 tokens/s | ~0,7 s/passo, **~180 tokens/s** (5,8×) |
+  | Prompt de 32 tokens | ~300 ms, ~107 tokens/s | ~81 ms, **~394 tokens/s** (3,7×) |
+  | Geração | ~89 tokens/s | **~102–106 tokens/s** |
+
+- **O que ainda falta para a T1** (meta ~1.500 tokens/s, ~8× o atual):
+  - 4 threads rendem ~1,9× sobre 1: sobram partes numa só thread (atenção,
+    normalizações, softmax do vocabulário);
+  - o kernel inteiro faz ~10 bilhões de multiplicações por segundo por
+    núcleo, cerca de ¼ do que o AVX2 permite;
+  - treino completo (não só LoRA) precisa também dos gradientes dos pesos
+    (`dW = dyᵀ·x`, outra multiplicação em lote) e dos kernels ternários;
+  - a GPU de 1 GB (`wgpu`, previsto no plano) é o maior ganho que resta.
 
 ### T1 — Treino no notebook: base
 - Tokenizador com base em bytes, treino bloco a bloco com pesos ternários,

@@ -147,6 +147,18 @@ pub fn unpack_block(dtype: Dtype, block: &[u8], out: &mut [i8; BLOCK]) {
     }
 }
 
+/// A `q4` or `t2` row as `q8` blocks: the same integers and scales, so a
+/// dot product with it gives exactly the same result.
+pub fn repack_q8(dtype: Dtype, row: &[u8], out: &mut Vec<u8>) {
+    let bb = block_bytes(dtype);
+    let mut vals = [0i8; BLOCK];
+    for block in row.chunks_exact(bb) {
+        unpack_block(dtype, block, &mut vals);
+        out.extend_from_slice(&block[..4]);
+        out.extend(vals.iter().map(|&v| v as u8));
+    }
+}
+
 /// Back to f32 (for tests, conversion and embeddings).
 pub fn dequantize_row(dtype: Dtype, bytes: &[u8], cols: usize, out: &mut [f32]) {
     match dtype {

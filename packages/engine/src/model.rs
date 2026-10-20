@@ -191,6 +191,11 @@ impl Model {
         self.pool.threads()
     }
 
+    /// Runs `f(task)` for `tasks` tasks across the engine's threads.
+    pub(crate) fn parallel(&self, tasks: usize, f: &(dyn Fn(usize) + Sync)) {
+        self.pool.run(tasks, f);
+    }
+
     /// The SIMD kernels in use ("avx2", "neon" or "scalar").
     pub fn kernels(&self) -> &'static str {
         simd::kernel_name()
@@ -388,62 +393,175 @@ impl Model {
         }
     }
 
-    /// `dx += Mᵀ · dy` (training: the gradient through a frozen matrix).
-    /// Quantized rows are expanded one at a time; the threads each sum a
-    /// share of the rows into their own buffer.
-    pub(crate) fn matvec_t_add(&self, dx: &mut [f32], m: &Matrix, dy: &[f32]) {
-        debug_assert_eq!(dx.len(), m.cols);
-        debug_assert_eq!(dy.len(), m.rows);
+    /// `out[t] = M · x[t]` for every row `t` of `x` (`T × cols`), reading
+    /// each weight row once for all positions — the prompt and training
+    /// paths. Every `(row, t)` uses the same kernel as [`Model::matvec`], so
+    /// the numbers are the same as one position at a time.
+    pub(crate) fn matmul(
+        &self,
+        out: &mut [f32],
+        m: &Matrix,
+        x: &[f32],
+        qx: &mut Vec<QuantizedVec>,
+    ) {
+        let t_len = x.len() / m.cols;
+        debug_assert_eq!(out.len(), t_len * m.rows);
+        let quantized = m.dtype.is_quantized();
+        if quantized {
+            qx.resize_with(t_len.max(qx.len()), QuantizedVec::default);
+            for (q, row) in qx.iter_mut().zip(x.chunks_exact(m.cols)) {
+                q.quantize(row);
+            }
+        }
+        let qx: &[QuantizedVec] = qx;
+        let (f32s, bytes) = if quantized {
+            (&[][..], self.bytes(m))
+        } else {
+            (self.f32_values(m), &[][..])
+        };
         let rb = quant::row_bytes(m.dtype, m.cols);
-        let f32s = if m.dtype.is_quantized() {
-            &[][..]
-        } else {
-            self.f32_values(m)
-        };
-        let bytes = if m.dtype.is_quantized() {
-            self.bytes(m)
-        } else {
-            &[][..]
-        };
-        let rows_into = |rows: std::ops::Range<usize>, acc: &mut [f32], tmp: &mut [f32]| {
-            for r in rows {
-                let g = dy[r];
-                if g == 0.0 {
-                    continue;
+        let ptr = SendPtr(out.as_mut_ptr());
+        // 4- and 2-bit rows are unpacked once per row into q8 blocks (same
+        // integers, same scale), then reused for every position.
+        let repack = quantized && m.dtype != Dtype::Q8;
+        let rows_dot = |rows: std::ops::Range<usize>| {
+            let p = ptr;
+            let mut q8 = Vec::new();
+            let mut r = rows.start;
+            // Quantized rows four at a time: one activation load per block
+            // serves four weight rows.
+            if quantized {
+                let q8b = quant::row_bytes(Dtype::Q8, m.cols);
+                while r + 4 <= rows.end {
+                    let group: [&[u8]; 4] = if repack {
+                        q8.clear();
+                        for k in 0..4 {
+                            let row = &bytes[(r + k) * rb..(r + k + 1) * rb];
+                            quant::repack_q8(m.dtype, row, &mut q8);
+                        }
+                        std::array::from_fn(|k| &q8[k * q8b..(k + 1) * q8b])
+                    } else {
+                        std::array::from_fn(|k| &bytes[(r + k) * rb..(r + k + 1) * rb])
+                    };
+                    for (t, x) in qx.iter().enumerate().take(t_len) {
+                        let v = simd::dot_q8_x4(group, x);
+                        for (k, val) in v.into_iter().enumerate() {
+                            // SAFETY: every (t, r) is written by exactly one task.
+                            unsafe { *p.0.add(t * m.rows + r + k) = val };
+                        }
+                    }
+                    r += 4;
                 }
-                let row: &[f32] = if m.dtype.is_quantized() {
-                    quant::dequantize_row(m.dtype, &bytes[r * rb..(r + 1) * rb], m.cols, tmp);
-                    tmp
+            }
+            for r in r..rows.end {
+                let row = if quantized {
+                    &bytes[r * rb..(r + 1) * rb]
                 } else {
-                    &f32s[r * m.cols..(r + 1) * m.cols]
+                    &[][..]
                 };
-                for (a, w) in acc.iter_mut().zip(row) {
-                    *a += g * w;
+                let (kind, row) = if repack {
+                    q8.clear();
+                    quant::repack_q8(m.dtype, row, &mut q8);
+                    (Dtype::Q8, &q8[..])
+                } else {
+                    (m.dtype, row)
+                };
+                for t in 0..t_len {
+                    let v = if quantized {
+                        simd::dot_q(kind, row, &qx[t])
+                    } else {
+                        simd::dot_f32(
+                            &f32s[r * m.cols..(r + 1) * m.cols],
+                            &x[t * m.cols..(t + 1) * m.cols],
+                        )
+                    };
+                    // SAFETY: every (t, r) is written by exactly one task.
+                    unsafe { *p.0.add(t * m.rows + r) = v };
                 }
             }
         };
         let threads = self.pool.threads();
-        if threads == 1 || m.rows * m.cols < PARALLEL_MIN {
-            let mut tmp = vec![0.0; m.cols];
-            rows_into(0..m.rows, dx, &mut tmp);
+        if threads == 1 || t_len * m.rows * m.cols < PARALLEL_MIN {
+            rows_dot(0..m.rows);
+            return;
+        }
+        let chunk = m.rows.div_ceil(threads);
+        self.pool.run(threads, &|i| {
+            rows_dot((i * chunk).min(m.rows)..((i + 1) * chunk).min(m.rows));
+        });
+    }
+
+    /// `dx[t] += Mᵀ · dy[t]` for every position, each weight row expanded
+    /// once for all of them.
+    pub(crate) fn matmul_t_add(&self, dx: &mut [f32], m: &Matrix, dy: &[f32]) {
+        let t_len = dy.len() / m.rows;
+        debug_assert_eq!(dx.len(), t_len * m.cols);
+        let rb = quant::row_bytes(m.dtype, m.cols);
+        let quantized = m.dtype.is_quantized();
+        let f32s = if quantized {
+            &[][..]
+        } else {
+            self.f32_values(m)
+        };
+        let bytes = if quantized { self.bytes(m) } else { &[][..] };
+        // Rows in tiles: a tile is expanded once, then each position's
+        // gradient row stays in cache while the tile's rows are added to it.
+        const TILE: usize = 8;
+        let rows_into = |rows: std::ops::Range<usize>, acc: &mut [f32]| {
+            let mut tile = vec![0.0; if quantized { TILE * m.cols } else { 0 }];
+            let mut start = rows.start;
+            while start < rows.end {
+                let end = (start + TILE).min(rows.end);
+                let w: &[f32] = if quantized {
+                    for (i, r) in (start..end).enumerate() {
+                        let dst = &mut tile[i * m.cols..(i + 1) * m.cols];
+                        quant::dequantize_row(m.dtype, &bytes[r * rb..(r + 1) * rb], m.cols, dst);
+                    }
+                    &tile[..(end - start) * m.cols]
+                } else {
+                    &f32s[start * m.cols..end * m.cols]
+                };
+                for t in 0..t_len {
+                    let a = &mut acc[t * m.cols..(t + 1) * m.cols];
+                    if end - start == TILE {
+                        let g: [f32; TILE] = std::array::from_fn(|i| dy[t * m.rows + start + i]);
+                        let rows: [&[f32]; TILE] =
+                            std::array::from_fn(|i| &w[i * m.cols..(i + 1) * m.cols]);
+                        simd::axpy_x8(a, g, rows);
+                    } else {
+                        for (i, r) in (start..end).enumerate() {
+                            let g = dy[t * m.rows + r];
+                            if g != 0.0 {
+                                simd::axpy(a, g, &w[i * m.cols..(i + 1) * m.cols]);
+                            }
+                        }
+                    }
+                }
+                start = end;
+            }
+        };
+        let threads = self.pool.threads();
+        if threads == 1 || t_len * m.rows * m.cols < PARALLEL_MIN {
+            rows_into(0..m.rows, dx);
             return;
         }
         let chunk = m.rows.div_ceil(threads);
         let partial: Vec<std::sync::Mutex<Vec<f32>>> = (0..threads)
             .map(|_| std::sync::Mutex::new(Vec::new()))
             .collect();
-        self.pool.run(threads, &|t| {
-            let start = (t * chunk).min(m.rows);
-            let end = ((t + 1) * chunk).min(m.rows);
-            let mut acc = vec![0.0; m.cols];
-            let mut tmp = vec![0.0; m.cols];
-            rows_into(start..end, &mut acc, &mut tmp);
-            *partial[t].lock().unwrap() = acc;
+        self.pool.run(threads, &|i| {
+            let mut acc = vec![0.0; t_len * m.cols];
+            rows_into(
+                (i * chunk).min(m.rows)..((i + 1) * chunk).min(m.rows),
+                &mut acc,
+            );
+            *partial[i].lock().unwrap() = acc;
         });
         // Summed in a fixed order: the result does not depend on timing.
         for p in partial {
-            for (d, v) in dx.iter_mut().zip(p.into_inner().unwrap()) {
-                *d += v;
+            let p = p.into_inner().unwrap();
+            if !p.is_empty() {
+                simd::axpy(dx, 1.0, &p);
             }
         }
     }
@@ -522,6 +640,97 @@ enum KvCache {
     },
 }
 
+impl KvCache {
+    /// Keys and values of position `pos` in layer `l` (`ctx` positions per
+    /// layer, `n_kv` heads of `hd` values).
+    #[allow(clippy::too_many_arguments)]
+    fn store(
+        &mut self,
+        ctx: usize,
+        n_kv: usize,
+        hd: usize,
+        l: usize,
+        pos: usize,
+        k: &[f32],
+        v: &[f32],
+    ) {
+        let slot = |s: usize, h: usize| (l * ctx + s) * n_kv + h;
+        match self {
+            KvCache::F32 { k: kc, v: vc } => {
+                let at = slot(pos, 0) * hd;
+                kc[at..at + n_kv * hd].copy_from_slice(k);
+                vc[at..at + n_kv * hd].copy_from_slice(v);
+            }
+            KvCache::Q8 {
+                k: kc,
+                v: vc,
+                ks,
+                vs,
+            } => {
+                for h in 0..n_kv {
+                    let i = slot(pos, h);
+                    let src = h * hd..(h + 1) * hd;
+                    ks[i] = quantize_head(&k[src.clone()], &mut kc[i * hd..(i + 1) * hd]);
+                    vs[i] = quantize_head(&v[src], &mut vc[i * hd..(i + 1) * hd]);
+                }
+            }
+        }
+    }
+
+    /// One query head at position `pos` attending over positions `0..=pos`
+    /// of KV head `kvh`; the result goes to `out`.
+    #[allow(clippy::too_many_arguments)]
+    fn attend(
+        &self,
+        ctx: usize,
+        n_kv: usize,
+        hd: usize,
+        l: usize,
+        pos: usize,
+        kvh: usize,
+        q: &[f32],
+        scale: f32,
+        att: &mut [f32],
+        out: &mut [f32],
+    ) {
+        debug_assert_eq!(att.len(), pos + 1);
+        let slot = |s: usize| (l * ctx + s) * n_kv + kvh;
+        match self {
+            KvCache::F32 { k, v } => {
+                for (s, a) in att.iter_mut().enumerate() {
+                    let i = slot(s) * hd;
+                    *a = simd::dot_f32(q, &k[i..i + hd]) * scale;
+                }
+                softmax(att);
+                out.fill(0.0);
+                for (s, &a) in att.iter().enumerate() {
+                    let i = slot(s) * hd;
+                    for (o, val) in out.iter_mut().zip(&v[i..i + hd]) {
+                        *o += a * val;
+                    }
+                }
+            }
+            KvCache::Q8 { k, v, ks, vs } => {
+                for (s, a) in att.iter_mut().enumerate() {
+                    let i = slot(s);
+                    let kh = &k[i * hd..(i + 1) * hd];
+                    let d: f32 = q.iter().zip(kh).map(|(x, &y)| x * y as f32).sum();
+                    *a = d * ks[i] * scale;
+                }
+                softmax(att);
+                out.fill(0.0);
+                for (s, &a) in att.iter().enumerate() {
+                    let i = slot(s);
+                    let w = a * vs[i];
+                    for (o, &val) in out.iter_mut().zip(&v[i * hd..(i + 1) * hd]) {
+                        *o += w * val as f32;
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn quantize_head(src: &[f32], dst: &mut [i8]) -> f32 {
     let amax = src.iter().fold(0.0f32, |m, v| m.max(v.abs()));
     let scale = amax / 127.0;
@@ -590,6 +799,132 @@ impl<'m> Session<'m> {
         self.pos >= self.context
     }
 
+    /// Feeds several tokens at once (a prompt) and returns the logits for
+    /// the next one. Each weight row is read once for all of them, and
+    /// every number is the same as feeding them one at a time with
+    /// [`Session::step`].
+    pub fn prefill(&mut self, tokens: &[u32]) -> Result<&[f32]> {
+        let m = self.model;
+        let c = &m.config;
+        match tokens.len() {
+            0 => return Err(Error::BadConfig("nothing to feed".into())),
+            1 => return self.step(tokens[0]),
+            _ => {}
+        }
+        if let Some(&token) = tokens.iter().find(|&&t| t as usize >= c.vocab_size) {
+            return Err(Error::BadToken {
+                token,
+                vocab_size: c.vocab_size,
+            });
+        }
+        if self.pos + tokens.len() > self.context {
+            return Err(Error::BadConfig(format!(
+                "{} tokens do not fit: {} of {} already used",
+                tokens.len(),
+                self.pos,
+                self.context
+            )));
+        }
+        let n = tokens.len();
+        let (dim, kv_dim, hd, n_kv) = (c.dim, c.kv_dim(), c.head_dim(), c.n_kv_heads);
+        let group = c.n_heads / n_kv;
+        let scale = 1.0 / (hd as f32).sqrt();
+        let pos0 = self.pos;
+        let mut qx = Vec::new();
+        let mut x = vec![0.0; n * dim];
+        for (t, &tok) in tokens.iter().enumerate() {
+            m.embed_row(tok as usize, &mut x[t * dim..(t + 1) * dim]);
+        }
+        let rows = |v: &[f32], w: &[f32], out: &mut [f32]| {
+            for (o, r) in out.chunks_exact_mut(w.len()).zip(v.chunks_exact(w.len())) {
+                rmsnorm(o, r, w, c.norm_eps);
+            }
+        };
+        let mut xn = vec![0.0; n * dim];
+        let mut ao = vec![0.0; n * dim];
+        let mut proj = vec![0.0; n * dim];
+        for (l, layer) in m.layers.iter().enumerate() {
+            // `W·x` for every position, plus the adapter's share.
+            let linear = |w: &Matrix,
+                          target: Target,
+                          input: &[f32],
+                          out: &mut Vec<f32>,
+                          qx: &mut Vec<QuantizedVec>,
+                          u: &mut Vec<f32>| {
+                out.resize(n * w.rows, 0.0);
+                m.matmul(out, w, input, qx);
+                if let Some(a) = self.adapter {
+                    if let Some(slot) = a.slot(l, target) {
+                        u.resize(a.config.rank, 0.0);
+                        for t in 0..n {
+                            a.apply(
+                                slot,
+                                &input[t * w.cols..(t + 1) * w.cols],
+                                u,
+                                &mut out[t * w.rows..(t + 1) * w.rows],
+                            );
+                        }
+                    }
+                }
+            };
+            let mut u = std::mem::take(&mut self.lora_u);
+            rows(&x, &layer.attn_norm, &mut xn);
+            let (mut q, mut k, mut v) = (Vec::new(), Vec::new(), Vec::new());
+            linear(&layer.wq, Target::Wq, &xn, &mut q, &mut qx, &mut u);
+            linear(&layer.wk, Target::Wk, &xn, &mut k, &mut qx, &mut u);
+            linear(&layer.wv, Target::Wv, &xn, &mut v, &mut qx, &mut u);
+            for t in 0..n {
+                let pos = pos0 + t;
+                rope(&mut q[t * dim..(t + 1) * dim], pos, hd, c.rope_theta);
+                rope(&mut k[t * kv_dim..(t + 1) * kv_dim], pos, hd, c.rope_theta);
+                self.kv.store(
+                    self.context,
+                    n_kv,
+                    hd,
+                    l,
+                    pos,
+                    &k[t * kv_dim..(t + 1) * kv_dim],
+                    &v[t * kv_dim..(t + 1) * kv_dim],
+                );
+            }
+            for t in 0..n {
+                let pos = pos0 + t;
+                for h in 0..c.n_heads {
+                    self.kv.attend(
+                        self.context,
+                        n_kv,
+                        hd,
+                        l,
+                        pos,
+                        h / group,
+                        &q[t * dim + h * hd..t * dim + (h + 1) * hd],
+                        scale,
+                        &mut self.att[..=pos],
+                        &mut ao[t * dim + h * hd..t * dim + (h + 1) * hd],
+                    );
+                }
+            }
+            linear(&layer.wo, Target::Wo, &ao, &mut proj, &mut qx, &mut u);
+            add(&mut x, &proj);
+            rows(&x, &layer.ffn_norm, &mut xn);
+            let (mut h1, mut h3) = (Vec::new(), Vec::new());
+            linear(&layer.w1, Target::W1, &xn, &mut h1, &mut qx, &mut u);
+            linear(&layer.w3, Target::W3, &xn, &mut h3, &mut qx, &mut u);
+            for (g, up) in h1.iter_mut().zip(&h3) {
+                *g = silu(*g) * up;
+            }
+            linear(&layer.w2, Target::W2, &h1, &mut proj, &mut qx, &mut u);
+            add(&mut x, &proj);
+            self.lora_u = u;
+        }
+        self.x.copy_from_slice(&x[(n - 1) * dim..]);
+        rmsnorm(&mut self.xb, &self.x, &m.norm, c.norm_eps);
+        let out = m.output.as_ref().unwrap_or(&m.tok_embeddings);
+        m.matvec(&mut self.logits, out, &self.xb, &mut self.qx);
+        self.pos += n;
+        Ok(&self.logits)
+    }
+
     /// Feeds one token and returns the logits for the next one.
     pub fn step(&mut self, token: u32) -> Result<&[f32]> {
         let m = self.model;
@@ -606,7 +941,7 @@ impl<'m> Session<'m> {
                 self.context
             )));
         }
-        let (kv_dim, hd, pos) = (c.kv_dim(), c.head_dim(), self.pos);
+        let (hd, pos) = (c.head_dim(), self.pos);
         let group = c.n_heads / c.n_kv_heads;
         let scale = 1.0 / (hd as f32).sqrt();
         m.embed_row(token as usize, &mut self.x);
@@ -629,62 +964,22 @@ impl<'m> Session<'m> {
             rope(&mut self.q, pos, hd, c.rope_theta);
             rope(&mut self.k, pos, hd, c.rope_theta);
 
-            // Position `s` of layer `l`, KV head `h`: values and scale index.
-            let slot = |s: usize, h: usize| (l * self.context + s) * c.n_kv_heads + h;
-            match &mut self.kv {
-                KvCache::F32 { k, v } => {
-                    let at = slot(pos, 0) * hd;
-                    k[at..at + kv_dim].copy_from_slice(&self.k);
-                    v[at..at + kv_dim].copy_from_slice(&self.v);
-                }
-                KvCache::Q8 { k, v, ks, vs } => {
-                    for h in 0..c.n_kv_heads {
-                        let i = slot(pos, h);
-                        let src = h * hd..(h + 1) * hd;
-                        ks[i] = quantize_head(&self.k[src.clone()], &mut k[i * hd..(i + 1) * hd]);
-                        vs[i] = quantize_head(&self.v[src], &mut v[i * hd..(i + 1) * hd]);
-                    }
-                }
-            }
-
+            let n_kv = c.n_kv_heads;
+            self.kv
+                .store(self.context, n_kv, hd, l, pos, &self.k, &self.v);
             for h in 0..c.n_heads {
-                let kvh = h / group;
-                let q = &self.q[h * hd..(h + 1) * hd];
-                let att = &mut self.att[..=pos];
-                let out = &mut self.xb2[h * hd..(h + 1) * hd];
-                match &self.kv {
-                    KvCache::F32 { k, v } => {
-                        for (s, a) in att.iter_mut().enumerate() {
-                            let i = slot(s, kvh) * hd;
-                            *a = simd::dot_f32(q, &k[i..i + hd]) * scale;
-                        }
-                        softmax(att);
-                        out.fill(0.0);
-                        for (s, &a) in att.iter().enumerate() {
-                            let i = slot(s, kvh) * hd;
-                            for (o, val) in out.iter_mut().zip(&v[i..i + hd]) {
-                                *o += a * val;
-                            }
-                        }
-                    }
-                    KvCache::Q8 { k, v, ks, vs } => {
-                        for (s, a) in att.iter_mut().enumerate() {
-                            let i = slot(s, kvh);
-                            let kh = &k[i * hd..(i + 1) * hd];
-                            let d: f32 = q.iter().zip(kh).map(|(x, &y)| x * y as f32).sum();
-                            *a = d * ks[i] * scale;
-                        }
-                        softmax(att);
-                        out.fill(0.0);
-                        for (s, &a) in att.iter().enumerate() {
-                            let i = slot(s, kvh);
-                            let w = a * vs[i];
-                            for (o, &val) in out.iter_mut().zip(&v[i * hd..(i + 1) * hd]) {
-                                *o += w * val as f32;
-                            }
-                        }
-                    }
-                }
+                self.kv.attend(
+                    self.context,
+                    n_kv,
+                    hd,
+                    l,
+                    pos,
+                    h / group,
+                    &self.q[h * hd..(h + 1) * hd],
+                    scale,
+                    &mut self.att[..=pos],
+                    &mut self.xb2[h * hd..(h + 1) * hd],
+                );
             }
             linear!(xb, wo, xb2, Target::Wo);
             add(&mut self.x, &self.xb);
