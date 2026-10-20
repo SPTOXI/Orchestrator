@@ -14,7 +14,16 @@ tabela abaixo (preenchida a cada técnica implementada).
 
 | Técnica | Fonte (artigo/especificação) | Onde no código |
 | ------- | ---------------------------- | -------------- |
-| — | — | — |
+| Byte-pair encoding (tokenizador por bytes) | Sennrich, Haddow e Birch, "Neural Machine Translation of Rare Words with Subword Units" (2016) | `packages/engine/src/tokenizer.rs` |
+| Transformer decoder, atenção | Vaswani et al., "Attention Is All You Need" (2017) | `packages/engine/src/model.rs` |
+| Atenção com grupos de KV (GQA) | Ainslie et al., "GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints" (2023) | `packages/engine/src/model.rs` |
+| RMSNorm | Zhang e Sennrich, "Root Mean Square Layer Normalization" (2019) | `packages/engine/src/ops.rs` |
+| Posições rotativas (RoPE) | Su et al., "RoFormer: Enhanced Transformer with Rotary Position Embedding" (2021) | `packages/engine/src/ops.rs` |
+| SwiGLU | Shazeer, "GLU Variants Improve Transformer" (2020) | `packages/engine/src/model.rs` |
+| SiLU | Elfwing, Uchibe e Doya (2017); Ramachandran, Zoph e Le (2017) | `packages/engine/src/ops.rs` |
+| Top-p (núcleo) | Holtzman et al., "The Curious Case of Neural Text Degeneration" (2019) | `packages/engine/src/sampler.rs` |
+| Min-p | Nguyen et al., "Turning Up the Heat: Min-p Sampling for Creative and Coherent LLM Outputs" (2024) | `packages/engine/src/sampler.rs` |
+| Gerador SplitMix64 | Steele, Lea e Flood, "Fast Splittable Pseudorandom Number Generators" (2014) | `packages/engine/src/sampler.rs` |
 
 ## Visão geral
 
@@ -44,9 +53,9 @@ tabela abaixo (preenchida a cada técnica implementada).
 
 | Onde | O quê |
 | ---- | ----- |
-| `packages/engine` (novo) | motor: formato `.nativa`, quantização, kernels SIMD, transformer, cache KV, amostragem, gramática, embeddings, LoRA |
+| `packages/engine` (crate `orchestrator-nativa`) | motor: formato `.nativa`, quantização, kernels SIMD, transformer, cache KV, amostragem, gramática, embeddings, LoRA |
 | `packages/trainer` (novo) | treino no próprio app: dados, currículo, treino bloco a bloco, especialistas, consolidação noturna, avaliação, exportação `.nativa` |
-| `training/reference` (Python) | só o gabarito em PyTorch para os testes de equivalência; não é necessário para treinar |
+| `training/reference` (Python + numpy) | só o gabarito para os testes de equivalência, escrito à parte do motor; não é necessário para treinar nem para usar |
 | `packages/native` (novo) | `NativeAgent`, roteador de grupo, recuperação de habilidades, agendamento do treino LoRA |
 | `packages/system` (novo) | ferramentas `system.*` por SO (`cfg(target_os)`), com fallback para shell |
 | `packages/library` (novo) | Biblioteca no disco: pacotes de conhecimento, índice BM25 + vetores por `mmap`, atualização, citações |
@@ -85,14 +94,19 @@ pub struct Skill { id, name, description, params: Vec<Param>,
 Motor e modelo andam em paralelo; o agente usa a núcleo da Semente
 enquanto os especialistas são treinados.
 
-### M1 — Motor: base
-- Formato `.nativa`, `mmap`, transformer em f32 no caminho escalar,
-  amostragem, tokenizador.
-- **Aceite:** logits iguais aos da referência PyTorch (tolerância 1e-4)
-  num modelo de teste aleatório.
+### M1 — Motor: base ✅
+- Formato `.nativa` v1, transformer em f32 no caminho escalar, tokenizador
+  por bytes com tokens especiais, amostragem (gulosa, temperatura, top-p,
+  min-p, semente) e geração com parada, limite, contexto cheio e
+  cancelamento. O `mmap` passou para a M2, junto com o orçamento de memória.
+- **Aceite:** logits iguais aos da referência (numpy, float64) em todas as
+  posições de um modelo de teste aleatório, tolerância 1e-4 — a diferença
+  medida é ~2×10⁻⁶; os ids do tokenizador também batem.
+  `cargo test -p orchestrator-nativa`; o gabarito é refeito com
+  `python3 training/reference/nativa_ref.py packages/engine/tests/fixtures`.
 
 ### M2 — Motor: velocidade e memória
-- Quantização Q4/Q8, kernels AVX2/NEON, multithread, cache KV q8,
+- `mmap` dos pesos, Quantização Q4/Q8, kernels AVX2/NEON, multithread, cache KV q8,
   orçamento de memória, cancelamento.
 - **Aceite:** com a Semente (~50 M ativos, ternária) num notebook de
   8 GB (CPU de 4 núcleos), ≥ 30 tokens/s na geração e uso total < 1 GB.
@@ -160,7 +174,7 @@ enquanto os especialistas são treinados.
 | Risco | Mitigação |
 | ----- | --------- |
 | Motor lento no CPU | kernels SIMD por arquitetura, tokenizador econômico, modelo de 1,2 B, testes de desempenho no CI |
-| Bugs numéricos no motor | testes de equivalência kernel a kernel e contra a referência PyTorch |
+| Bugs numéricos no motor | testes de equivalência kernel a kernel e contra a referência em numpy |
 | Modelo pequeno erra | treino focado nas ferramentas reais, gramática, roteamento, exemplos recuperados, LoRA pessoal |
 | Técnicas de treino eficiente não renderem | cada uma entra só depois de medida contra o treino denso clássico (T1); se uma falhar, troca-se por outra sem mudar o resto |
 | Treino lento demais no notebook | peças pequenas (1 noite cada), dados sintéticos verificáveis, crescimento progressivo |

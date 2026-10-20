@@ -2941,6 +2941,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "orchestrator-nativa"
+version = "0.1.5"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "orchestrator-provider-api"
 version = "0.1.5"
 dependencies = [

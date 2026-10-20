@@ -91,15 +91,17 @@ Regras que valem para toda a IA Nativa:
    (threads, `mmap`, compressão, `wgpu` para a GPU), nenhuma que dite o
    formato ou a matemática do modelo. Se uma delas parar, troca-se sem
    mudar `.nativa`.
-5. **O gabarito em PyTorch** (`training/reference`) só confere contas nos
-   testes; não é dependência de nada que roda no computador do usuário.
+5. **O gabarito** (`training/reference`, Python + numpy, escrito à parte
+   pelo projeto) só confere contas nos testes; não é dependência de nada que roda no computador do usuário.
 6. **O que é nosso evolui no nosso ritmo**: arquitetura do modelo,
    tokenizador, kernels, formato e treino mudam quando os testes do projeto
    mostram ganho, não quando um terceiro lança versão.
 
-### 1. Motor próprio: `orchestrator-engine` (Rust, sem dependências de inferência)
+### 1. Motor próprio: `orchestrator-nativa` (Rust, sem dependências de inferência)
 
-Um crate novo, `packages/engine`, escrito pelo projeto:
+Um crate novo, `orchestrator-nativa` em `packages/engine` (o nome
+`orchestrator-engine` já é do `packages/orchestrator`), escrito pelo
+projeto:
 
 | Parte | O que faz |
 | ----- | --------- |
@@ -119,7 +121,7 @@ Um crate novo, `packages/engine`, escrito pelo projeto:
   levar o computador a trocar para o disco.
 - Corretude garantida por testes de equivalência: cada kernel contra o
   caminho escalar; o modelo inteiro contra uma implementação de referência
-  em PyTorch, usada só como gabarito nos testes (logits iguais até a
+  em numpy (float64), escrita à parte e usada só como gabarito nos testes (logits iguais até a
   tolerância).
 
 ### 2. Modelo próprio: a Nativa como um cérebro modular
