@@ -1,0 +1,35 @@
+name: Native AI benchmark build
+
+# Builds nativa-bench (with the GPU backend) for Windows, Linux and macOS,
+# so it can be run on a notebook without installing Rust: download the
+# artifact from the run's page and run it from a terminal.
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "packages/engine/**"
+      - ".github/workflows/nativa-bench.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: nativa-bench (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release -p orchestrator-nativa --features gpu --bin nativa-bench
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nativa-bench-${{ runner.os }}
+          path: |
+            target/release/nativa-bench.exe
+            target/release/nativa-bench
+          if-no-files-found: error
