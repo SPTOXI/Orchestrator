@@ -12,19 +12,28 @@
 //! Tensor offsets are relative to the start of the data. Every engine reads
 //! every earlier version of the format; a newer file is refused with a
 //! clear error instead of being misread.
+//!
+//! Versions: 1 — f32 tensors only (phase M1); 2 — adds the quantized
+//! dtypes `q8`, `q4` and `t2` ([`crate::quant`]). The writer uses the
+//! lowest version that can hold the file, so f32 models stay readable by
+//! the oldest engines.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
+use crate::mmap::Mmap;
+use crate::quant;
 use crate::tokenizer::TokenizerSpec;
 
 pub const MAGIC: &[u8; 4] = b"NATV";
 /// The newest format this engine reads and the one it writes.
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 /// Alignment of the data section and of each tensor (cache line, and
 /// enough for any SIMD load later).
 pub const ALIGN: usize = 64;
@@ -83,12 +92,21 @@ impl Config {
 #[serde(rename_all = "lowercase")]
 pub enum Dtype {
     F32,
+    Q8,
+    Q4,
+    T2,
 }
 
 impl Dtype {
-    pub fn size(self) -> usize {
+    pub fn is_quantized(self) -> bool {
+        self != Dtype::F32
+    }
+
+    /// The first format version that has this dtype.
+    pub fn since_version(self) -> u32 {
         match self {
-            Dtype::F32 => 4,
+            Dtype::F32 => 1,
+            _ => 2,
         }
     }
 }
@@ -107,8 +125,15 @@ impl TensorInfo {
         self.shape.iter().product()
     }
 
-    pub fn bytes(&self) -> usize {
-        self.elements() * self.dtype.size()
+    /// Size in bytes, or `None` when a quantized tensor's rows are not a
+    /// whole number of blocks.
+    pub fn bytes(&self) -> Option<usize> {
+        let cols = *self.shape.last()?;
+        if self.dtype.is_quantized() && !cols.is_multiple_of(quant::BLOCK) {
+            return None;
+        }
+        let rows = self.elements().checked_div(cols).unwrap_or(0);
+        rows.checked_mul(quant::row_bytes(self.dtype, cols))
     }
 }
 
@@ -122,15 +147,55 @@ pub struct Header {
     pub tensors: Vec<TensorInfo>,
 }
 
-/// A `.nativa` file in memory.
-#[derive(Debug)]
+enum Storage {
+    Owned(Vec<u8>),
+    Mapped(Mmap),
+}
+
+impl Storage {
+    fn bytes(&self) -> &[u8] {
+        match self {
+            Storage::Owned(v) => v,
+            Storage::Mapped(m) => m.as_slice(),
+        }
+    }
+}
+
+/// A `.nativa` file: the header, and the bytes either mapped from the disk
+/// ([`NativaFile::open`]) or owned ([`NativaFile::parse`]).
 pub struct NativaFile {
     pub version: u32,
     pub header: Header,
-    data: Vec<u8>,
+    storage: Storage,
+    data_start: usize,
+}
+
+impl std::fmt::Debug for NativaFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NativaFile")
+            .field("version", &self.version)
+            .field("header", &self.header)
+            .field("mapped", &self.is_mapped())
+            .finish()
+    }
 }
 
 impl NativaFile {
+    /// Maps the file into memory (falls back to reading it when mapping is
+    /// not possible).
+    pub fn open(path: &Path) -> Result<Self> {
+        let io = |source| Error::Io {
+            path: path.to_path_buf(),
+            source,
+        };
+        let file = File::open(path).map_err(io)?;
+        match Mmap::map(&file) {
+            Ok(map) => Self::from_storage(Storage::Mapped(map)),
+            Err(_) => Self::parse(std::fs::read(path).map_err(io)?),
+        }
+    }
+
+    /// Reads the whole file into memory.
     pub fn read(path: &Path) -> Result<Self> {
         let bytes = std::fs::read(path).map_err(|source| Error::Io {
             path: path.to_path_buf(),
@@ -140,6 +205,24 @@ impl NativaFile {
     }
 
     pub fn parse(bytes: Vec<u8>) -> Result<Self> {
+        Self::from_storage(Storage::Owned(bytes))
+    }
+
+    pub fn is_mapped(&self) -> bool {
+        matches!(self.storage, Storage::Mapped(_))
+    }
+
+    /// Bytes of tensor data (what memory mapping keeps on the disk).
+    pub fn data_len(&self) -> usize {
+        self.storage.bytes().len() - self.data_start
+    }
+
+    pub(crate) fn data(&self) -> &[u8] {
+        &self.storage.bytes()[self.data_start..]
+    }
+
+    fn from_storage(storage: Storage) -> Result<Self> {
+        let bytes = storage.bytes();
         if bytes.len() < PREFIX || &bytes[..4] != MAGIC {
             return Err(Error::BadMagic);
         }
@@ -162,16 +245,22 @@ impl NativaFile {
         if data_start > bytes.len() {
             return Err(Error::BadHeader("no data section".into()));
         }
-        let data = bytes[data_start..].to_vec();
+        let data = &bytes[data_start..];
         for t in &header.tensors {
             let bad = |reason: &str| Error::BadTensor {
                 name: t.name.clone(),
                 reason: reason.to_string(),
             };
+            if t.dtype.since_version() > version {
+                return Err(bad("dtype is newer than the file's format version"));
+            }
             if !t.offset.is_multiple_of(ALIGN) {
                 return Err(bad("offset is not aligned"));
             }
-            match t.offset.checked_add(t.bytes()) {
+            let Some(len) = t.bytes() else {
+                return Err(bad("rows are not a whole number of blocks"));
+            };
+            match t.offset.checked_add(len) {
                 Some(end) if end <= data.len() => {}
                 _ => return Err(bad("runs past the end of the file")),
             }
@@ -179,7 +268,8 @@ impl NativaFile {
         Ok(Self {
             version,
             header,
-            data,
+            storage,
+            data_start,
         })
     }
 
@@ -187,8 +277,8 @@ impl NativaFile {
         self.header.tensors.iter().find(|t| t.name == name)
     }
 
-    /// The tensor as f32 values, checked against the expected shape.
-    pub fn tensor_f32(&self, name: &str, shape: &[usize]) -> Result<Vec<f32>> {
+    /// The tensor's raw bytes, checked against the expected shape.
+    pub fn tensor_bytes(&self, name: &str, shape: &[usize]) -> Result<(&TensorInfo, &[u8])> {
         let info = self
             .tensor_info(name)
             .ok_or_else(|| Error::MissingTensor(name.to_string()))?;
@@ -198,21 +288,57 @@ impl NativaFile {
                 reason: format!("shape {:?}, expected {:?}", info.shape, shape),
             });
         }
-        let raw = &self.data[info.offset..info.offset + info.bytes()];
-        Ok(match info.dtype {
-            Dtype::F32 => raw
-                .chunks_exact(4)
-                .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
-                .collect(),
-        })
+        let len = info.bytes().expect("checked when the file was opened");
+        Ok((info, &self.data()[info.offset..info.offset + len]))
+    }
+
+    /// The tensor as f32 values (quantized tensors are expanded).
+    pub fn tensor_f32(&self, name: &str, shape: &[usize]) -> Result<Vec<f32>> {
+        let (info, raw) = self.tensor_bytes(name, shape)?;
+        let cols = *shape.last().unwrap_or(&1);
+        let rows = info.elements().checked_div(cols).unwrap_or(0);
+        let mut out = vec![0.0; info.elements()];
+        let rb = quant::row_bytes(info.dtype, cols);
+        for (r, o) in out.chunks_exact_mut(cols.max(1)).enumerate().take(rows) {
+            quant::dequantize_row(info.dtype, &raw[r * rb..(r + 1) * rb], cols, o);
+        }
+        Ok(out)
     }
 }
 
-/// A tensor to write.
+/// A tensor to write, already in its stored layout.
 pub struct TensorData<'a> {
     pub name: &'a str,
+    pub dtype: Dtype,
     pub shape: Vec<usize>,
-    pub values: &'a [f32],
+    pub bytes: Cow<'a, [u8]>,
+}
+
+impl<'a> TensorData<'a> {
+    pub fn f32(name: &'a str, shape: Vec<usize>, values: &[f32]) -> Self {
+        Self::quantized(name, Dtype::F32, shape, values)
+    }
+
+    /// Quantizes `values` (row-major, rows along the last dimension).
+    pub fn quantized(name: &'a str, dtype: Dtype, shape: Vec<usize>, values: &[f32]) -> Self {
+        assert_eq!(
+            shape.iter().product::<usize>(),
+            values.len(),
+            "tensor {name}: shape and values disagree"
+        );
+        let cols = *shape.last().expect("tensor without dimensions");
+        let mut bytes =
+            Vec::with_capacity(values.len() / cols.max(1) * quant::row_bytes(dtype, cols));
+        for row in values.chunks_exact(cols.max(1)) {
+            quant::quantize_row(dtype, row, &mut bytes);
+        }
+        Self {
+            name,
+            dtype,
+            shape,
+            bytes: Cow::Owned(bytes),
+        }
+    }
 }
 
 /// Writes a `.nativa` file. The tensor index in `header` is replaced by the
@@ -227,20 +353,26 @@ pub fn write(
     let mut index = Vec::with_capacity(tensors.len());
     let mut offset = 0;
     for t in tensors {
-        assert_eq!(
-            t.shape.iter().product::<usize>(),
-            t.values.len(),
-            "tensor {}: shape and values disagree",
-            t.name
-        );
-        index.push(TensorInfo {
+        let info = TensorInfo {
             name: t.name.to_string(),
-            dtype: Dtype::F32,
+            dtype: t.dtype,
             shape: t.shape.clone(),
             offset,
-        });
-        offset = align_up(offset + t.values.len() * 4);
+        };
+        assert_eq!(
+            info.bytes(),
+            Some(t.bytes.len()),
+            "tensor {}: shape, dtype and bytes disagree",
+            t.name
+        );
+        index.push(info);
+        offset = align_up(offset + t.bytes.len());
     }
+    let version = tensors
+        .iter()
+        .map(|t| t.dtype.since_version())
+        .max()
+        .unwrap_or(1);
     let header = Header {
         config: config.clone(),
         tokenizer: tokenizer.clone(),
@@ -249,17 +381,15 @@ pub fn write(
     };
     let json = serde_json::to_vec(&header).map_err(std::io::Error::other)?;
     out.write_all(MAGIC)?;
-    out.write_all(&FORMAT_VERSION.to_le_bytes())?;
+    out.write_all(&version.to_le_bytes())?;
     out.write_all(&(json.len() as u64).to_le_bytes())?;
     out.write_all(&json)?;
     let header_end = PREFIX + json.len();
     out.write_all(&vec![0; align_up(header_end) - header_end])?;
     let mut written = 0;
     for t in tensors {
-        for v in t.values {
-            out.write_all(&v.to_le_bytes())?;
-        }
-        written += t.values.len() * 4;
+        out.write_all(&t.bytes)?;
+        written += t.bytes.len();
         let pad = align_up(written) - written;
         out.write_all(&vec![0; pad])?;
         written += pad;
@@ -304,19 +434,12 @@ mod tests {
         let a: Vec<f32> = (0..6).map(|i| i as f32 * 0.5).collect();
         let b = vec![-1.0f32; 3];
         let bytes = file(&[
-            TensorData {
-                name: "a",
-                shape: vec![2, 3],
-                values: &a,
-            },
-            TensorData {
-                name: "b",
-                shape: vec![3],
-                values: &b,
-            },
+            TensorData::f32("a", vec![2, 3], &a),
+            TensorData::f32("b", vec![3], &b),
         ]);
         let f = NativaFile::parse(bytes).unwrap();
-        assert_eq!(f.version, FORMAT_VERSION);
+        // f32 only: written as version 1, readable by the oldest engines.
+        assert_eq!(f.version, 1);
         assert_eq!(f.header.config, config());
         assert_eq!(f.tensor_f32("a", &[2, 3]).unwrap(), a);
         assert_eq!(f.tensor_f32("b", &[3]).unwrap(), b);
@@ -328,6 +451,27 @@ mod tests {
         assert!(matches!(
             f.tensor_f32("c", &[1]),
             Err(Error::MissingTensor(_))
+        ));
+    }
+
+    #[test]
+    fn quantized_tensors_need_version_2() {
+        let w: Vec<f32> = (0..64).map(|i| (i as f32 - 32.0) / 32.0).collect();
+        let bytes = file(&[
+            TensorData::quantized("w", Dtype::Q4, vec![2, 32], &w),
+            TensorData::f32("n", vec![4], &[1.0; 4]),
+        ]);
+        let f = NativaFile::parse(bytes.clone()).unwrap();
+        assert_eq!(f.version, 2);
+        let back = f.tensor_f32("w", &[2, 32]).unwrap();
+        assert!(w.iter().zip(&back).all(|(a, b)| (a - b).abs() < 0.08));
+
+        // The same file claiming version 1 is refused, not misread.
+        let mut old = bytes;
+        old[4..8].copy_from_slice(&1u32.to_le_bytes());
+        assert!(matches!(
+            NativaFile::parse(old),
+            Err(Error::BadTensor { .. })
         ));
     }
 
@@ -348,16 +492,23 @@ mod tests {
     #[test]
     fn refuses_truncated_tensors() {
         let a = vec![1.0f32; 64];
-        let mut bytes = file(&[TensorData {
-            name: "a",
-            shape: vec![64],
-            values: &a,
-        }]);
+        let mut bytes = file(&[TensorData::f32("a", vec![64], &a)]);
         bytes.truncate(bytes.len() - 8);
         assert!(matches!(
             NativaFile::parse(bytes),
             Err(Error::BadTensor { .. })
         ));
+    }
+
+    #[test]
+    fn maps_files_from_disk() {
+        let a: Vec<f32> = (0..100).map(|i| i as f32).collect();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("m.nativa");
+        std::fs::write(&path, file(&[TensorData::f32("a", vec![100], &a)])).unwrap();
+        let f = NativaFile::open(&path).unwrap();
+        assert!(f.is_mapped());
+        assert_eq!(f.tensor_f32("a", &[100]).unwrap(), a);
     }
 
     #[test]

@@ -24,6 +24,9 @@ tabela abaixo (preenchida a cada técnica implementada).
 | Top-p (núcleo) | Holtzman et al., "The Curious Case of Neural Text Degeneration" (2019) | `packages/engine/src/sampler.rs` |
 | Min-p | Nguyen et al., "Turning Up the Heat: Min-p Sampling for Creative and Coherent LLM Outputs" (2024) | `packages/engine/src/sampler.rs` |
 | Gerador SplitMix64 | Steele, Lea e Flood, "Fast Splittable Pseudorandom Number Generators" (2014) | `packages/engine/src/sampler.rs` |
+| Quantização simétrica por bloco (escala absmax) | Dettmers et al., "LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale" (2022) | `packages/engine/src/quant.rs` |
+| Pesos ternários com escala absmean | Ma et al., "The Era of 1-bit LLMs: All Large Language Models are in 1.58 Bits" (2024) | `packages/engine/src/quant.rs` |
+| Instruções SIMD (AVX2, FMA, NEON) | manuais dos fabricantes: Intel Intrinsics Guide; Arm Neon Intrinsics Reference | `packages/engine/src/simd.rs` |
 
 ## Visão geral
 
@@ -105,11 +108,38 @@ enquanto os especialistas são treinados.
   `cargo test -p orchestrator-nativa`; o gabarito é refeito com
   `python3 training/reference/nativa_ref.py packages/engine/tests/fixtures`.
 
-### M2 — Motor: velocidade e memória
-- `mmap` dos pesos, Quantização Q4/Q8, kernels AVX2/NEON, multithread, cache KV q8,
-  orçamento de memória, cancelamento.
-- **Aceite:** com a Semente (~50 M ativos, ternária) num notebook de
-  8 GB (CPU de 4 núcleos), ≥ 30 tokens/s na geração e uso total < 1 GB.
+### M2 — Motor: velocidade e memória ✅
+- Formato `.nativa` v2 com pesos quantizados: `q8`, `q4` e ternário `t2`
+  (blocos de 32 valores com uma escala); arquivos v1 continuam abrindo.
+- Pesos lidos direto do arquivo por `mmap` (Linux, macOS e Windows), sem
+  cópia na memória do processo.
+- Kernels AVX2 + FMA (Intel/AMD, escolhidos na hora) e NEON (ARM, Apple
+  M); as contas com inteiros dão exatamente o mesmo resultado do caminho
+  escalar, bit a bit.
+- Pool de threads persistente: as linhas de cada multiplicação são
+  divididas entre os núcleos; o resultado não muda com o número de threads.
+- Cache KV em 8 bits (padrão) ou f32; orçamento de memória
+  (`SessionOptions::memory_budget`, `Model::memory`, `Model::fit_context`)
+  que recusa ou reduz o contexto.
+- Ferramentas: `nativa-quantize` (converte um modelo) e `nativa-bench`
+  (mede velocidade e memória num modelo sintético).
+- **Aceite:** meta ≥ 30 tokens/s e < 1 GB. Medido com `nativa-bench`
+  (68 M parâmetros, forma da Semente: dim 512, 12 camadas, vocabulário de
+  32 mil) numa máquina virtual Xeon de 4 núcleos com AVX2 — não é ainda o
+  notebook de referência:
+
+  | Pesos | Arquivo | Geração | Memória residente |
+  | ----- | ------- | ------- | ----------------- |
+  | `t2` | 26 MB | ~89 tokens/s | ~47 MB |
+  | `q4` | 43 MB | ~87 tokens/s | ~74 MB |
+  | `q8` | 77 MB | ~83 tokens/s | ~127 MB |
+  | `f32` (antes da M2) | 273 MB | ~65 tokens/s (4 threads), ~40 (1 thread) | ~362 MB |
+
+  Pendências anotadas: o ganho de várias threads nos pesos quantizados é
+  pequeno (78 → 88 tokens/s com `t2`), porque o gargalo passou a ser
+  desempacotar os blocos; o prompt ainda é processado token a token (em
+  lotes fica para depois). Os kernels NEON passam pelos testes no CI do
+  macOS (ARM).
 
 ### M3 — Motor: gramática, embeddings, LoRA
 - JSON Schema → autômato; embeddings; treino LoRA no CPU.

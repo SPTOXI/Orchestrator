@@ -2944,10 +2944,12 @@ dependencies = [
 name = "orchestrator-nativa"
 version = "0.1.5"
 dependencies = [
+ "libc",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

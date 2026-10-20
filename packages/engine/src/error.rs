@@ -22,6 +22,8 @@ pub enum Error {
     MissingTensor(String),
     #[error("invalid model config: {0}")]
     BadConfig(String),
+    #[error("needs {needed} bytes of memory, over the budget of {budget}")]
+    OverBudget { needed: usize, budget: usize },
     #[error("token {token} is outside the vocabulary ({vocab_size})")]
     BadToken { token: u32, vocab_size: usize },
 }
