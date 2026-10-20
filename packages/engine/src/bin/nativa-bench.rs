@@ -1,5 +1,6 @@
 //! `nativa-bench [--dtype t2|q4|q8|f32] [--threads N] [--tokens N]
-//! [--dim D --layers L --hidden H --vocab V]`
+//! [--dim D --layers L --hidden H --vocab V] [--train N] [--prompt N]
+//! [--gpu MiB]`
 //!
 //! Builds a model with random weights of the given shape (default: the
 //! Semente core, ~50 M parameters), writes it to a temporary file, maps it
@@ -14,8 +15,8 @@ use std::time::Instant;
 use orchestrator_nativa::format::{self, TensorData};
 use orchestrator_nativa::tokenizer::TokenizerSpec;
 use orchestrator_nativa::{
-    generate, Config, Dtype, GenerateParams, KvPrecision, LoadOptions, Model, SamplingParams,
-    SessionOptions,
+    generate, Config, Dtype, GenerateParams, GpuOptions, KvPrecision, LoadOptions, Model,
+    SamplingParams, SessionOptions,
 };
 
 struct Args {
@@ -30,6 +31,8 @@ struct Args {
     train: usize,
     /// Prompt tokens.
     prompt: usize,
+    /// GPU memory budget in MiB (0 = CPU only; needs the `gpu` feature).
+    gpu: u64,
 }
 
 fn parse() -> Args {
@@ -43,6 +46,7 @@ fn parse() -> Args {
         vocab: 32_000,
         train: 0,
         prompt: 32,
+        gpu: 0,
     };
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut it = argv.chunks(2);
@@ -66,6 +70,7 @@ fn parse() -> Args {
             "--vocab" => a.vocab = n(),
             "--train" => a.train = n(),
             "--prompt" => a.prompt = n(),
+            "--gpu" => a.gpu = n() as u64,
             _ => panic!("unknown option {k}"),
         }
     }
@@ -158,7 +163,14 @@ fn main() {
         + a.layers * (2 * a.dim * a.dim + 2 * kv * a.dim + 3 * a.dim * a.hidden);
 
     let before = rss().unwrap_or(0);
-    let model = Model::load_with(&path, &LoadOptions { threads: a.threads }).expect("load");
+    let load = LoadOptions {
+        threads: a.threads,
+        gpu: (a.gpu > 0).then_some(GpuOptions {
+            memory: a.gpu << 20,
+        }),
+    };
+    let model = Model::load_with(&path, &load).expect("load");
+    println!("device: {}", model.device());
     let opts = SessionOptions {
         context: Some(1024),
         kv: KvPrecision::Q8,

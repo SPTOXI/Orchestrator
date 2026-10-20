@@ -26,6 +26,7 @@ tabela abaixo (preenchida a cada técnica implementada).
 | Gerador SplitMix64 | Steele, Lea e Flood, "Fast Splittable Pseudorandom Number Generators" (2014) | `packages/engine/src/sampler.rs` |
 | Quantização simétrica por bloco (escala absmax) | Dettmers et al., "LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale" (2022) | `packages/engine/src/quant.rs` |
 | Pesos ternários com escala absmean | Ma et al., "The Era of 1-bit LLMs: All Large Language Models are in 1.58 Bits" (2024) | `packages/engine/src/quant.rs` |
+| Kernels de GPU em WGSL | especificação W3C WebGPU / WGSL (o `wgpu` só fala com o driver Vulkan/Metal/DX12) | `packages/engine/src/gpu.wgsl`, `gpu.rs` |
 | Instruções SIMD (AVX2, FMA, NEON) | manuais dos fabricantes: Intel Intrinsics Guide; Arm Neon Intrinsics Reference | `packages/engine/src/simd.rs` |
 | Decodificação guiada por gramática | Willard e Louf, "Efficient Guided Generation for Large Language Models" (2023); Geng et al., "Grammar-Constrained Decoding for Structured NLP Tasks without Finetuning" (2023) | `packages/engine/src/grammar.rs` |
 | JSON | RFC 8259 | `packages/engine/src/grammar.rs` |
@@ -216,6 +217,34 @@ enquanto os especialistas são treinados.
   - treino completo (não só LoRA) precisa também dos gradientes dos pesos
     (`dW = dyᵀ·x`, outra multiplicação em lote) e dos kernels ternários;
   - a GPU de 1 GB (`wgpu`, previsto no plano) é o maior ganho que resta.
+
+### G1 — GPU de 1 GB: primeira versão ✅
+- **Backend de GPU** opcional (feature `gpu`), por `wgpu` (Vulkan, Metal,
+  DX12). Os kernels são do projeto (`gpu.wgsl`): leem os pesos no formato
+  guardado (f32, `q8`, `q4`, `t2`), descomprimem na própria GPU e
+  multiplicam nos dois sentidos — `y = W·x` (prompt e ida do treino) e
+  `dx = Wᵀ·dy` (volta do treino).
+- **Por blocos:** cada matriz sobe para a GPU no primeiro uso e fica lá
+  enquanto couber no orçamento (padrão 768 MiB, para sobrar espaço numa
+  placa de 1 GB); passando dele, as menos usadas recentemente saem. Matriz
+  grande demais fica no processador.
+- **Só onde compensa:** produtos em lote com 8 ou mais posições; a geração,
+  um token por vez, continua no processador. Sem placa (ou sem a feature),
+  tudo continua no processador como antes.
+- **Aceite** (`tests/gpu.rs`, também no CI com a GPU por software do Mesa):
+  logits iguais à referência numpy (diferença máxima 2·10⁻⁶); pesos
+  quantizados dentro dos mesmos limites que o processador cumpre;
+  gradientes do treino iguais aos do processador (f32: 8·10⁻⁷; `t2`: 1%,
+  porque o processador arredonda as ativações para 8 bits e a GPU não);
+  orçamento menor que o modelo dá os mesmos números. Três erros plantados
+  nos kernels foram pegos.
+- **Ainda não medido numa placa de verdade:** aqui só há a GPU emulada por
+  software (que roda no mesmo processador e fica ~10× mais lenta).
+  `nativa-bench --gpu 768` mede numa máquina com placa.
+- **Próximos passos da GPU:** medir em placas integradas comuns (Intel,
+  AMD); escolher sozinho entre GPU e processador pela velocidade medida;
+  kernels com memória compartilhada da GPU; deixar as ativações na GPU
+  entre camadas (hoje cada produto vai e volta).
 
 ### T1 — Treino no notebook: base
 - Tokenizador com base em bytes, treino bloco a bloco com pesos ternários,

@@ -10,6 +10,12 @@ publish.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+# The GPU backend (phase G1), behind the `gpu` feature: wgpu only reaches
+# the system's Vulkan, Metal or DX12 driver; the kernels are the project's.
+wgpu = { version = "30", optional = true, default-features = false, features = ["vulkan", "metal", "dx12", "wgsl", "std"] }
+
+[features]
+gpu = ["dep:wgpu"]
 
 [dev-dependencies]
 tempfile.workspace = true

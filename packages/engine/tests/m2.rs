@@ -86,8 +86,22 @@ fn mapped_and_owned_files_give_the_same_logits() {
 #[test]
 fn threads_do_not_change_the_result() {
     let e = expected();
-    let one = Model::load_with(&fixture(), &LoadOptions { threads: Some(1) }).unwrap();
-    let four = Model::load_with(&fixture(), &LoadOptions { threads: Some(4) }).unwrap();
+    let one = Model::load_with(
+        &fixture(),
+        &LoadOptions {
+            threads: Some(1),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let four = Model::load_with(
+        &fixture(),
+        &LoadOptions {
+            threads: Some(4),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     assert_eq!(four.threads(), 4);
     assert_eq!(
         run(&one, &f32_kv(), &e.prompt),
@@ -100,7 +114,10 @@ fn threads_do_not_change_the_result() {
             convert::quantize(&NativaFile::read(&fixture()).unwrap(), Dtype::Q4, &mut out).unwrap();
             NativaFile::parse(out).unwrap()
         },
-        &LoadOptions { threads: Some(1) },
+        &LoadOptions {
+            threads: Some(1),
+            ..Default::default()
+        },
     )
     .unwrap();
     assert_eq!(

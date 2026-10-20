@@ -37,6 +37,11 @@ use crate::tokenizer::Tokenizer;
 /// would cost more than it saves.
 const PARALLEL_MIN: usize = 1 << 15;
 
+/// Below this many positions a batched product stays on the CPU: the trip
+/// to the GPU and back would cost more than it saves.
+#[cfg(feature = "gpu")]
+const GPU_MIN_POSITIONS: usize = 8;
+
 pub(crate) enum MatData {
     /// In the file, at this offset of the data section.
     File(usize),
@@ -69,6 +74,23 @@ pub struct LoadOptions {
     /// Threads for matrix products (the caller included). Default: the
     /// processors the system reports.
     pub threads: Option<usize>,
+    /// Runs the batched products (prompt and training) on the GPU; needs
+    /// the `gpu` feature. Generation one token at a time stays on the CPU.
+    pub gpu: Option<GpuOptions>,
+}
+
+/// What to give the GPU.
+#[derive(Debug, Clone)]
+pub struct GpuOptions {
+    /// Video memory the weights may take, in bytes. Default: 768 MiB, which
+    /// leaves room for the activations and the desktop on a 1 GB card.
+    pub memory: u64,
+}
+
+impl Default for GpuOptions {
+    fn default() -> Self {
+        Self { memory: 768 << 20 }
+    }
 }
 
 /// How the KV cache stores keys and values.
@@ -115,6 +137,8 @@ pub struct Model {
     tokenizer: Tokenizer,
     file: NativaFile,
     pool: Pool,
+    #[cfg(feature = "gpu")]
+    gpu: Option<crate::gpu::Gpu>,
     pub(crate) tok_embeddings: Matrix,
     pub(crate) layers: Vec<Layer>,
     pub(crate) norm: Vec<f32>,
@@ -167,7 +191,17 @@ impl Model {
         let threads = options
             .threads
             .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()));
+        #[cfg(feature = "gpu")]
+        let gpu = options.gpu.as_ref().map(crate::gpu::Gpu::new).transpose()?;
+        #[cfg(not(feature = "gpu"))]
+        if options.gpu.is_some() {
+            return Err(Error::Gpu(
+                "this engine was built without the gpu feature".into(),
+            ));
+        }
         Ok(Self {
+            #[cfg(feature = "gpu")]
+            gpu,
             tok_embeddings: matrix(&file, "tok_embeddings", c.vocab_size, dim)?,
             norm: file.tensor_f32("norm", &[dim])?,
             layers,
@@ -189,6 +223,56 @@ impl Model {
 
     pub fn threads(&self) -> usize {
         self.pool.threads()
+    }
+
+    /// Where the batched products run: "cpu", or the GPU adapter's name.
+    pub fn device(&self) -> String {
+        #[cfg(feature = "gpu")]
+        if let Some(g) = &self.gpu {
+            return g.name().to_string();
+        }
+        "cpu".into()
+    }
+
+    /// Weight bytes in video memory (0 on the CPU).
+    pub fn gpu_resident_bytes(&self) -> u64 {
+        #[cfg(feature = "gpu")]
+        if let Some(g) = &self.gpu {
+            return g.resident_bytes();
+        }
+        0
+    }
+
+    /// The matrix as the GPU takes it, if it should go there: a GPU, and
+    /// enough positions to be worth the trip.
+    #[cfg(feature = "gpu")]
+    fn on_gpu<'a>(
+        &'a self,
+        m: &'a Matrix,
+        t_len: usize,
+    ) -> Option<(&'a crate::gpu::Gpu, crate::gpu::Weights<'a>)> {
+        let g = self.gpu.as_ref()?;
+        if t_len < GPU_MIN_POSITIONS {
+            return None;
+        }
+        let (key, bytes) = match &m.data {
+            MatData::File(at) => (*at, self.bytes(m)),
+            MatData::Owned(v) => (
+                // Heap addresses never collide with file offsets' low range
+                // in practice; the top bit keeps the two apart for sure.
+                v.as_ptr() as usize | 1 << (usize::BITS - 1),
+                // SAFETY: f32 has no padding; any byte is a valid u8.
+                unsafe { std::slice::from_raw_parts(v.as_ptr() as *const u8, v.len() * 4) },
+            ),
+        };
+        let w = crate::gpu::Weights {
+            key,
+            dtype: m.dtype,
+            rows: m.rows,
+            cols: m.cols,
+            bytes,
+        };
+        g.fits(&w).then_some((g, w))
     }
 
     /// Runs `f(task)` for `tasks` tasks across the engine's threads.
@@ -406,6 +490,12 @@ impl Model {
     ) {
         let t_len = x.len() / m.cols;
         debug_assert_eq!(out.len(), t_len * m.rows);
+        #[cfg(feature = "gpu")]
+        if let Some((g, w)) = self.on_gpu(m, t_len) {
+            if g.matmul(&w, x, out) {
+                return;
+            }
+        }
         let quantized = m.dtype.is_quantized();
         if quantized {
             qx.resize_with(t_len.max(qx.len()), QuantizedVec::default);
@@ -496,6 +586,14 @@ impl Model {
     pub(crate) fn matmul_t_add(&self, dx: &mut [f32], m: &Matrix, dy: &[f32]) {
         let t_len = dy.len() / m.rows;
         debug_assert_eq!(dx.len(), t_len * m.cols);
+        #[cfg(feature = "gpu")]
+        if let Some((g, w)) = self.on_gpu(m, t_len) {
+            let mut part = vec![0.0; dx.len()];
+            if g.matmul_t(&w, dy, &mut part) {
+                simd::axpy(dx, 1.0, &part);
+                return;
+            }
+        }
         let rb = quant::row_bytes(m.dtype, m.cols);
         let quantized = m.dtype.is_quantized();
         let f32s = if quantized {

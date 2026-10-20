@@ -14,11 +14,15 @@
 //! - [`sampler`]: greedy, temperature, top-p and min-p, with its own RNG.
 //! - [`generate`]: the generation loop, with stop tokens and cancellation;
 //!   [`grammar`]: output held to a JSON Schema (phase M3).
+//! - `gpu` (feature `gpu`): the batched products on the GPU through `wgpu`
+//!   (phase G1).
 
 pub mod convert;
 pub mod error;
 pub mod format;
 pub mod generate;
+#[cfg(feature = "gpu")]
+pub mod gpu;
 pub mod grammar;
 pub mod lora;
 pub mod mmap;
@@ -36,7 +40,7 @@ pub use format::{Config, Dtype, Header, NativaFile, TensorInfo, FORMAT_VERSION, 
 pub use generate::{generate, generate_json, GenerateParams, Generation, StopReason};
 pub use grammar::{Schema, TokenTrie};
 pub use model::{
-    similarity, KvPrecision, LoadOptions, MemoryReport, Model, Session, SessionOptions,
+    similarity, GpuOptions, KvPrecision, LoadOptions, MemoryReport, Model, Session, SessionOptions,
 };
 pub use sampler::{Sampler, SamplingParams};
 pub use tokenizer::Tokenizer;
