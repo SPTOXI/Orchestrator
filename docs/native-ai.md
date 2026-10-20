@@ -6,6 +6,16 @@ módulos, contratos, fases e critérios de aceite.
 > Motor próprio, modelo próprio. Uma IA de 8 GB para baixo que opera o
 > Orchestrator e o computador, executa rotinas e aprende com o usuário.
 
+## Independência tecnológica
+
+Regra do projeto ([ADR-0027 §0](./adr/0027-ia-nativa.md)): nenhum código
+de outro motor ou framework; só ideias publicadas, com a fonte citada na
+tabela abaixo (preenchida a cada técnica implementada).
+
+| Técnica | Fonte (artigo/especificação) | Onde no código |
+| ------- | ---------------------------- | -------------- |
+| — | — | — |
+
 ## Visão geral
 
 ```text

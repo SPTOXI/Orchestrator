@@ -67,6 +67,36 @@ mesmo do uso: **notebook com 8 GB de RAM e 1 GB de vídeo**.
 
 ## Decisão
 
+### 0. Princípio: independência tecnológica
+
+O motivo de ter motor e modelo próprios é **não ficar preso ao círculo da
+incompatibilidade**: o motor de terceiros muda de versão, o formato de
+arquivo muda, o modelo novo exige motor novo, o motor novo quebra o que
+funcionava (a ADR-0025 já registra "modelos às vezes pedem motor novo").
+Quem depende disso só acompanha; não desenvolve.
+
+Regras que valem para toda a IA Nativa:
+
+1. **Nenhum código de outro motor ou framework de inferência/treino**
+   (llama.cpp, Ollama, ONNX Runtime, PyTorch, candle, etc.) no motor ou no
+   app. Usamos **ideias publicadas** (artigos, especificações), sempre com a
+   fonte citada em `docs/native-ai.md`; nunca código copiado ou traduzido.
+2. **Formato próprio e versionado** (`.nativa`): o projeto decide quando ele
+   muda, e todo motor novo lê os arquivos de todas as versões anteriores
+   (testes de compatibilidade no CI com arquivos de cada versão).
+3. **Nenhum download obrigatório de terceiros** para a Nativa funcionar ou
+   treinar: motor, pesos e pacotes da Biblioteca vêm dos releases do
+   próprio projeto.
+4. **Dependências mínimas e substituíveis**: só bibliotecas Rust gerais
+   (threads, `mmap`, compressão, `wgpu` para a GPU), nenhuma que dite o
+   formato ou a matemática do modelo. Se uma delas parar, troca-se sem
+   mudar `.nativa`.
+5. **O gabarito em PyTorch** (`training/reference`) só confere contas nos
+   testes; não é dependência de nada que roda no computador do usuário.
+6. **O que é nosso evolui no nosso ritmo**: arquitetura do modelo,
+   tokenizador, kernels, formato e treino mudam quando os testes do projeto
+   mostram ganho, não quando um terceiro lança versão.
+
 ### 1. Motor próprio: `orchestrator-engine` (Rust, sem dependências de inferência)
 
 Um crate novo, `packages/engine`, escrito pelo projeto:
