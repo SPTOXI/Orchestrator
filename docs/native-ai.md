@@ -241,10 +241,19 @@ enquanto os especialistas são treinados.
 - **Ainda não medido numa placa de verdade:** aqui só há a GPU emulada por
   software (que roda no mesmo processador e fica ~10× mais lenta).
   `nativa-bench --gpu 768` mede numa máquina com placa.
+- **Escolha automática ✅:** com uma placa, cada tipo de produto (formato
+  da matriz, sentido, número de posições arredondado) é medido uma vez nos
+  dois lados e fica com o mais rápido; uma placa mais lenta que o
+  processador simplesmente não é usada. Como todas as camadas têm os
+  mesmos formatos, poucas medições decidem o modelo inteiro.
+  `GpuOptions::always` pula a medição (testes, comparação).
+  Na GPU emulada daqui, a escolha foi o processador em 849 de 849 produtos;
+  o custo é só na primeira rodada (em 12 passos de treino a média já fica
+  perto da do processador puro). `nativa-bench --gpu 768` mostra quantos
+  produtos foram para cada lado.
 - **Próximos passos da GPU:** medir em placas integradas comuns (Intel,
-  AMD); escolher sozinho entre GPU e processador pela velocidade medida;
-  kernels com memória compartilhada da GPU; deixar as ativações na GPU
-  entre camadas (hoje cada produto vai e volta).
+  AMD); kernels com memória compartilhada da GPU; deixar as ativações na
+  GPU entre camadas (hoje cada produto vai e volta).
 
 ### T1 — Treino no notebook: base
 - Tokenizador com base em bytes, treino bloco a bloco com pesos ternários,

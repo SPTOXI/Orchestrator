@@ -36,7 +36,10 @@ fn pair(dtype: Dtype, memory: u64) -> Option<(Model, Model)> {
     let gpu = Model::from_file(
         file(dtype),
         &LoadOptions {
-            gpu: Some(GpuOptions { memory }),
+            gpu: Some(GpuOptions {
+                memory,
+                always: true,
+            }),
             ..Default::default()
         },
     );
@@ -161,4 +164,34 @@ fn a_budget_smaller_than_the_model_works_by_blocks() {
     assert_eq!(a, b, "the same kernels, whatever is resident");
     assert!(small.gpu_resident_bytes() <= 40 << 10);
     assert!(big.gpu_resident_bytes() > 40 << 10);
+}
+
+#[test]
+fn the_automatic_choice_never_changes_the_answer_much() {
+    // Without `always`, each kind of product is measured on both sides the
+    // first time and the faster one kept. Whichever wins, the logits stay
+    // those of the CPU or of the GPU, both held to the reference.
+    let cpu = Model::from_file(file(Dtype::F32), &LoadOptions::default()).unwrap();
+    let auto = match Model::from_file(
+        file(Dtype::F32),
+        &LoadOptions {
+            gpu: Some(GpuOptions::default()),
+            ..Default::default()
+        },
+    ) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("skipped: {e}");
+            return;
+        }
+    };
+    let tokens: Vec<u32> = (0..24).map(|i| (i * 13 + 1) % 270).collect();
+    let a = train::logits(&cpu, None, &tokens).unwrap();
+    for _ in 0..2 {
+        let b = train::logits(&auto, None, &tokens).unwrap();
+        assert!(worst(&a, &b) <= 1e-4);
+    }
+    let (g, c) = auto.gpu_share();
+    eprintln!("automatic choice: {g} products on the GPU, {c} on the CPU");
+    assert!(g + c > 0, "every batched product was decided");
 }

@@ -85,11 +85,17 @@ pub struct GpuOptions {
     /// Video memory the weights may take, in bytes. Default: 768 MiB, which
     /// leaves room for the activations and the desktop on a 1 GB card.
     pub memory: u64,
+    /// Always use the GPU where it can run, instead of measuring it against
+    /// the CPU first (tests, benchmarks).
+    pub always: bool,
 }
 
 impl Default for GpuOptions {
     fn default() -> Self {
-        Self { memory: 768 << 20 }
+        Self {
+            memory: 768 << 20,
+            always: false,
+        }
     }
 }
 
@@ -241,6 +247,16 @@ impl Model {
             return g.resident_bytes();
         }
         0
+    }
+
+    /// Batched products run so far on the GPU and on the CPU (with a GPU
+    /// present; products too small for it are not counted).
+    pub fn gpu_share(&self) -> (u64, u64) {
+        #[cfg(feature = "gpu")]
+        if let Some(g) = &self.gpu {
+            return g.share();
+        }
+        (0, 0)
     }
 
     /// The matrix as the GPU takes it, if it should go there: a GPU, and
@@ -492,10 +508,16 @@ impl Model {
         debug_assert_eq!(out.len(), t_len * m.rows);
         #[cfg(feature = "gpu")]
         if let Some((g, w)) = self.on_gpu(m, t_len) {
-            if g.matmul(&w, x, out) {
+            let mut cpu = |o: &mut [f32]| self.matmul_cpu(o, m, x, qx);
+            if g.choose(&w, false, t_len, out, &mut |o| g.matmul(&w, x, o), &mut cpu) {
                 return;
             }
         }
+        self.matmul_cpu(out, m, x, qx);
+    }
+
+    fn matmul_cpu(&self, out: &mut [f32], m: &Matrix, x: &[f32], qx: &mut Vec<QuantizedVec>) {
+        let t_len = x.len() / m.cols;
         let quantized = m.dtype.is_quantized();
         if quantized {
             qx.resize_with(t_len.max(qx.len()), QuantizedVec::default);
@@ -589,11 +611,27 @@ impl Model {
         #[cfg(feature = "gpu")]
         if let Some((g, w)) = self.on_gpu(m, t_len) {
             let mut part = vec![0.0; dx.len()];
-            if g.matmul_t(&w, dy, &mut part) {
+            let mut cpu = |o: &mut [f32]| {
+                o.fill(0.0);
+                self.matmul_t_add_cpu(o, m, dy)
+            };
+            if g.choose(
+                &w,
+                true,
+                t_len,
+                &mut part,
+                &mut |o| g.matmul_t(&w, dy, o),
+                &mut cpu,
+            ) {
                 simd::axpy(dx, 1.0, &part);
                 return;
             }
         }
+        self.matmul_t_add_cpu(dx, m, dy);
+    }
+
+    fn matmul_t_add_cpu(&self, dx: &mut [f32], m: &Matrix, dy: &[f32]) {
+        let t_len = dy.len() / m.rows;
         let rb = quant::row_bytes(m.dtype, m.cols);
         let quantized = m.dtype.is_quantized();
         let f32s = if quantized {

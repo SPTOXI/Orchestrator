@@ -16,9 +16,10 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::pin;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Wake, Waker};
+use std::time::Instant;
 
 use crate::error::{Error, Result};
 use crate::format::Dtype;
@@ -46,6 +47,9 @@ struct State {
     read: Option<wgpu::Buffer>,
 }
 
+/// (dtype, rows, cols, transposed, positions rounded up).
+type Shape = (Dtype, usize, usize, bool, usize);
+
 pub struct Gpu {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -57,6 +61,14 @@ pub struct Gpu {
     budget: u64,
     max_binding: u64,
     failed: Arc<AtomicBool>,
+    always: bool,
+    /// Which side won for a kind of product — (dtype, rows, cols,
+    /// direction, positions rounded up to a power of two): true for the
+    /// GPU. Every layer has the same shapes, so a few measurements decide
+    /// the whole model.
+    choices: Mutex<HashMap<Shape, bool>>,
+    on_gpu: AtomicU64,
+    on_cpu: AtomicU64,
     state: Mutex<State>,
 }
 
@@ -154,6 +166,10 @@ impl Gpu {
             layout,
             params,
             failed,
+            always: options.always,
+            choices: Mutex::new(HashMap::new()),
+            on_gpu: AtomicU64::new(0),
+            on_cpu: AtomicU64::new(0),
             state: Mutex::new(State::default()),
         })
     }
@@ -166,6 +182,72 @@ impl Gpu {
     /// Weight bytes now in video memory.
     pub fn resident_bytes(&self) -> u64 {
         self.state.lock().unwrap().used
+    }
+
+    /// Products run on each side: (GPU, CPU).
+    pub fn share(&self) -> (u64, u64) {
+        (
+            self.on_gpu.load(Ordering::Relaxed),
+            self.on_cpu.load(Ordering::Relaxed),
+        )
+    }
+
+    /// Runs one product on the faster side, leaving the result in `out`;
+    /// false means the caller must run it on the CPU itself. The first
+    /// time a kind of product is seen, both sides run it (the GPU twice, so
+    /// the upload is not counted) and the faster one is remembered: a GPU
+    /// slower than the CPU is simply not used.
+    pub(crate) fn choose(
+        &self,
+        w: &Weights,
+        transposed: bool,
+        t_len: usize,
+        out: &mut [f32],
+        gpu: &mut dyn FnMut(&mut [f32]) -> bool,
+        cpu: &mut dyn FnMut(&mut [f32]),
+    ) -> bool {
+        let key = (
+            w.dtype,
+            w.rows,
+            w.cols,
+            transposed,
+            t_len.next_power_of_two(),
+        );
+        let known = if self.always {
+            Some(true)
+        } else {
+            self.choices.lock().unwrap().get(&key).copied()
+        };
+        let won = match known {
+            Some(true) => gpu(out),
+            Some(false) => false,
+            None => {
+                let mut won = gpu(out);
+                if won {
+                    let t = Instant::now();
+                    won = gpu(out);
+                    let gpu_time = t.elapsed();
+                    let mut scratch = vec![0.0; out.len()];
+                    let t = Instant::now();
+                    cpu(&mut scratch);
+                    let cpu_time = t.elapsed();
+                    if won && cpu_time < gpu_time {
+                        out.copy_from_slice(&scratch);
+                        self.on_cpu.fetch_add(1, Ordering::Relaxed);
+                        self.choices.lock().unwrap().insert(key, false);
+                        return true;
+                    }
+                }
+                self.choices.lock().unwrap().insert(key, won);
+                won
+            }
+        };
+        if won {
+            self.on_gpu.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.on_cpu.fetch_add(1, Ordering::Relaxed);
+        }
+        won
     }
 
     /// Whether `w` can run here at all (the caller then uses the CPU).

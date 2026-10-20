@@ -1,6 +1,6 @@
 //! `nativa-bench [--dtype t2|q4|q8|f32] [--threads N] [--tokens N]
 //! [--dim D --layers L --hidden H --vocab V] [--train N] [--prompt N]
-//! [--gpu MiB]`
+//! [--gpu MiB [--gpu-always 1]]`
 //!
 //! Builds a model with random weights of the given shape (default: the
 //! Semente core, ~50 M parameters), writes it to a temporary file, maps it
@@ -33,6 +33,8 @@ struct Args {
     prompt: usize,
     /// GPU memory budget in MiB (0 = CPU only; needs the `gpu` feature).
     gpu: u64,
+    /// Use the GPU wherever it can run, without measuring it first.
+    gpu_always: bool,
 }
 
 fn parse() -> Args {
@@ -47,6 +49,7 @@ fn parse() -> Args {
         train: 0,
         prompt: 32,
         gpu: 0,
+        gpu_always: false,
     };
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut it = argv.chunks(2);
@@ -71,6 +74,7 @@ fn parse() -> Args {
             "--train" => a.train = n(),
             "--prompt" => a.prompt = n(),
             "--gpu" => a.gpu = n() as u64,
+            "--gpu-always" => a.gpu_always = n() != 0,
             _ => panic!("unknown option {k}"),
         }
     }
@@ -167,6 +171,7 @@ fn main() {
         threads: a.threads,
         gpu: (a.gpu > 0).then_some(GpuOptions {
             memory: a.gpu << 20,
+            always: a.gpu_always,
         }),
     };
     let model = Model::load_with(&path, &load).expect("load");
@@ -259,6 +264,13 @@ fn main() {
             "training     LoRA rank 8 on all matrices ({:.2} M values), 128-token sequence: {per:.2} s per step, {:.0} tokens/s",
             adapter.len() as f64 / 1e6,
             128.0 / per
+        );
+    }
+    if a.gpu > 0 {
+        let (g, c) = model.gpu_share();
+        println!(
+            "gpu          {g} batched products on the GPU, {c} on the CPU, {:.1} MB of weights resident",
+            model.gpu_resident_bytes() as f64 / 1e6
         );
     }
     drop(model);
