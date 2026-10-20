@@ -93,7 +93,9 @@ impl Sampler {
             keep = keep.min(nucleus);
         }
         let u = self.next_f32();
-        let kept = &self.probs[..keep.max(1)];
+        // Tokens with no probability (masked by a grammar) are never kept.
+        let nonzero = self.probs.iter().take_while(|(_, q)| *q > 0.0).count();
+        let kept = &self.probs[..keep.min(nonzero).max(1)];
         let total: f32 = kept.iter().map(|(_, q)| q).sum();
         let mut r = u * total;
         for &(id, q) in kept {
