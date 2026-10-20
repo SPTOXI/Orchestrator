@@ -26,6 +26,8 @@ struct Args {
     layers: usize,
     hidden: usize,
     vocab: usize,
+    /// Training steps to time (0 = none).
+    train: usize,
 }
 
 fn parse() -> Args {
@@ -37,6 +39,7 @@ fn parse() -> Args {
         layers: 12,
         hidden: 1408,
         vocab: 32_000,
+        train: 0,
     };
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut it = argv.chunks(2);
@@ -58,6 +61,7 @@ fn parse() -> Args {
             "--layers" => a.layers = n(),
             "--hidden" => a.hidden = n(),
             "--vocab" => a.vocab = n(),
+            "--train" => a.train = n(),
             _ => panic!("unknown option {k}"),
         }
     }
@@ -209,6 +213,28 @@ fn main() {
         report.total() as f64 / 1e6
     );
     drop(session);
+    if a.train > 0 {
+        use orchestrator_nativa::lora::{Adapter, LoraConfig};
+        use orchestrator_nativa::train::{Example, TrainConfig, Trainer};
+        let mut adapter = Adapter::new(&model, LoraConfig::default(), 1).expect("adapter");
+        let mut trainer = Trainer::new(&adapter, TrainConfig::default());
+        let ex = Example {
+            tokens: (0..128).map(|i| 300 + i).collect(),
+            loss_from: 64,
+        };
+        let t = Instant::now();
+        for _ in 0..a.train {
+            trainer
+                .step(&model, &mut adapter, std::slice::from_ref(&ex))
+                .expect("train step");
+        }
+        let per = t.elapsed().as_secs_f64() / a.train as f64;
+        println!(
+            "training     LoRA rank 8 on all matrices ({:.2} M values), 128-token sequence: {per:.2} s per step, {:.0} tokens/s",
+            adapter.len() as f64 / 1e6,
+            128.0 / per
+        );
+    }
     drop(model);
     let _ = std::fs::remove_file(&path);
     if after > 0 {

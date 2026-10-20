@@ -19,21 +19,27 @@ publicadas, com a fonte de cada uma na tabela de `docs/native-ai.md`.
 | `ops.rs` | contas em f32, caminho escalar: matriz × vetor, RMSNorm, softmax, SiLU, RoPE |
 | `model.rs` | o transformer (atenção com grupos de KV, SwiGLU), a `Session` com o cache KV (f32 ou 8 bits) e o orçamento de memória |
 | `sampler.rs` | gulosa, temperatura, top-p, min-p, com gerador próprio (mesma semente, mesmo texto) |
-| `generate.rs` | o laço de geração: tokens de parada, limite, contexto cheio, cancelamento |
+| `generate.rs` | o laço de geração: tokens de parada, limite, contexto cheio, cancelamento; `generate_json` com gramática |
+| `grammar.rs` | JSON Schema → verificador byte a byte e árvore do vocabulário: saída sempre válida |
+| `lora.rs` | adaptadores LoRA: criar, aplicar, salvar, carregar |
+| `train.rs` | treino do adaptador no CPU: passada com ativações, retropropagação à mão, AdamW |
 
-Estado: fases **M1** (caminho escalar em f32) e **M2** (velocidade e
-memória) concluídas. Próxima: M3 — gramática, embeddings, treino LoRA.
+Estado: fases **M1** (caminho escalar em f32), **M2** (velocidade e
+memória) e **M3** (gramática, embeddings, treino LoRA) concluídas.
 
 Programas:
 
 ```sh
-cargo run --release -p orchestrator-nativa --bin nativa-bench -- --dtype t2
+cargo run --release -p orchestrator-nativa --bin nativa-bench -- --dtype t2 --train 3
 cargo run --release -p orchestrator-nativa --bin nativa-quantize -- in.nativa out.nativa q4
 ```
 
 Testes: `cargo test -p orchestrator-nativa`. `tests/m2.rs` confere os
 pesos quantizados, o cache KV em 8 bits, 1 contra 4 threads, `mmap` contra
-leitura normal e o orçamento de memória. `tests/reference.rs` confere
+leitura normal e o orçamento de memória. `tests/m3_grammar.rs` gera 1.000
+chamadas com gramática e valida todas; `tests/m3_lora.rs` treina um
+adaptador numa tarefa sintética, salva, carrega e confere os embeddings.
+`tests/reference.rs` confere
 o motor contra o gabarito independente em `training/reference/nativa_ref.py`
 (numpy, float64): todos os logits de todas as posições e os ids do
 tokenizador. Para refazer o gabarito:

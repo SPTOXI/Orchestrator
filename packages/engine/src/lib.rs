@@ -20,6 +20,7 @@ pub mod error;
 pub mod format;
 pub mod generate;
 pub mod grammar;
+pub mod lora;
 pub mod mmap;
 pub mod model;
 pub mod ops;
@@ -28,11 +29,14 @@ pub mod quant;
 pub mod sampler;
 pub mod simd;
 pub mod tokenizer;
+pub mod train;
 
 pub use error::{Error, Result};
 pub use format::{Config, Dtype, Header, NativaFile, TensorInfo, FORMAT_VERSION, MAGIC};
 pub use generate::{generate, generate_json, GenerateParams, Generation, StopReason};
 pub use grammar::{Schema, TokenTrie};
-pub use model::{KvPrecision, LoadOptions, MemoryReport, Model, Session, SessionOptions};
+pub use model::{
+    similarity, KvPrecision, LoadOptions, MemoryReport, Model, Session, SessionOptions,
+};
 pub use sampler::{Sampler, SamplingParams};
 pub use tokenizer::Tokenizer;

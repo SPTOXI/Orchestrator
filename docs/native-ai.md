@@ -27,6 +27,11 @@ tabela abaixo (preenchida a cada técnica implementada).
 | Quantização simétrica por bloco (escala absmax) | Dettmers et al., "LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale" (2022) | `packages/engine/src/quant.rs` |
 | Pesos ternários com escala absmean | Ma et al., "The Era of 1-bit LLMs: All Large Language Models are in 1.58 Bits" (2024) | `packages/engine/src/quant.rs` |
 | Instruções SIMD (AVX2, FMA, NEON) | manuais dos fabricantes: Intel Intrinsics Guide; Arm Neon Intrinsics Reference | `packages/engine/src/simd.rs` |
+| Decodificação guiada por gramática | Willard e Louf, "Efficient Guided Generation for Large Language Models" (2023); Geng et al., "Grammar-Constrained Decoding for Structured NLP Tasks without Finetuning" (2023) | `packages/engine/src/grammar.rs` |
+| JSON | RFC 8259 | `packages/engine/src/grammar.rs` |
+| LoRA | Hu et al., "LoRA: Low-Rank Adaptation of Large Language Models" (2021) | `packages/engine/src/lora.rs` |
+| Retropropagação | Rumelhart, Hinton e Williams, "Learning representations by back-propagating errors" (1986) | `packages/engine/src/train.rs` |
+| Adam / AdamW | Kingma e Ba (2015); Loshchilov e Hutter, "Decoupled Weight Decay Regularization" (2019) | `packages/engine/src/train.rs` |
 
 ## Visão geral
 
@@ -141,10 +146,42 @@ enquanto os especialistas são treinados.
   lotes fica para depois). Os kernels NEON passam pelos testes no CI do
   macOS (ARM).
 
-### M3 — Motor: gramática, embeddings, LoRA
-- JSON Schema → autômato; embeddings; treino LoRA no CPU.
-- **Aceite:** 0 chamadas malformadas em 1.000 gerações com gramática; um
-  LoRA de teste aprende uma tarefa sintética em < 1 h num CPU de 4 núcleos.
+### M3 — Motor: gramática, embeddings, LoRA ✅
+- **Gramática** (`grammar.rs`, `generate_json`): um subconjunto de JSON
+  Schema (`object`, `array`, `string` com `enum` e `maxLength`, `integer`,
+  `number`, `boolean`, `null`) vira um verificador byte a byte; uma árvore
+  do vocabulário acha os tokens que mantêm a saída válida; perto do limite
+  de tokens o menor fechamento é forçado. JSON compacto, propriedades em
+  ordem alfabética; números limitados ao que cabe em i64/f64.
+- **Embeddings** (`Model::embed`, `similarity`): média do último estado
+  oculto normalizado, com comprimento 1.
+- **LoRA** (`lora.rs`, `train.rs`): adaptadores `B·A` sobre os pesos
+  congelados (inclusive quantizados), aplicados na geração
+  (`Session::with_adapter`), treinados no CPU com retropropagação escrita
+  à mão e AdamW; salvos e carregados como `.nativa`.
+- **Aceite:**
+  - gramática: 1.000 de 1.000 gerações completas e válidas (conferidas por
+    um validador independente), com um modelo de pesos aleatórios, as 4
+    ferramentas e campos opcionais em uso (`tests/m3_grammar.rs`). O teste
+    achou e fez corrigir um defeito real: expoentes sem limite
+    (`5.63e1011`), que nenhum leitor de JSON aceita;
+  - LoRA: a tarefa sintética (responder 4 rotinas) é aprendida em 20
+    passos, perda 6,26 → 0,94, em menos de 1 s no modelo de teste
+    (`tests/m3_lora.rs`); o adaptador salvo e carregado responde igual;
+  - as derivadas conferem com diferenças finitas em todas as matrizes, e o
+    teste falha se a rotação inversa ou a derivada da SiLU estiver errada;
+    a passada de treino dá os mesmos logits da geração.
+- **Medido no tamanho real** (`nativa-bench --train`, 68 M parâmetros,
+  `t2`, VM de 4 núcleos): LoRA rank 8 em todas as matrizes (0,9 M valores),
+  sequência de 128 tokens: 4,3 s por passo, ~30 tokens/s. Um adaptador
+  pessoal de 500 exemplos × 128 tokens dá uma época em ~36 min: cabe numa
+  noite.
+- **Pendência que bloqueia a T1:** treinar o núcleo do zero precisa de
+  ~1.500 tokens/s (meta: 300 milhões por semana de noites). Hoje cada
+  posição relê os pesos e o caminho de volta é escalar. Antes da T1:
+  multiplicação em lote (matriz × matriz: os pesos lidos uma vez para
+  todas as posições), caminho de volta com SIMD e em paralelo, e kernels de
+  treino para pesos ternários.
 
 ### T1 — Treino no notebook: base
 - Tokenizador com base em bytes, treino bloco a bloco com pesos ternários,

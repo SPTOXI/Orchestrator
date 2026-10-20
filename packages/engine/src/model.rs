@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::format::{Config, Dtype, NativaFile};
+use crate::lora::{Adapter, Target};
 use crate::ops::{rmsnorm, rope, silu, softmax};
 use crate::pool::{Pool, SendPtr};
 use crate::quant::{self, QuantizedVec};
@@ -36,7 +37,7 @@ use crate::tokenizer::Tokenizer;
 /// would cost more than it saves.
 const PARALLEL_MIN: usize = 1 << 15;
 
-enum MatData {
+pub(crate) enum MatData {
     /// In the file, at this offset of the data section.
     File(usize),
     /// f32 copied out of a file that could not be used in place (an
@@ -44,23 +45,23 @@ enum MatData {
     Owned(Vec<f32>),
 }
 
-struct Matrix {
-    dtype: Dtype,
-    rows: usize,
-    cols: usize,
-    data: MatData,
+pub(crate) struct Matrix {
+    pub(crate) dtype: Dtype,
+    pub(crate) rows: usize,
+    pub(crate) cols: usize,
+    pub(crate) data: MatData,
 }
 
-struct Layer {
-    attn_norm: Vec<f32>,
-    wq: Matrix,
-    wk: Matrix,
-    wv: Matrix,
-    wo: Matrix,
-    ffn_norm: Vec<f32>,
-    w1: Matrix,
-    w2: Matrix,
-    w3: Matrix,
+pub(crate) struct Layer {
+    pub(crate) attn_norm: Vec<f32>,
+    pub(crate) wq: Matrix,
+    pub(crate) wk: Matrix,
+    pub(crate) wv: Matrix,
+    pub(crate) wo: Matrix,
+    pub(crate) ffn_norm: Vec<f32>,
+    pub(crate) w1: Matrix,
+    pub(crate) w2: Matrix,
+    pub(crate) w3: Matrix,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -114,10 +115,10 @@ pub struct Model {
     tokenizer: Tokenizer,
     file: NativaFile,
     pool: Pool,
-    tok_embeddings: Matrix,
-    layers: Vec<Layer>,
-    norm: Vec<f32>,
-    output: Option<Matrix>,
+    pub(crate) tok_embeddings: Matrix,
+    pub(crate) layers: Vec<Layer>,
+    pub(crate) norm: Vec<f32>,
+    pub(crate) output: Option<Matrix>,
 }
 
 impl Model {
@@ -253,6 +254,35 @@ impl Model {
         Some(lo)
     }
 
+    /// A text embedding: the mean of the last layer's normalized hidden
+    /// state over the tokens, scaled to unit length, so the dot product of
+    /// two embeddings is their cosine similarity. The same model that
+    /// writes also finds things in the memory and the Library (ADR-0027
+    /// §1). Texts longer than the context are cut at its end.
+    pub fn embed(&self, tokens: &[u32]) -> Result<Vec<f32>> {
+        let n = tokens.len().min(self.config.max_seq_len);
+        if n == 0 {
+            return Err(Error::BadConfig("nothing to embed".into()));
+        }
+        let mut s = self.session_with(&SessionOptions {
+            context: Some(n),
+            kv: KvPrecision::F32,
+            memory_budget: None,
+        })?;
+        let mut mean = vec![0.0f32; self.config.dim];
+        for &t in &tokens[..n] {
+            s.step(t)?;
+            for (m, h) in mean.iter_mut().zip(s.hidden()) {
+                *m += h;
+            }
+        }
+        let norm = mean.iter().map(|v| v * v).sum::<f32>().sqrt();
+        if norm > 0.0 {
+            mean.iter_mut().for_each(|v| *v /= norm);
+        }
+        Ok(mean)
+    }
+
     /// A session with the model's full context, f32 KV cache.
     pub fn session(&self) -> Session<'_> {
         self.session_with(&SessionOptions {
@@ -301,6 +331,8 @@ impl Model {
             hb2: vec![0.0; c.hidden_dim],
             logits: vec![0.0; c.vocab_size],
             qx: QuantizedVec::default(),
+            adapter: None,
+            lora_u: Vec::new(),
         })
     }
 
@@ -323,7 +355,7 @@ impl Model {
             .chain(self.output.as_ref())
     }
 
-    fn bytes(&self, m: &Matrix) -> &[u8] {
+    pub(crate) fn bytes(&self, m: &Matrix) -> &[u8] {
         match m.data {
             MatData::File(at) => {
                 &self.file.data()[at..at + m.rows * quant::row_bytes(m.dtype, m.cols)]
@@ -332,7 +364,7 @@ impl Model {
         }
     }
 
-    fn f32_values<'a>(&'a self, m: &'a Matrix) -> &'a [f32] {
+    pub(crate) fn f32_values<'a>(&'a self, m: &'a Matrix) -> &'a [f32] {
         match &m.data {
             MatData::Owned(v) => v,
             MatData::File(_) => {
@@ -345,7 +377,7 @@ impl Model {
     }
 
     /// One row of the embeddings as f32.
-    fn embed(&self, token: usize, out: &mut [f32]) {
+    pub(crate) fn embed_row(&self, token: usize, out: &mut [f32]) {
         let m = &self.tok_embeddings;
         if m.dtype == Dtype::F32 {
             out.copy_from_slice(&self.f32_values(m)[token * m.cols..(token + 1) * m.cols]);
@@ -356,8 +388,68 @@ impl Model {
         }
     }
 
+    /// `dx += Mᵀ · dy` (training: the gradient through a frozen matrix).
+    /// Quantized rows are expanded one at a time; the threads each sum a
+    /// share of the rows into their own buffer.
+    pub(crate) fn matvec_t_add(&self, dx: &mut [f32], m: &Matrix, dy: &[f32]) {
+        debug_assert_eq!(dx.len(), m.cols);
+        debug_assert_eq!(dy.len(), m.rows);
+        let rb = quant::row_bytes(m.dtype, m.cols);
+        let f32s = if m.dtype.is_quantized() {
+            &[][..]
+        } else {
+            self.f32_values(m)
+        };
+        let bytes = if m.dtype.is_quantized() {
+            self.bytes(m)
+        } else {
+            &[][..]
+        };
+        let rows_into = |rows: std::ops::Range<usize>, acc: &mut [f32], tmp: &mut [f32]| {
+            for r in rows {
+                let g = dy[r];
+                if g == 0.0 {
+                    continue;
+                }
+                let row: &[f32] = if m.dtype.is_quantized() {
+                    quant::dequantize_row(m.dtype, &bytes[r * rb..(r + 1) * rb], m.cols, tmp);
+                    tmp
+                } else {
+                    &f32s[r * m.cols..(r + 1) * m.cols]
+                };
+                for (a, w) in acc.iter_mut().zip(row) {
+                    *a += g * w;
+                }
+            }
+        };
+        let threads = self.pool.threads();
+        if threads == 1 || m.rows * m.cols < PARALLEL_MIN {
+            let mut tmp = vec![0.0; m.cols];
+            rows_into(0..m.rows, dx, &mut tmp);
+            return;
+        }
+        let chunk = m.rows.div_ceil(threads);
+        let partial: Vec<std::sync::Mutex<Vec<f32>>> = (0..threads)
+            .map(|_| std::sync::Mutex::new(Vec::new()))
+            .collect();
+        self.pool.run(threads, &|t| {
+            let start = (t * chunk).min(m.rows);
+            let end = ((t + 1) * chunk).min(m.rows);
+            let mut acc = vec![0.0; m.cols];
+            let mut tmp = vec![0.0; m.cols];
+            rows_into(start..end, &mut acc, &mut tmp);
+            *partial[t].lock().unwrap() = acc;
+        });
+        // Summed in a fixed order: the result does not depend on timing.
+        for p in partial {
+            for (d, v) in dx.iter_mut().zip(p.into_inner().unwrap()) {
+                *d += v;
+            }
+        }
+    }
+
     /// `out = M · x` on the SIMD kernels, rows split across the pool.
-    fn matvec(&self, out: &mut [f32], m: &Matrix, x: &[f32], qx: &mut QuantizedVec) {
+    pub(crate) fn matvec(&self, out: &mut [f32], m: &Matrix, x: &[f32], qx: &mut QuantizedVec) {
         debug_assert_eq!(out.len(), m.rows);
         debug_assert_eq!(x.len(), m.cols);
         let quantized = m.dtype.is_quantized();
@@ -459,9 +551,11 @@ pub struct Session<'m> {
     hb2: Vec<f32>,
     logits: Vec<f32>,
     qx: QuantizedVec,
+    adapter: Option<&'m Adapter>,
+    lora_u: Vec<f32>,
 }
 
-impl Session<'_> {
+impl<'m> Session<'m> {
     /// Tokens already in the cache.
     pub fn position(&self) -> usize {
         self.pos
@@ -470,6 +564,26 @@ impl Session<'_> {
     /// Tokens this session can hold.
     pub fn context(&self) -> usize {
         self.context
+    }
+
+    /// Runs with `adapter` added to the model's weights. Only before the
+    /// first token.
+    pub fn with_adapter(mut self, adapter: &'m Adapter) -> Result<Self> {
+        adapter.check(self.model)?;
+        if self.pos > 0 {
+            return Err(Error::BadConfig(
+                "set the adapter before the first token".into(),
+            ));
+        }
+        self.lora_u = vec![0.0; adapter.config.rank];
+        self.adapter = Some(adapter);
+        Ok(self)
+    }
+
+    /// The last layer's normalized hidden state for the last token fed
+    /// (what the output matrix turns into logits).
+    pub fn hidden(&self) -> &[f32] {
+        &self.xb
     }
 
     pub fn is_full(&self) -> bool {
@@ -495,13 +609,23 @@ impl Session<'_> {
         let (kv_dim, hd, pos) = (c.kv_dim(), c.head_dim(), self.pos);
         let group = c.n_heads / c.n_kv_heads;
         let scale = 1.0 / (hd as f32).sqrt();
-        m.embed(token as usize, &mut self.x);
+        m.embed_row(token as usize, &mut self.x);
 
         for (l, layer) in m.layers.iter().enumerate() {
             rmsnorm(&mut self.xb, &self.x, &layer.attn_norm, c.norm_eps);
-            m.matvec(&mut self.q, &layer.wq, &self.xb, &mut self.qx);
-            m.matvec(&mut self.k, &layer.wk, &self.xb, &mut self.qx);
-            m.matvec(&mut self.v, &layer.wv, &self.xb, &mut self.qx);
+            // `W·x`, plus the adapter's `scale·B·A·x` when it has this matrix.
+            macro_rules! linear {
+                ($out:ident, $w:ident, $x:ident, $target:expr) => {
+                    m.matvec(&mut self.$out, &layer.$w, &self.$x, &mut self.qx);
+                    if let Some(slot) = self.adapter.and_then(|a| a.slot(l, $target)) {
+                        let a = self.adapter.unwrap();
+                        a.apply(slot, &self.$x, &mut self.lora_u, &mut self.$out);
+                    }
+                };
+            }
+            linear!(q, wq, xb, Target::Wq);
+            linear!(k, wk, xb, Target::Wk);
+            linear!(v, wv, xb, Target::Wv);
             rope(&mut self.q, pos, hd, c.rope_theta);
             rope(&mut self.k, pos, hd, c.rope_theta);
 
@@ -562,16 +686,16 @@ impl Session<'_> {
                     }
                 }
             }
-            m.matvec(&mut self.xb, &layer.wo, &self.xb2, &mut self.qx);
+            linear!(xb, wo, xb2, Target::Wo);
             add(&mut self.x, &self.xb);
 
             rmsnorm(&mut self.xb, &self.x, &layer.ffn_norm, c.norm_eps);
-            m.matvec(&mut self.hb, &layer.w1, &self.xb, &mut self.qx);
-            m.matvec(&mut self.hb2, &layer.w3, &self.xb, &mut self.qx);
+            linear!(hb, w1, xb, Target::W1);
+            linear!(hb2, w3, xb, Target::W3);
             for (g, u) in self.hb.iter_mut().zip(&self.hb2) {
                 *g = silu(*g) * u;
             }
-            m.matvec(&mut self.xb, &layer.w2, &self.hb, &mut self.qx);
+            linear!(xb, w2, hb, Target::W2);
             add(&mut self.x, &self.xb);
         }
 
@@ -581,6 +705,12 @@ impl Session<'_> {
         self.pos += 1;
         Ok(&self.logits)
     }
+}
+
+/// Cosine similarity of two embeddings from [`Model::embed`] (already unit
+/// length, so the dot product).
+pub fn similarity(a: &[f32], b: &[f32]) -> f32 {
+    simd::dot_f32(a, b)
 }
 
 fn add(x: &mut [f32], y: &[f32]) {
