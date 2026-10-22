@@ -251,6 +251,13 @@ enquanto os especialistas são treinados.
   o custo é só na primeira rodada (em 12 passos de treino a média já fica
   perto da do processador puro). `nativa-bench --gpu 768` mostra quantos
   produtos foram para cada lado.
+- **Primeira placa real** (Intel Iris Plus, notebook Windows de 8
+  threads): o driver Vulkan da Intel derruba o processo ao abrir a placa;
+  pelo DirectX 12 funciona, e por isso o Windows passa a usar DX12 por
+  padrão (`WGPU_BACKEND` ainda escolhe). Com a escolha automática, as 3.396
+  multiplicações ficaram no processador: nessa placa os kernels atuais
+  ainda perdem dele. Só processador, no mesmo notebook: treino 274
+  tokens/s, geração 138, prompt 498.
 - **Próximos passos da GPU:** medir em placas integradas comuns (Intel,
   AMD); kernels com memória compartilhada da GPU; deixar as ativações na
   GPU entre camadas (hoje cada produto vai e volta).

@@ -93,8 +93,13 @@ impl Gpu {
             }
         };
         step("opening the driver");
-        let instance =
-            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle().with_env());
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        // On Windows, DX12 by default: some Intel Vulkan drivers crash the
+        // process while opening the device (seen on Iris Plus).
+        if cfg!(windows) {
+            desc.backends = wgpu::Backends::DX12;
+        }
+        let instance = wgpu::Instance::new(desc.with_env());
         if trace {
             for a in block_on(instance.enumerate_adapters(wgpu::Backends::all())) {
                 let i = a.get_info();
