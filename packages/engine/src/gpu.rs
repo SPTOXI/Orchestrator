@@ -84,14 +84,43 @@ pub(crate) struct Weights<'a> {
 
 impl Gpu {
     pub fn new(options: &GpuOptions) -> Result<Self> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        // NATIVA_GPU_TRACE=1 prints each step (to find where a driver
+        // fails); WGPU_BACKEND=vulkan|dx12|metal picks the driver API.
+        let trace = std::env::var_os("NATIVA_GPU_TRACE").is_some();
+        let step = |s: &str| {
+            if trace {
+                eprintln!("gpu: {s}");
+            }
+        };
+        step("opening the driver");
+        let instance =
+            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle().with_env());
+        if trace {
+            for a in block_on(instance.enumerate_adapters(wgpu::Backends::all())) {
+                let i = a.get_info();
+                eprintln!(
+                    "gpu: found {} ({:?}, {:?})",
+                    i.name, i.backend, i.device_type
+                );
+            }
+        }
+        step("choosing an adapter");
         let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             ..Default::default()
         }))
         .map_err(|e| Error::Gpu(format!("no adapter: {e}")))?;
         let info = adapter.get_info();
-        let limits = adapter.limits();
+        step(&format!("using {} ({:?})", info.name, info.backend));
+        // Only the limits the kernels need: asking for everything the
+        // adapter reports trips some drivers.
+        let available = adapter.limits();
+        let limits = wgpu::Limits {
+            max_storage_buffer_binding_size: available.max_storage_buffer_binding_size,
+            max_buffer_size: available.max_buffer_size,
+            ..wgpu::Limits::downlevel_defaults()
+        };
+        step("opening the device");
         let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("nativa"),
             required_limits: limits.clone(),
@@ -102,6 +131,7 @@ impl Gpu {
         let flag = failed.clone();
         device.on_uncaptured_error(Arc::new(move |_| flag.store(true, Ordering::SeqCst)));
 
+        step("building the kernels");
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("nativa"),
             source: wgpu::ShaderSource::Wgsl(include_str!("gpu.wgsl").into()),
@@ -150,6 +180,7 @@ impl Gpu {
             mapped_at_creation: false,
         });
         device.poll(wgpu::PollType::wait_indefinitely()).ok();
+        step("ready");
         if failed.load(Ordering::SeqCst) {
             return Err(Error::Gpu("the kernels did not build".into()));
         }

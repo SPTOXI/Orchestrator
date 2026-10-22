@@ -174,6 +174,9 @@ fn main() {
             always: a.gpu_always,
         }),
     };
+    if a.gpu > 0 {
+        println!("opening the GPU (NATIVA_GPU_TRACE=1 shows each step)...");
+    }
     let model = Model::load_with(&path, &load).expect("load");
     println!("device: {}", model.device());
     let opts = SessionOptions {
