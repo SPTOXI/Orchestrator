@@ -39,6 +39,7 @@ fn pair(dtype: Dtype, memory: u64) -> Option<(Model, Model)> {
             gpu: Some(GpuOptions {
                 memory,
                 always: true,
+                ..Default::default()
             }),
             ..Default::default()
         },
@@ -194,4 +195,61 @@ fn the_automatic_choice_never_changes_the_answer_much() {
     let (g, c) = auto.gpu_share();
     eprintln!("automatic choice: {g} products on the GPU, {c} on the CPU");
     assert!(g + c > 0, "every batched product was decided");
+}
+
+#[test]
+fn the_choice_is_remembered_on_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("choices.json");
+    let open = || {
+        Model::from_file(
+            file(Dtype::F32),
+            &LoadOptions {
+                gpu: Some(GpuOptions {
+                    choices_file: Some(path.clone()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        )
+    };
+    let first = match open() {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("skipped: {e}");
+            return;
+        }
+    };
+    let tokens: Vec<u32> = (0..24).map(|i| (i * 13 + 1) % 270).collect();
+    let a = train::logits(&first, None, &tokens).unwrap();
+    let saved = std::fs::read_to_string(&path).expect("the choices were saved");
+    assert!(saved.contains("choices"));
+    // A second model reads them back and decides nothing anew: its file
+    // stays byte for byte the same.
+    let second = open().unwrap();
+    let b = train::logits(&second, None, &tokens).unwrap();
+    assert!(worst(&a, &b) <= 1e-4);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
+    let (g, c) = second.gpu_share();
+    assert!(g + c > 0);
+}
+
+#[test]
+#[ignore = "timing probe: cargo test --release --features gpu --test gpu -- --ignored --nocapture"]
+fn round_trip_cost() {
+    let Some((_, gpu)) = pair(Dtype::F32, 768 << 20) else {
+        return;
+    };
+    let tokens: Vec<u32> = (0..8).map(|i| i * 7 % 270).collect();
+    train::logits(&gpu, None, &tokens).unwrap();
+    let (before, _) = gpu.gpu_share();
+    let t = std::time::Instant::now();
+    for _ in 0..50 {
+        train::logits(&gpu, None, &tokens).unwrap();
+    }
+    let n = gpu.gpu_share().0 - before;
+    eprintln!(
+        "{n} tiny products, {:.3} ms each (almost all of it the round trip)",
+        t.elapsed().as_secs_f64() * 1e3 / n as f64
+    );
 }

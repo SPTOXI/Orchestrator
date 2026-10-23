@@ -26,8 +26,8 @@ use crate::format::Dtype;
 use crate::model::GpuOptions;
 use crate::quant;
 
-/// Positions per invocation in the kernels (`TT` in `gpu.wgsl`).
-const TT: usize = 8;
+/// Positions per workgroup in the kernels (`TP` in `gpu.wgsl`).
+const TP: usize = 16;
 
 struct Resident {
     buf: wgpu::Buffer,
@@ -61,12 +61,14 @@ pub struct Gpu {
     budget: u64,
     max_binding: u64,
     failed: Arc<AtomicBool>,
+    v1: bool,
     always: bool,
     /// Which side won for a kind of product — (dtype, rows, cols,
     /// direction, positions rounded up to a power of two): true for the
     /// GPU. Every layer has the same shapes, so a few measurements decide
     /// the whole model.
     choices: Mutex<HashMap<Shape, bool>>,
+    choices_file: Option<std::path::PathBuf>,
     on_gpu: AtomicU64,
     on_cpu: AtomicU64,
     state: Mutex<State>,
@@ -176,8 +178,18 @@ impl Gpu {
                 cache: None,
             })
         };
-        let forward = pipeline("matmul");
-        let transpose = pipeline("matmul_t");
+        // NATIVA_GPU_KERNELS=1 picks the first, untiled kernels (to compare).
+        let v1 = std::env::var("NATIVA_GPU_KERNELS").is_ok_and(|v| v == "1");
+        let (forward, transpose) = if v1 {
+            (pipeline("matmul_v1"), pipeline("matmul_t_v1"))
+        } else {
+            (pipeline("matmul"), pipeline("matmul_t"))
+        };
+        step(if v1 {
+            "kernels: v1 (untiled)"
+        } else {
+            "kernels: v2 (tiled)"
+        });
         let params = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("params"),
             size: 32,
@@ -189,8 +201,15 @@ impl Gpu {
         if failed.load(Ordering::SeqCst) {
             return Err(Error::Gpu("the kernels did not build".into()));
         }
+        let name = format!(
+            "{} ({:?}){}",
+            info.name,
+            info.backend,
+            if v1 { ", kernels v1" } else { "" }
+        );
+        let choices = load_choices(options, &name);
         Ok(Self {
-            name: format!("{} ({:?})", info.name, info.backend),
+            name,
             budget: options.memory,
             max_binding: limits
                 .max_storage_buffer_binding_size
@@ -202,8 +221,10 @@ impl Gpu {
             layout,
             params,
             failed,
+            v1,
             always: options.always,
-            choices: Mutex::new(HashMap::new()),
+            choices: Mutex::new(choices),
+            choices_file: options.choices_file.clone(),
             on_gpu: AtomicU64::new(0),
             on_cpu: AtomicU64::new(0),
             state: Mutex::new(State::default()),
@@ -270,11 +291,11 @@ impl Gpu {
                     if won && cpu_time < gpu_time {
                         out.copy_from_slice(&scratch);
                         self.on_cpu.fetch_add(1, Ordering::Relaxed);
-                        self.choices.lock().unwrap().insert(key, false);
+                        self.remember(key, false);
                         return true;
                     }
                 }
-                self.choices.lock().unwrap().insert(key, won);
+                self.remember(key, won);
                 won
             }
         };
@@ -284,6 +305,15 @@ impl Gpu {
             self.on_cpu.fetch_add(1, Ordering::Relaxed);
         }
         won
+    }
+
+    fn remember(&self, key: Shape, gpu: bool) {
+        let mut c = self.choices.lock().unwrap();
+        c.insert(key, gpu);
+        if let Some(path) = &self.choices_file {
+            // Best effort: losing the file only costs a new measurement.
+            let _ = save_choices(path, &self.name, &c);
+        }
     }
 
     /// Whether `w` can run here at all (the caller then uses the CPU).
@@ -296,7 +326,17 @@ impl Gpu {
     /// `out` is then meaningful).
     pub(crate) fn matmul(&self, w: &Weights, x: &[f32], out: &mut [f32]) -> bool {
         let t_len = x.len() / w.cols;
-        self.run(w, false, x, out, (w.rows.div_ceil(64), t_len.div_ceil(TT)))
+        self.run(
+            w,
+            false,
+            x,
+            out,
+            if self.v1 {
+                (w.rows.div_ceil(64), t_len.div_ceil(8))
+            } else {
+                (w.rows.div_ceil(64), t_len.div_ceil(TP))
+            },
+        )
     }
 
     /// `out[t] = Wᵀ · dy[t]` (not added: the caller adds).
@@ -307,7 +347,11 @@ impl Gpu {
             true,
             dy,
             out,
-            (w.cols / quant::BLOCK, t_len.div_ceil(TT)),
+            if self.v1 {
+                (w.cols / quant::BLOCK, t_len.div_ceil(8))
+            } else {
+                (w.cols.div_ceil(64), t_len.div_ceil(TP))
+            },
         )
     }
 
@@ -522,4 +566,77 @@ fn block_on<F: Future>(f: F) -> F::Output {
         }
         std::thread::park();
     }
+}
+
+/// Changes whenever the kernels do: old measurements no longer apply.
+const KERNELS: &str = concat!(env!("CARGO_PKG_VERSION"), "/kernels-2");
+
+fn dtype_code(d: Dtype) -> u64 {
+    match d {
+        Dtype::F32 => 0,
+        Dtype::Q8 => 1,
+        Dtype::Q4 => 2,
+        Dtype::T2 => 3,
+    }
+}
+
+fn load_choices(options: &GpuOptions, adapter: &str) -> HashMap<Shape, bool> {
+    let mut out = HashMap::new();
+    let Some(path) = &options.choices_file else {
+        return out;
+    };
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return out;
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return out;
+    };
+    if v["adapter"] != adapter || v["kernels"] != KERNELS {
+        return out;
+    }
+    for e in v["choices"].as_array().into_iter().flatten() {
+        let n = |i: usize| e.get(i).and_then(serde_json::Value::as_u64);
+        let (Some(d), Some(r), Some(c), Some(t), Some(b), Some(g)) =
+            (n(0), n(1), n(2), n(3), n(4), n(5))
+        else {
+            continue;
+        };
+        let dtype = match d {
+            0 => Dtype::F32,
+            1 => Dtype::Q8,
+            2 => Dtype::Q4,
+            3 => Dtype::T2,
+            _ => continue,
+        };
+        out.insert((dtype, r as usize, c as usize, t == 1, b as usize), g == 1);
+    }
+    out
+}
+
+fn save_choices(
+    path: &std::path::Path,
+    adapter: &str,
+    choices: &HashMap<Shape, bool>,
+) -> std::io::Result<()> {
+    let mut list: Vec<[u64; 6]> = choices
+        .iter()
+        .map(|(&(d, r, c, t, b), &g)| {
+            [
+                dtype_code(d),
+                r as u64,
+                c as u64,
+                t as u64,
+                b as u64,
+                g as u64,
+            ]
+        })
+        .collect();
+    list.sort_unstable();
+    let v = serde_json::json!({ "adapter": adapter, "kernels": KERNELS, "choices": list });
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, v.to_string())?;
+    std::fs::rename(tmp, path)
 }

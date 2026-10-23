@@ -172,6 +172,10 @@ fn main() {
         gpu: (a.gpu > 0).then_some(GpuOptions {
             memory: a.gpu << 20,
             always: a.gpu_always,
+            // Next to the program: the second run skips the measurement.
+            choices_file: std::env::current_exe()
+                .ok()
+                .map(|p| p.with_file_name("nativa-gpu-choices.json")),
         }),
     };
     if a.gpu > 0 {

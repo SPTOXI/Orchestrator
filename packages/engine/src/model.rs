@@ -88,6 +88,10 @@ pub struct GpuOptions {
     /// Always use the GPU where it can run, instead of measuring it against
     /// the CPU first (tests, benchmarks).
     pub always: bool,
+    /// Where to remember which side won each kind of product, so the
+    /// measurement happens once per machine instead of once per run. It is
+    /// thrown away when the adapter or the kernels change.
+    pub choices_file: Option<std::path::PathBuf>,
 }
 
 impl Default for GpuOptions {
@@ -95,6 +99,7 @@ impl Default for GpuOptions {
         Self {
             memory: 768 << 20,
             always: false,
+            choices_file: None,
         }
     }
 }

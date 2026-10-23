@@ -258,6 +258,18 @@ enquanto os especialistas são treinados.
   multiplicações ficaram no processador: nessa placa os kernels atuais
   ainda perdem dele. Só processador, no mesmo notebook: treino 274
   tokens/s, geração 138, prompt 498.
+- **Placa em todas as contas, na mesma Iris Plus:** treino 57 tokens/s,
+  prompt 127 — 4 a 5× mais lento que o processador. Cada produto levava
+  ~15 ms; a ida e volta mede ~0,2 ms, então o peso estava nos kernels.
+- **Kernels v2 (em blocos):** 256 invocações carregam um bloco de pesos
+  (descomprimido uma vez) e um de ativações na memória do grupo, e cada
+  invocação faz 4 saídas. Os v1 continuam disponíveis
+  (`NATIVA_GPU_KERNELS=1`) para comparar na placa real; a GPU emulada não
+  serve de régua para memória de grupo.
+- **Escolha guardada em disco** (`GpuOptions::choices_file`;
+  `nativa-bench` grava `nativa-gpu-choices.json` ao lado do programa): a
+  medição acontece uma vez por máquina e é refeita se a placa ou os
+  kernels mudarem.
 - **Próximos passos da GPU:** medir em placas integradas comuns (Intel,
   AMD); kernels com memória compartilhada da GPU; deixar as ativações na
   GPU entre camadas (hoje cada produto vai e volta).
