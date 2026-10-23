@@ -31,5 +31,6 @@ adiciona algo fora dela, é registrada aqui **antes** de ser implementada.
 | [0024](./0024-conselho-que-analisa-junto.md) | Conselho que analisa junto, com reserva entre os membros | Aceita |
 | [0025](./0025-motor-local-proprio.md) | Motor local próprio (llama.cpp), sem Ollama | Aceita |
 | [0026](./0026-economia-de-tokens-nas-ferramentas-e-nos-pedidos.md) | Economia de tokens nas ferramentas e nos pedidos | Aceita |
+| [0027](./0027-ia-nativa.md) | IA Nativa: motor próprio, modelo próprio, operando o Orchestrator e o computador | Proposta |
 
 Formato: Contexto → Decisão → Consequências.

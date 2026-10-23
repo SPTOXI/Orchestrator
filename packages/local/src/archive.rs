@@ -30,7 +30,7 @@ fn extract_zip(archive: &Path, dest: &Path) -> Result<(), String> {
         let Some(relative) = entry.enclosed_name() else {
             return Err(format!(
                 "o pacote tem um caminho inseguro: {}",
-                entry.name()
+                entry.name().unwrap_or_default()
             ));
         };
         let target = dest.join(relative);
